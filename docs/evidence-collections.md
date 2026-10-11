@@ -60,7 +60,8 @@ the fixed `findrail-evidence.md` filename.
 
 ## Reproducible browser smoke
 
-The dedicated workflow installs Chromium/ChromeDriver and the test-only pinned
+The dedicated workflow installs matched Chrome for Testing/ChromeDriver using the
+test-only pinned `@puppeteer/browsers==2.10.6` installer and pinned
 `selenium==4.35.0`, then builds Findrail and runs
 `python scripts/evidence_collection_smoke.py /path/to/findrail`. Locally, install
 Chromium and a matching ChromeDriver, install that Selenium version in a virtual

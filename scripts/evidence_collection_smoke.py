@@ -7,9 +7,11 @@ import subprocess
 import sys
 import tempfile
 import time
+import os
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 
 
@@ -33,7 +35,7 @@ def main():
                                    "--addr", f"127.0.0.1:{http_port}"], stdout=subprocess.DEVNULL,
                                   stderr=subprocess.PIPE, text=True)
         options = webdriver.ChromeOptions()
-        options.binary_location = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome") or ""
+        options.binary_location = os.environ.get("FINDRAIL_CHROME") or shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome") or ""
         if not options.binary_location:
             raise RuntimeError("Chromium/Chrome binary not found in PATH")
         options.add_argument("--headless=new")
@@ -54,7 +56,8 @@ def main():
                     break
                 except Exception:
                     time.sleep(.1)
-            browser = webdriver.Chrome(options=options)
+            driver = os.environ.get("FINDRAIL_CHROMEDRIVER")
+            browser = webdriver.Chrome(service=Service(executable_path=driver) if driver else Service(), options=options)
             browser.set_page_load_timeout(15)
             browser.get(f"http://127.0.0.1:{http_port}/")
             wait = WebDriverWait(browser, 10)

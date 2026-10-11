@@ -40,11 +40,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install Chromium and pinned test driver
+      - name: Install matched Chrome for Testing and pinned browser tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y chromium chromium-driver
+          npm install --prefix /tmp/browser-tools --no-save @puppeteer/browsers@2.10.6
+          /tmp/browser-tools/node_modules/.bin/browsers install chrome@stable --path /tmp/browser-cache
+          /tmp/browser-tools/node_modules/.bin/browsers install chromedriver@stable --path /tmp/browser-cache
           python -m pip install selenium==4.35.0
+          echo "FINDRAIL_CHROME=$(find /tmp/browser-cache/chrome -type f -name chrome | head -n 1)" >> "$GITHUB_ENV"
+          echo "FINDRAIL_CHROMEDRIVER=$(find /tmp/browser-cache/chromedriver -type f -name chromedriver | head -n 1)" >> "$GITHUB_ENV"
       - name: Native module tests
         run: node --test internal/transport/http/web/citation_test.mjs internal/transport/http/web/source_management_test.mjs internal/transport/http/web/evidence_collection_test.mjs
       - name: Static asset and embedded server checks
