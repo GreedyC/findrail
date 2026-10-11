@@ -1,6 +1,7 @@
 import { formatCitation } from './citation.mjs';
 
 export const LIMITS = Object.freeze({ entries: 40, preview: 256 * 1024, text: 2 * 1024 * 1024, metadata: 16 * 1024, note: 2048, title: 256, markdown: 4 * 1024 * 1024 });
+const STATUSES = new Set(['not checked','unchanged at last check','changed/current version differs','unavailable','source removed']);
 const encoder = new TextEncoder();
 const bytes = value => encoder.encode(value).byteLength;
 const cleanLines = value => value.replace(/\r\n?/g, '\n');
@@ -8,7 +9,7 @@ const jsonCopy = value => JSON.parse(JSON.stringify(value));
 function literalFence(value) { let longest=0,run=0;for(const ch of value){if(ch==='~'){run++;longest=Math.max(longest,run)}else run=0}return '~'.repeat(Math.max(3,longest+1)); }
 
 export function safeDecoration(value) {
-  return String(value).replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ').replace(/([\\`*_{}\[\]<>#])/g, '\\$1');
+  return String(value).replace(/[\u0000-\u001f\u007f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/([\\`*_{}\[\]<>#])/g, '\\$1');
 }
 
 export class EvidenceCollection {
@@ -19,7 +20,7 @@ export class EvidenceCollection {
   get title() { return this.#title; }
   get entries() { return jsonCopy(this.#entries); }
   setTitle(title) {
-    if (typeof title !== 'string' || bytes(title) > LIMITS.title) throw new RangeError('Collection title must be at most 256 UTF-8 bytes.');
+    if (typeof title !== 'string' || !title.trim() || bytes(title) > LIMITS.title) throw new RangeError('Collection title must be non-empty and at most 256 UTF-8 bytes.');
     this.#title = title; this.#generation++;
   }
   add(evidence, excerpt, options = {}) {
@@ -57,10 +58,10 @@ export class EvidenceCollection {
   remove(key) { const n=this.#entries.length;this.#entries=this.#entries.filter(x=>x.key!==key);if(n!==this.#entries.length)this.#generation++;return n!==this.#entries.length; }
   purgeSource(id) { const n=this.#entries.length;this.#entries=this.#entries.filter(x=>x.source_id!==id);if(n!==this.#entries.length)this.#generation++;return n-this.#entries.length; }
   clear() { if(this.#entries.length){this.#entries=[];this.#generation++;} }
-  mark(key,status) { const item=this.#entries.find(x=>x.key===key);if(item){item.status=status;this.#generation++;} }
+  mark(key,status) { if(!STATUSES.has(status))throw new TypeError('Unknown snapshot verification status.');const item=this.#entries.find(x=>x.key===key);if(item){item.status=status;this.#generation++;} }
   export(title=this.#title, at=new Date().toISOString()) {
     if(!this.#entries.length)return '';
-    if(typeof title!=='string'||bytes(title)>LIMITS.title)throw new RangeError('Collection title must be at most 256 UTF-8 bytes.');
+    if(typeof title!=='string'||!title.trim()||bytes(title)>LIMITS.title)throw new RangeError('Collection title must be non-empty and at most 256 UTF-8 bytes.');
     const parts=[`# ${safeDecoration(title)}`,``, `Exported ${safeDecoration(at)} as a session snapshot. Freshness is only the index state at the last check.`,``,...this.#entries.flatMap(item=>{
       const citation=item.whole_preview?formatCitation(item):formatCitation(item,{excerpt:item.excerpt});
       const fence=literalFence(item.note);
@@ -74,4 +75,16 @@ export class EvidenceCollection {
   }
 }
 
-export function validDocumentID(id) { return typeof id==='string' && /^doc_[0-9a-f]{64}$/.test(id); }
+// Filesystem/GitHub connector IDs use doc_<sha256>; imported archive IDs are a
+// SHA-256 without the prefix because the importing source is part of the hash.
+export function validDocumentID(id) { return typeof id==='string' && /^(?:doc_)?[0-9a-f]{64}$/.test(id); }
+
+export function compareCurrentSnapshot(saved, current) {
+  if (!current || typeof current!=='object' ||
+      !['id','source_id','title','uri','path','source_name','source_kind','media_type','content_hash','modified_at','text'].every(key=>typeof current[key]==='string') ||
+      typeof current.truncated!=='boolean' || !Number.isInteger(current.page??0) || !Number.isInteger(current.page_count??0) ||
+      (current.page??0)<0 || (current.page_count??0)<0) return 'unavailable';
+  if(current.id!==saved.id||current.source_id!==saved.source_id||(current.page??0)!==saved.page)return 'unavailable';
+  const same=['content_hash','title','uri','path','source_name','source_kind','media_type','modified_at'].every(key=>current[key]===saved[key]) && current.truncated===saved.truncated && (current.page_count??0)===saved.page_count;
+  return same?'unchanged at last check':'changed/current version differs';
+}

@@ -65,9 +65,14 @@ test-only pinned `@puppeteer/browsers==2.10.6` installer and pinned
 `selenium==4.35.0`, then builds Findrail and runs
 `python scripts/evidence_collection_smoke.py /path/to/findrail`. Locally, install
 Chromium and a matching ChromeDriver, install that Selenium version in a virtual
-environment, build `./cmd/findrail`, and run the same command. The smoke uses only
-a temporary synthetic text source and localhost. It exercises a real browser DOM,
-real clipboard permissions where Chromium supports them, denied-permission
-fallback, downloaded Markdown bytes, clear and reload. It does not certify every
-assistive-technology/native-browser behavior or cover every source kind in the
-full feature test matrix.
+environment, build `./cmd/findrail`, and run the same command. The compiled
+journey uses temporary synthetic text/PDF/DOCX, a CLI-imported archive, and a
+locally seeded pinned-GitHub document with no public network calls. It exercises
+selected/whole-preview and duplicate pins, separate PDF pages/title-only page 0,
+DOCX no-page provenance, notes/order, changed and missing snapshots, delayed
+responses during note/order/removal/clear/export/source-removal mutations, the
+real clipboard where supported and denied-permission fallback, downloaded bytes,
+Escape/focus restoration, clear/reload, 375px layout, and actual Chromium 200%
+page zoom at 375px physical width. It does not certify every
+assistive-technology/native-browser behavior or every possible timing
+permutation.
