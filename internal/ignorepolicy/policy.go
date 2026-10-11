@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -67,6 +68,11 @@ func Parse(ctx context.Context, data []byte) (*Policy, error) {
 	text := strings.ReplaceAll(string(data), "\r\n", "\n")
 	if strings.ContainsRune(text, '\r') {
 		return nil, &Error{Code: "invalid_line_ending"}
+	}
+	for _, r := range text {
+		if r != '\n' && unicode.IsControl(r) {
+			return nil, &Error{Code: "unsupported_character"}
+		}
 	}
 	for i, line := range strings.Split(text, "\n") {
 		if i&15 == 0 {
