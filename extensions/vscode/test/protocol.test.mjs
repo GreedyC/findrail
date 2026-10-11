@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import dns from 'node:dns';
 import { endpoint, Client } from '../dist/protocol.cjs';
 import { formatCitation } from '../dist/citation.mjs';
 import { PreviewCache } from '../dist/previewCache.cjs';
@@ -12,6 +13,17 @@ test('endpoint allowlist rejects unsafe authorities and URL components',()=>{
 test('requires compatible API and restricts requests to fixed read-only GETs',async()=>{
  const requested=[];const s=http.createServer((req,res)=>{requested.push(`${req.method} ${req.url}`);res.setHeader('content-type','application/json');res.end(JSON.stringify(req.url==='/healthz'?{status:'ok'}:{management:false,client_api_version:1,search_modes:['literal','advanced'],search_filters:['source','format','path_prefix','title_contains'],pdf_title_only_evidence:true,diagnostics:{extra:true}}))});
  await new Promise(r=>s.listen(0,'127.0.0.1',r));try{const c=new Client(`http://127.0.0.1:${s.address().port}`,5);await c.connect();assert.deepEqual(requested,['GET /healthz','GET /api/v1/capabilities']);await assert.rejects(()=>c['get']('/api/v1/session',65536),/route_denied/);assert.equal(requested.length,2)}finally{s.close()}
+});
+test('localhost connects to IPv4-only and IPv6-only loopback listeners',async t=>{
+ for(const host of ['127.0.0.1','::1'])await t.test(host,async t=>{
+  const s=http.createServer((req,res)=>{res.setHeader('content-type','application/json');res.end('{"status":"ok"}')});
+  try{await new Promise((resolve,reject)=>{s.once('error',reject);s.listen(0,host,resolve)})}catch(e){if(host==='::1'&&['EAFNOSUPPORT','EADDRNOTAVAIL'].includes(e.code)){t.skip('IPv6 loopback unavailable');return}throw e}
+  try{assert.deepEqual(await new Client(`http://localhost:${s.address().port}`,2).get('/healthz',1024),{status:'ok'})}finally{await new Promise(resolve=>s.close(resolve))}
+ });
+});
+test('localhost DNS answers cannot send requests outside loopback',async()=>{
+ const original=dns.lookup;dns.lookup=(_host,_options,callback)=>callback(null,[{address:'192.0.2.1',family:4}]);
+ try{await assert.rejects(()=>new Client('http://localhost:7766',1).get('/healthz',1024),/transport/)}finally{dns.lookup=original}
 });
 test('rejects redirects and invalid capability contract',async()=>{
  const s=http.createServer((req,res)=>{if(req.url==='/healthz'){res.setHeader('content-type','application/json');res.end('{"status":"ok"}')}else{res.statusCode=302;res.setHeader('location','http://example.org');res.end()}});await new Promise(r=>s.listen(0,'127.0.0.1',r));try{await assert.rejects(()=>new Client(`http://127.0.0.1:${s.address().port}`,5).connect(),/http_rejected/)}finally{s.close()}

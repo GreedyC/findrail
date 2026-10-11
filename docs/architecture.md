@@ -103,7 +103,7 @@ or source removal.
 ## Storage
 
 SQLite FTS5 and a CGO-free Go driver keep installation simple. WAL and foreign
-keys are enabled. Schema migrations 1–5 are transactional and embedded in the binary.
+keys are enabled. Schema migrations 1–6 are transactional and embedded in the binary.
 Schema 3 stores GitHub selection/snapshot metadata and stale-update revision guards;
 schema 4 stores per-folder DOCX input limits (legacy default disabled) and source
 registration tokens/revisions for guarded configuration and removal. Schema 5
@@ -111,6 +111,9 @@ stores immutable archive-source provenance and original content hashes separatel
 from imported destination hashes. Archive sources never enter filesystem or
 GitHub discovery; import publishes the source and all searchable content in one
 transaction.
+Schema 6 stores one bounded last-successful indexing report per source. It is
+published with source content and pruning in the same transaction; live attempts
+remain process-local.
 Unknown newer schemas are rejected. A one-connection writer pool serializes
 updates; four query-only read connections use WAL snapshots, preserving search
 availability during extraction. PDF pages and their FTS entries commit in the
@@ -154,7 +157,7 @@ responses; it does not provide a remote endpoint.
 | Connected alpha | Public GitHub snapshots implemented; private credentials and resumable cursors remain |
 | Extensible beta | Connector SDK stabilization, versioned manifests, conformance suite |
 | Semantic beta | Optional embedding worker, passage retrieval, hybrid evaluation |
-| Clients | Source-built read-only stdio MCP; desktop launcher and editor / browser integrations remain planned |
+| Clients | Source-built read-only stdio MCP and optional read-only VS Code client; desktop launcher and browser integrations remain planned |
 | Larger deployments | Operated sync / storage only after demand |
 
 The application becomes a service platform only if user needs and measurements
