@@ -178,8 +178,12 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 				return filepath.SkipDir
 			}
 			decision := policyDecision(ctx, policy, c.source.Root, path, true)
-			if decision.Reason == "matching_limit" {
-				return &ignorepolicy.Error{Code: "matching_limit"}
+			if decision.Reason == "matching_limit" || decision.Reason == "invalid_path" {
+				code := "matching_limit"
+				if decision.Reason == "invalid_path" {
+					code = "invalid_relative_path"
+				}
+				return &ignorepolicy.Error{Code: code}
 			}
 			if decision.Excluded {
 				report.Skipped++
@@ -226,8 +230,12 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 			return nil
 		}
 		decision := policyDecision(ctx, policy, c.source.Root, path, false)
-		if decision.Reason == "matching_limit" {
-			return &ignorepolicy.Error{Code: "matching_limit"}
+		if decision.Reason == "matching_limit" || decision.Reason == "invalid_path" {
+			code := "matching_limit"
+			if decision.Reason == "invalid_path" {
+				code = "invalid_relative_path"
+			}
+			return &ignorepolicy.Error{Code: code}
 		}
 		if decision.Excluded {
 			report.Skipped++
@@ -627,8 +635,12 @@ func (c *Connector) WatchDirectories(ctx context.Context) ([]string, error) {
 		}
 		if path != c.source.Root {
 			decision := policyDecision(ctx, policy, c.source.Root, path, true)
-			if decision.Reason == "matching_limit" {
-				return &ignorepolicy.Error{Code: "matching_limit"}
+			if decision.Reason == "matching_limit" || decision.Reason == "invalid_path" {
+				code := "matching_limit"
+				if decision.Reason == "invalid_path" {
+					code = "invalid_relative_path"
+				}
+				return &ignorepolicy.Error{Code: code}
 			}
 			if decision.Excluded {
 				return filepath.SkipDir

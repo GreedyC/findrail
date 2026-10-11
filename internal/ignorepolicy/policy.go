@@ -197,11 +197,11 @@ func ValidatePath(path string) error {
 
 func (p *Policy) Decide(ctx context.Context, path string, isDir bool) Decision {
 	d := Decision{Fingerprint: p.Fingerprint(), Reason: "eligible"}
-	if p == nil {
-		return d
-	}
 	if ValidatePath(path) != nil {
 		d.Reason = "invalid_path"
+		return d
+	}
+	if p == nil {
 		return d
 	}
 	parts := strings.Split(path, "/")
