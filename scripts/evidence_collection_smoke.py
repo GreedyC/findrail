@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compiled Findrail + real Chromium collection journey (synthetic fixture only)."""
 import pathlib
+import json
 import shutil
 import socket
 import subprocess
@@ -27,9 +28,11 @@ def main():
         base = pathlib.Path(tmp)
         notes, index = base / "notes", base / "index"
         notes.mkdir()
-        (notes / "synthetic.md").write_text("Synthetic evidence alpha passage. Another sentence.", encoding="utf-8")
-        subprocess.run([str(binary), "index", "--data-dir", str(index), str(notes)], check=True,
-                       timeout=30, capture_output=True, text=True)
+        (notes / "<img onerror=alert(1)>.md").write_text(
+            "Synthetic evidence alpha passage. Another sentence. <script>window.__evidencePwned=true</script>", encoding="utf-8")
+        indexed = subprocess.run([str(binary), "index", "--data-dir", str(index), "--json", str(notes)], check=True,
+                                 timeout=30, capture_output=True, text=True)
+        source_id = json.loads(indexed.stdout)["source"]["id"]
         http_port = port()
         server = subprocess.Popen([str(binary), "serve", "--data-dir", str(index), "--no-sync",
                                    "--addr", f"127.0.0.1:{http_port}"], stdout=subprocess.DEVNULL,
@@ -73,10 +76,23 @@ def main():
                 const s=getSelection();s.removeAllRanges();s.addRange(r);""")
             browser.find_element(By.ID, "add-evidence").click()
             pin_status=browser.execute_script("return document.getElementById('collection-status').textContent"); assert "added" in pin_status, pin_status
+            assert not browser.execute_script("return window.__evidencePwned===true")
+            assert browser.execute_script("return document.querySelectorAll('img').length") == 0
+            browser.find_element(By.ID, "add-evidence").click()
+            duplicate_status = browser.execute_script("return document.getElementById('collection-status').textContent")
+            assert "Duplicate" in duplicate_status, duplicate_status
+            browser.find_element(By.ID, "whole-preview").click()
+            browser.find_element(By.ID, "add-evidence").click()
             browser.find_element(By.ID, "close-preview").click()
             browser.find_element(By.ID, "collection-open").click()
-            wait.until(lambda d: len(d.find_elements(By.CLASS_NAME, "collection-row")) == 1)
-            assert "Synthetic" in browser.execute_script("return document.getElementById('collection-list').textContent")
+            wait.until(lambda d: len(d.find_elements(By.CLASS_NAME, "collection-row")) == 2)
+            note = browser.find_elements(By.CSS_SELECTOR, ".collection-row textarea")[0]
+            note.send_keys("literal note <img src=x onerror=alert(1)>\n~~~")
+            rows = browser.find_elements(By.CLASS_NAME, "collection-row")
+            rows[0].find_element(By.XPATH, ".//button[.='Move down']").click()
+            excerpts = browser.execute_script("return [...document.querySelectorAll('.collection-row pre')].map(x=>x.textContent)")
+            assert excerpts[0].startswith("Synthetic evidence alpha passage") and excerpts[1].startswith("Synthetic")
+            assert not browser.execute_script("return window.__evidencePwned===true")
             clipboard_result = "unavailable"
             try:
                 browser.execute_cdp_cmd("Browser.grantPermissions", {
@@ -106,16 +122,39 @@ def main():
             browser.find_element(By.ID, "collection-download").click()
             wait.until(lambda _: (base / "findrail-evidence.md").exists())
             exported = (base / "findrail-evidence.md").read_text(encoding="utf-8")
-            assert "Synthetic" in exported and "file://" in exported
+            assert "Synthetic" in exported and "file://" in exported and "literal note" in exported
             if denied_fallback is not None:
                 stable = lambda value: "\n".join(line for line in value.splitlines() if not line.startswith("Exported "))
                 assert stable(denied_fallback) == stable(exported), "denied clipboard fallback differs from downloaded Markdown"
             browser.find_element(By.ID, "collection-clear").click()
             assert browser.find_element(By.ID, "collection-count").text == "0"
+            browser.find_element(By.ID, "collection-close").click()
+            next(b for b in browser.find_elements(By.TAG_NAME, "button") if b.text == "Preview").click()
+            wait.until(lambda d: d.find_element(By.ID, "preview-body").text.startswith("Synthetic"))
+            browser.find_element(By.ID, "add-evidence").click()
+            wait.until(lambda d: "added" in d.execute_script("return document.getElementById('collection-status').textContent"))
+            browser.find_element(By.ID, "close-preview").click()
+            browser.find_element(By.ID, "collection-open").click()
+            wait.until(lambda d: len(d.find_elements(By.CLASS_NAME, "collection-row")) == 1)
+            subprocess.run([str(binary), "forget", "--data-dir", str(index), source_id], check=True,
+                           timeout=20, capture_output=True, text=True)
+            browser.execute_script("window.dispatchEvent(new Event('sources-changed'))")
+            wait.until(lambda d: d.find_element(By.ID, "collection-count").text == "0")
+            browser.find_element(By.ID, "collection-clear").click()
+            assert browser.find_element(By.ID, "collection-count").text == "0"
             browser.refresh()
             assert browser.find_element(By.ID, "collection-count").text == "0"
+            browser.set_window_size(375, 812)
+            overflow = browser.execute_script("return {width:document.documentElement.scrollWidth,inner:innerWidth,items:[...document.querySelectorAll('body *')].map(e=>({tag:e.tagName,id:e.id,right:e.getBoundingClientRect().right,scroll:e.scrollWidth,client:e.clientWidth})).filter(x=>x.right>innerWidth+2).slice(0,12)}")
+            assert overflow["width"] <= overflow["inner"] + 2, overflow
+            # 187 CSS px approximates the effective layout viewport of 375px at
+            # 200% page zoom, exercising the same responsive reflow without a
+            # browser-specific zoom UI shortcut.
+            browser.set_window_size(187, 812)
+            narrow = browser.execute_script("return {width:document.documentElement.scrollWidth,inner:innerWidth,items:[...document.querySelectorAll('body *')].map(e=>({tag:e.tagName,id:e.id,cls:e.className,text:(e.textContent||'').slice(0,60),left:e.getBoundingClientRect().left,right:e.getBoundingClientRect().right,scroll:e.scrollWidth,client:e.clientWidth,parent:e.parentElement?.outerHTML.slice(0,180)})).filter(x=>x.right>innerWidth+2||x.scroll>x.client+2).slice(0,16)}")
+            assert narrow["width"] <= narrow["inner"] + 2, narrow
             caps = browser.capabilities
-            print(f"Chromium {caps.get('browserVersion')} on {sys.platform}; compiled-server journey: search, preview, exact selected pin, inspect, clipboard ({clipboard_result}), downloaded Markdown bytes, clear, reload.")
+            print(f"Chromium {caps.get('browserVersion')} on {sys.platform}; compiled-server journey: hostile synthetic text search/preview, exact pin/duplicate/whole-preview, note/order, clipboard ({clipboard_result}), download bytes, external source removal, clear/reload, 375px and 187px effective-layout viewports.")
         finally:
             if browser:
                 browser.quit()
