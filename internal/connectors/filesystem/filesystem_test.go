@@ -377,7 +377,7 @@ func TestWatchDirectoriesKeepsRootAndPolicyEventsRelevant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(dirs) != 1 || dirs[0] != root {
+	if len(dirs) != 1 || dirs[0] != c.Source().Root {
 		t.Fatalf("policy-pruned watch directories: %v", dirs)
 	}
 	if !c.RelevantPath(filepath.Join(root, ".findrailignore")) {

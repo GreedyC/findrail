@@ -590,18 +590,34 @@ func explainWithPolicy(ctx context.Context, r *os.Root, rootPath string, p *igno
 func policyFingerprint(p *ignoreSnapshot) string { return p.matcher().Fingerprint() }
 func insideExcludedPath(path string, excluded []string) bool {
 	for _, base := range excluded {
-		base, err := filepath.Abs(base)
-		if err != nil {
-			continue
-		}
-		if resolved, e := filepath.EvalSymlinks(base); e == nil {
-			base = resolved
-		}
+		base := canonicalPath(base)
 		if pathWithin(base, path) {
 			return true
 		}
 	}
 	return false
+}
+func canonicalPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	candidate := abs
+	suffix := []string{}
+	for {
+		if resolved, e := filepath.EvalSymlinks(candidate); e == nil {
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return filepath.Clean(resolved)
+		}
+		parent := filepath.Dir(candidate)
+		if parent == candidate {
+			return abs
+		}
+		suffix = append(suffix, filepath.Base(candidate))
+		candidate = parent
+	}
 }
 func pathWithin(base, path string) bool {
 	rel, err := filepath.Rel(base, path)
