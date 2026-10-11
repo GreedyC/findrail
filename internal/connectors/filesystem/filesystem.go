@@ -470,9 +470,10 @@ func Explain(ctx context.Context, rootPath, relative string, showRule bool) (ign
 		return ignorepolicy.Decision{}, errors.New("invalid root")
 	}
 	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil || resolved != abs {
+	if err != nil {
 		return ignorepolicy.Decision{}, errors.New("invalid root")
 	}
+	abs = resolved
 	r, err := os.OpenRoot(abs)
 	if err != nil {
 		return ignorepolicy.Decision{}, errors.New("cannot open root")
