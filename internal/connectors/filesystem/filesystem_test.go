@@ -97,6 +97,42 @@ func TestScanBoundsAndExclusions(t *testing.T) {
 	}
 }
 
+func TestIgnorePolicyFreshSnapshotAndHardGates(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Mkdir(filepath.Join(root, "generated"), 0700)
+	_ = os.WriteFile(filepath.Join(root, "generated", "made.md"), []byte("generated"), 0600)
+	_ = os.WriteFile(filepath.Join(root, "keep.md"), []byte("keep"), 0600)
+	_ = os.WriteFile(filepath.Join(root, ".findrailignore"), []byte("generated/\n*.tmp\n"), 0600)
+	c, _ := filesystem.New(root, 1024)
+	var got []string
+	r, e := c.Scan(context.Background(), func(d connector.Document) error { got = append(got, d.Path); return nil })
+	if e != nil || r.Seen != 1 || len(got) != 1 || got[0] != "keep.md" {
+		t.Fatalf("ignored scan=%+v %v %v", r, got, e)
+	}
+	if _, e = os.Stat(filepath.Join(root, ".findrailignore")); e != nil {
+		t.Fatal("policy file changed", e)
+	}
+	if e = os.WriteFile(filepath.Join(root, ".findrailignore"), []byte("!generated/made.md\n"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	// An excluded parent is pruned; a descendant negation cannot recover it.
+	_ = os.WriteFile(filepath.Join(root, ".findrailignore"), []byte("generated/\n!generated/made.md\n"), 0600)
+	r, e = c.Scan(context.Background(), func(d connector.Document) error { got = append(got, d.Path); return nil })
+	if e != nil || r.Seen != 1 {
+		t.Fatalf("pruned parent semantics: %+v %v", r, e)
+	}
+	_ = os.WriteFile(filepath.Join(root, ".findrailignore"), []byte("[broken\n"), 0600)
+	r, e = c.Scan(context.Background(), func(connector.Document) error { return nil })
+	if e == nil || r.Seen != 0 {
+		t.Fatalf("malformed policy did not fail: %+v %v", r, e)
+	}
+	_ = os.Remove(filepath.Join(root, ".findrailignore"))
+	r, e = c.Scan(context.Background(), func(connector.Document) error { return nil })
+	if e != nil || r.Seen != 2 {
+		t.Fatalf("policy removal: %+v %v", r, e)
+	}
+}
+
 func TestSymlinkOutsideRootIsNotIndexed(t *testing.T) {
 	root, outside := t.TempDir(), t.TempDir()
 	path := filepath.Join(outside, "outside.md")

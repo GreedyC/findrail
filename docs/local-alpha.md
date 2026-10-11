@@ -28,6 +28,11 @@ in `/api/v1/sync` and the UI. The periodic full scan still reads and hashes ever
 eligible file. Large collections therefore need performance measurements before
 assuming low resource use.
 
+Source-build filesystem folders may use root-level `.findrailignore` rules;
+failed policy reads preserve the last successful snapshot and successful scans
+apply pruning atomically. See [folder ignore rules](folder-ignore.md). This is
+not a published alpha.2 capability.
+
 ## PDF text
 
 The connector opens a selected PDF within `os.OpenRoot` and streams it to a

@@ -15,6 +15,7 @@ import (
 	"github.com/Lephiziel/findrail/internal/diagnostics"
 	docxextract "github.com/Lephiziel/findrail/internal/extract/docx"
 	"github.com/Lephiziel/findrail/internal/extract/text"
+	"github.com/Lephiziel/findrail/internal/ignorepolicy"
 	"github.com/Lephiziel/findrail/pkg/connector"
 )
 
@@ -120,6 +121,10 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 		return report, emptyDiagnostics, err
 	}
 	defer root.Close()
+	policy, policyErr := loadIgnore(ctx, root)
+	if policyErr != nil {
+		return report, emptyDiagnostics, policyErr
+	}
 	err = filepath.WalkDir(c.source.Root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -172,6 +177,15 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 				d.Add(reason, "directory", filepath.ToSlash(strings.TrimPrefix(path, c.source.Root+string(filepath.Separator))), sensitive(name))
 				return filepath.SkipDir
 			}
+			decision := policyDecision(ctx, policy, c.source.Root, path, true)
+			if decision.Reason == "matching_limit" {
+				return &ignorepolicy.Error{Code: "matching_limit"}
+			}
+			if decision.Excluded {
+				report.Skipped++
+				d.Add("excluded_path", "directory", filepath.ToSlash(strings.TrimPrefix(path, c.source.Root+string(filepath.Separator))), false)
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		isPDF := strings.EqualFold(filepath.Ext(name), ".pdf") && c.maxPDFBytes > 0
@@ -209,6 +223,15 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 			if docxFile {
 				report.SkippedDOCX++
 			}
+			return nil
+		}
+		decision := policyDecision(ctx, policy, c.source.Root, path, false)
+		if decision.Reason == "matching_limit" {
+			return &ignorepolicy.Error{Code: "matching_limit"}
+		}
+		if decision.Excluded {
+			report.Skipped++
+			d.Add("excluded_path", "file", filepath.ToSlash(strings.TrimPrefix(path, c.source.Root+string(filepath.Separator))), false)
 			return nil
 		}
 		info, err := entry.Info()
@@ -369,6 +392,9 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 		report.Seen++
 		return nil
 	})
+	if err == nil {
+		err = verifyIgnore(ctx, root, policy)
+	}
 	rs, examples, omitted, redacted := d.Finish()
 	// The filesystem legacy counter includes pruned directories; the detailed
 	// aggregate keeps file and directory decisions in separate units.
@@ -377,6 +403,132 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 		err = errors.New("diagnostic counter overflow")
 	}
 	return report, payload, err
+}
+
+func policyDecision(ctx context.Context, p *ignorepolicy.Policy, root, path string, dir bool) ignorepolicy.Decision {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return ignorepolicy.Decision{}
+	}
+	return p.Decide(ctx, filepath.ToSlash(rel), dir)
+}
+
+func loadIgnore(ctx context.Context, root *os.Root) (*ignorepolicy.Policy, error) {
+	info, err := root.Lstat(".findrailignore")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, &ignorepolicy.Error{Code: "unreadable"}
+	}
+	if !info.Mode().IsRegular() || info.Size() > ignorepolicy.MaxInput {
+		return nil, &ignorepolicy.Error{Code: "invalid_file_type_or_size"}
+	}
+	f, err := root.Open(".findrailignore")
+	if err != nil {
+		return nil, &ignorepolicy.Error{Code: "unreadable"}
+	}
+	opened, err := f.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		f.Close()
+		return nil, &ignorepolicy.Error{Code: "changed"}
+	}
+	data, err := io.ReadAll(io.LimitReader(f, ignorepolicy.MaxInput+1))
+	final, se := f.Stat()
+	ce := f.Close()
+	if err != nil || se != nil || ce != nil || int64(len(data)) != info.Size() || !final.ModTime().Equal(opened.ModTime()) {
+		return nil, &ignorepolicy.Error{Code: "changed"}
+	}
+	p, err := ignorepolicy.Parse(ctx, data)
+	return p, err
+}
+func verifyIgnore(ctx context.Context, root *os.Root, p *ignorepolicy.Policy) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	q, err := loadIgnore(ctx, root)
+	if err != nil {
+		return err
+	}
+	if (p == nil) != (q == nil) || p != nil && q != nil && p.Fingerprint() != q.Fingerprint() {
+		return &ignorepolicy.Error{Code: "changed"}
+	}
+	return nil
+}
+
+// Explain evaluates path policy and filesystem metadata only; it never reads document content.
+func Explain(ctx context.Context, rootPath, relative string, showRule bool) (ignorepolicy.Decision, error) {
+	if err := ignorepolicy.ValidatePath(relative); err != nil {
+		return ignorepolicy.Decision{}, err
+	}
+	abs, err := filepath.Abs(rootPath)
+	if err != nil {
+		return ignorepolicy.Decision{}, errors.New("invalid root")
+	}
+	info, err := os.Lstat(abs)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return ignorepolicy.Decision{}, errors.New("invalid root")
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil || resolved != abs {
+		return ignorepolicy.Decision{}, errors.New("invalid root")
+	}
+	r, err := os.OpenRoot(abs)
+	if err != nil {
+		return ignorepolicy.Decision{}, errors.New("cannot open root")
+	}
+	defer r.Close()
+	p, err := loadIgnore(ctx, r)
+	if err != nil {
+		return ignorepolicy.Decision{}, err
+	}
+	parts := strings.Split(relative, "/")
+	for i := range parts {
+		partial := strings.Join(parts[:i+1], "/")
+		st, e := r.Lstat(filepath.FromSlash(partial))
+		if e != nil {
+			if errors.Is(e, os.ErrNotExist) {
+				return ignorepolicy.Decision{Reason: "not_found", Fingerprint: p.Fingerprint()}, nil
+			}
+			return ignorepolicy.Decision{}, errors.New("metadata unavailable")
+		}
+		isDir := st.IsDir()
+		name := parts[i]
+		reason := ""
+		if st.Mode()&os.ModeSymlink != 0 {
+			reason = "symlink"
+		} else if strings.HasPrefix(name, ".") {
+			reason = "hidden_entry"
+		} else if isDir && ignoredDirs[name] {
+			reason = "dependency_directory"
+		} else if sensitive(name) {
+			reason = "sensitive_name"
+		} else if !isDir && !supported(name) && !strings.EqualFold(filepath.Ext(name), ".pdf") && !strings.EqualFold(filepath.Ext(name), ".docx") {
+			reason = "unsupported_format"
+		}
+		if reason != "" {
+			return ignorepolicy.Decision{Reason: "excluded_builtin:" + reason, Fingerprint: p.Fingerprint()}, nil
+		}
+		d := p.Decide(ctx, partial, isDir)
+		if d.Reason == "matching_limit" {
+			return ignorepolicy.Decision{}, &ignorepolicy.Error{Code: "matching_limit"}
+		}
+		if d.Excluded {
+			d.Reason = "blocked_by_pruned_ancestor"
+			d.Ancestor = partial
+			if partial == relative {
+				d.Reason = "excluded_user_rule"
+			}
+			if !showRule {
+				d.Rule = ""
+			}
+			return d, nil
+		}
+		if i < len(parts)-1 && !isDir {
+			return ignorepolicy.Decision{Reason: "not_found", Fingerprint: p.Fingerprint()}, nil
+		}
+	}
+	return ignorepolicy.Decision{Reason: "eligible_by_path_policy", Fingerprint: p.Fingerprint()}, nil
 }
 
 func (c *Connector) isExcluded(path string) bool {
@@ -421,6 +573,9 @@ func (c *Connector) validateRoot() error {
 
 // RelevantPath applies the same directory exclusions to native watch events.
 func (c *Connector) RelevantPath(path string) bool {
+	if filepath.Clean(path) == filepath.Join(c.source.Root, ".findrailignore") {
+		return true
+	}
 	if c.isExcluded(path) {
 		return false
 	}
@@ -447,7 +602,16 @@ func (c *Connector) WatchDirectories(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	dirs := []string{}
-	err := filepath.WalkDir(c.source.Root, func(path string, e fs.DirEntry, walkErr error) error {
+	root, err := os.OpenRoot(c.source.Root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	policy, err := loadIgnore(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	err = filepath.WalkDir(c.source.Root, func(path string, e fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -460,6 +624,15 @@ func (c *Connector) WatchDirectories(ctx context.Context) ([]string, error) {
 		if path != c.source.Root && !c.RelevantPath(path) {
 			return filepath.SkipDir
 		}
+		if path != c.source.Root {
+			decision := policyDecision(ctx, policy, c.source.Root, path, true)
+			if decision.Reason == "matching_limit" {
+				return &ignorepolicy.Error{Code: "matching_limit"}
+			}
+			if decision.Excluded {
+				return filepath.SkipDir
+			}
+		}
 		if c.isExcluded(path) {
 			return filepath.SkipDir
 		}
@@ -469,5 +642,8 @@ func (c *Connector) WatchDirectories(ctx context.Context) ([]string, error) {
 		}
 		return nil
 	})
+	if err == nil {
+		err = verifyIgnore(ctx, root, policy)
+	}
 	return dirs, err
 }
