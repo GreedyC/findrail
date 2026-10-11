@@ -380,10 +380,11 @@ func TestWatchDirectoriesKeepsRootAndPolicyEventsRelevant(t *testing.T) {
 	if len(dirs) != 1 || dirs[0] != c.Source().Root {
 		t.Fatalf("policy-pruned watch directories: %v", dirs)
 	}
-	if !c.RelevantPath(filepath.Join(root, ".findrailignore")) {
+	canonicalRoot := c.Source().Root
+	if !c.RelevantPath(filepath.Join(canonicalRoot, ".findrailignore")) {
 		t.Fatal("root policy file event ignored")
 	}
-	if c.RelevantPath(filepath.Join(root, "nested", ".findrailignore")) {
+	if c.RelevantPath(filepath.Join(canonicalRoot, "nested", ".findrailignore")) {
 		t.Fatal("nested policy event activated policy")
 	}
 }
