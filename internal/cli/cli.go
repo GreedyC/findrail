@@ -39,7 +39,7 @@ Usage:
   findrail forget [--data-dir DIR] SOURCE_ID
   findrail serve [--data-dir DIR] [--addr 127.0.0.1:7766] [--no-sync]
   findrail watch [--data-dir DIR] [--sync-interval 5m]
-  findrail explain-path ROOT --path RELATIVE [--path RELATIVE ...] [--json] [--show-rule]
+  findrail explain-path ROOT --path RELATIVE [--path RELATIVE ...] [--data-dir DIR] [--json] [--show-rule]
   findrail mcp --data-dir DIR --source ID [--source ID ...]
   findrail version
   findrail doctor [--data-dir DIR] [--json] [--show-paths]

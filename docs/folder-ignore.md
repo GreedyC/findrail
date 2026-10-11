@@ -56,13 +56,14 @@ Preview a bounded set of metadata-only decisions without opening the index:
 findrail explain-path "/path/to/notes" --path notes.md --path build/generated.md
 findrail explain-path "/path/to/notes" --path build/generated.md --json
 findrail explain-path "/path/to/notes" --path build/generated.md --show-rule
+findrail explain-path "/path/to/notes" --path private-index/cache.md --data-dir "/path/to/notes/private-index"
 ```
 
 The JSON format has `version: 1`; status codes describe path-policy/metadata,
 not actual indexing. PDF/DOCX source-specific settings, encoding, extraction
-success and committed presence cannot be inferred. The default data directory's
-hard exclusion is recognized; a non-default `index --data-dir` location is not
-available to this option-free standalone command. `--show-rule` explicitly
+success and committed presence cannot be inferred. `--data-dir` supplies only
+the path for the dedicated index-directory hard exclusion; the index is never
+opened. Without it, the default data directory is used. `--show-rule` explicitly
 includes a matched rule; normal diagnostics never persist rule text or document
 contents. Source builds only; this is not a shipped alpha.2 capability.
 
@@ -71,7 +72,7 @@ contents. Source builds only; this is not a shipped alpha.2 capability.
 One Linux amd64 run with Go `go1.27.2-X:nodwarf5` ran
 `go test ./internal/ignorepolicy -run '^$' -bench BenchmarkNearLimitMatch -benchtime=1x -benchmem`:
 256 active rules (64 segments each, about 49 KiB input) against a 4,095-byte,
-256-segment path took 400,239 ns and allocated 445,856 bytes (4,055 allocations).
+256-segment path took 396,660 ns and allocated 445,856 bytes (4,055 allocations).
 This is one bounded-work spot check, not p95, scale certification or a security
 sandbox claim.
 

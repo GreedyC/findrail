@@ -34,6 +34,7 @@ func runExplainPath(ctx context.Context, args []string, out, stderr io.Writer) e
 	fs.SetOutput(stderr)
 	var paths pathsFlag
 	fs.Var(&paths, "path", "root-relative POSIX path (repeatable)")
+	dataDir := fs.String("data-dir", "", "index directory for hard-exclusion explanation only; never opened")
 	jsonOut := fs.Bool("json", false, "output versioned JSON")
 	show := fs.Bool("show-rule", false, "include matched rule text")
 	if err := fs.Parse(opts); err != nil {
@@ -63,7 +64,7 @@ func runExplainPath(ctx context.Context, args []string, out, stderr io.Writer) e
 	rows := make([]row, 0, len(paths))
 	present := false
 	var policyFailure error
-	defaultIndex, err := config.DataDir("")
+	defaultIndex, err := config.DataDir(*dataDir)
 	if err != nil {
 		return errors.New("cannot resolve default index location")
 	}

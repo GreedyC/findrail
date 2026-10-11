@@ -75,6 +75,24 @@ func TestExplainPathReadOnlyAndBounded(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "index.sqlite")); !os.IsNotExist(err) {
 		t.Fatalf("explanation created an index: %v", err)
 	}
+	indexDir := filepath.Join(root, "private-index")
+	out.Reset()
+	if err := cli.Run(context.Background(), []string{"explain-path", root, "--path", "private-index/cache.md", "--data-dir", indexDir, "--json"}, &out, &stderr, "test"); err != nil {
+		t.Fatal(err)
+	}
+	var indexDecision struct {
+		Results []struct {
+			Status   string `json:"status"`
+			Reason   string `json:"reason"`
+			Ancestor string `json:"ancestor"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &indexDecision); err != nil {
+		t.Fatal(err)
+	}
+	if len(indexDecision.Results) != 1 || indexDecision.Results[0].Status != "excluded_builtin" || indexDecision.Results[0].Reason != "index_directory" || indexDecision.Results[0].Ancestor != "private-index" {
+		t.Fatalf("index directory preview: %+v", indexDecision)
+	}
 	if err := os.WriteFile(filepath.Join(root, ".findrailignore"), []byte("[malformed\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
