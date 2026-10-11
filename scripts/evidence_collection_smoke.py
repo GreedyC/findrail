@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compiled Findrail + real Chromium collection journey (synthetic fixture only)."""
 import pathlib
+import shutil
 import socket
 import subprocess
 import sys
@@ -32,6 +33,9 @@ def main():
                                    "--addr", f"127.0.0.1:{http_port}"], stdout=subprocess.DEVNULL,
                                   stderr=subprocess.PIPE, text=True)
         options = webdriver.ChromeOptions()
+        options.binary_location = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome") or ""
+        if not options.binary_location:
+            raise RuntimeError("Chromium/Chrome binary not found in PATH")
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
