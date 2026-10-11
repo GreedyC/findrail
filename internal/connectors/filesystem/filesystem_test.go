@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Lephiziel/findrail/internal/connectors/filesystem"
@@ -133,6 +134,269 @@ func TestIgnorePolicyFreshSnapshotAndHardGates(t *testing.T) {
 	}
 }
 
+func TestNegationCannotOverrideHardExclusionsOrIndexDirectory(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "private-index")
+	for path, body := range map[string]string{"normal.md": "visible", "secret.md": "hidden secret", ".hidden.md": "hidden", "node_modules/dependency.md": "dependency", "private-index/cache.md": "index"} {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	policy := "!secret.md\n!.hidden.md\n!node_modules/\n!private-index/\n"
+	if err := os.WriteFile(filepath.Join(root, ".findrailignore"), []byte(policy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := filesystem.New(root, 1024, indexDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var docs []connector.Document
+	_, report, err := c.ScanWithDiagnostics(context.Background(), func(d connector.Document) error { docs = append(docs, d); return nil })
+	if err != nil || len(docs) != 1 || docs[0].Path != "normal.md" {
+		t.Fatalf("negation overrode hard policy: docs=%v report=%+v err=%v", docs, report, err)
+	}
+	for _, sample := range report.Examples {
+		if strings.Contains(sample.Path, "secret") {
+			t.Fatalf("sensitive path leaked in diagnostics: %+v", sample)
+		}
+	}
+}
+
+func TestIgnorePolicyChangeDuringEmissionFailsInventory(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"a.md", "b.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name+" token"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, err := filesystem.New(root, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := false
+	_, err = c.Scan(context.Background(), func(connector.Document) error {
+		if !changed {
+			changed = true
+			return os.WriteFile(filepath.Join(root, ".findrailignore"), []byte("b.md\n"), 0600)
+		}
+		return nil
+	})
+	if err == nil {
+		t.Fatal("policy change during inventory was published")
+	}
+}
+
+func TestIgnorePolicyRemovalDuringEmissionFailsInventory(t *testing.T) {
+	root := t.TempDir()
+	policy := filepath.Join(root, ".findrailignore")
+	if err := os.WriteFile(policy, []byte("*.tmp\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "note.md"), []byte("note"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := filesystem.New(root, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := false
+	_, err = c.Scan(context.Background(), func(connector.Document) error {
+		if !changed {
+			changed = true
+			return os.Remove(policy)
+		}
+		return nil
+	})
+	if err == nil {
+		t.Fatal("policy removal during inventory was published")
+	}
+}
+
+func TestIgnorePolicyAtomicSameContentReplacementIsDetected(t *testing.T) {
+	root := t.TempDir()
+	policy := filepath.Join(root, ".findrailignore")
+	contents := []byte("ignored/\n")
+	if err := os.WriteFile(policy, contents, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "note.md"), []byte("note"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := filesystem.New(root, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := false
+	_, err = c.Scan(context.Background(), func(connector.Document) error {
+		if !changed {
+			changed = true
+			temporary := filepath.Join(root, ".replacement")
+			if e := os.WriteFile(temporary, contents, 0600); e != nil {
+				return e
+			}
+			return os.Rename(temporary, policy)
+		}
+		return nil
+	})
+	if err == nil {
+		t.Fatal("same-content replacement changed file identity but scan succeeded")
+	}
+}
+
+func TestIgnorePolicySymlinkIsRejectedWithoutFollowing(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	external := filepath.Join(outside, "policy")
+	if err := os.WriteFile(external, []byte("*.md\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(root, ".findrailignore")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "note.md"), []byte("must not be emitted"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := filesystem.New(root, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emitted := false
+	_, err = c.Scan(context.Background(), func(connector.Document) error { emitted = true; return nil })
+	if err == nil || emitted {
+		t.Fatalf("symlink policy followed or scan succeeded: emitted=%v err=%v", emitted, err)
+	}
+}
+
+func TestIgnorePolicyNonregularAndOversizedFilesFailClosed(t *testing.T) {
+	for _, kind := range []string{"directory", "oversized"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			policy := filepath.Join(root, ".findrailignore")
+			if kind == "directory" {
+				if err := os.Mkdir(policy, 0700); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(policy, make([]byte, (64<<10)+1), 0600); err != nil {
+				t.Fatal(err)
+			}
+			c, err := filesystem.New(root, 1024)
+			if err != nil {
+				t.Fatal(err)
+			}
+			emitted := false
+			_, err = c.Scan(context.Background(), func(connector.Document) error { emitted = true; return nil })
+			if err == nil || emitted {
+				t.Fatalf("invalid policy did not fail closed: emitted=%v err=%v", emitted, err)
+			}
+		})
+	}
+}
+
+func TestPolicyAppliesBeforePDFAndDOCXExtractionAndIsRootLocal(t *testing.T) {
+	parent := t.TempDir()
+	selected := filepath.Join(parent, "selected")
+	child := filepath.Join(selected, "shared")
+	if err := os.MkdirAll(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(child, "doc.pdf"), []byte("synthetic pdf"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	writeDOCX(t, filepath.Join(child, "doc.docx"))
+	if err := os.WriteFile(filepath.Join(selected, ".findrailignore"), []byte("shared/\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(child, ".findrailignore"), []byte("doc.pdf\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	pdfCalls := 0
+	opts := filesystem.Options{MaxTextBytes: 1024, MaxPDFBytes: 1024, ExtractPDF: func(context.Context, io.Reader, int64) ([]connector.Page, error) { pdfCalls++; return nil, nil }, MaxDOCXBytes: 1024}
+	a, err := filesystem.NewWithOptions(selected, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ra, err := a.Scan(context.Background(), func(connector.Document) error { t.Fatal("parent policy failed to prune shared subtree"); return nil })
+	if err != nil || ra.Seen != 0 || pdfCalls != 0 {
+		t.Fatalf("parent policy: %+v pdf calls=%d err=%v", ra, pdfCalls, err)
+	}
+	// The nested source has its own policy: it filters its PDF without inheriting
+	// the parent's directory exclusion and still extracts the synthetic DOCX.
+	b, err := filesystem.NewWithOptions(child, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	rb, err := b.Scan(context.Background(), func(d connector.Document) error { paths = append(paths, d.Path); return nil })
+	if err != nil || rb.Seen != 1 || len(paths) != 1 || paths[0] != "doc.docx" || pdfCalls != 0 {
+		t.Fatalf("nested root leaked parent policy: %+v paths=%v pdf calls=%d err=%v", rb, paths, pdfCalls, err)
+	}
+}
+
+func TestNestedIgnoreFileIsInertAndRootPolicyFileNeverEmitted(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "nested")
+	if err := os.Mkdir(nested, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, ".findrailignore"), []byte("visible.md\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "visible.md"), []byte("nested policy is inert"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".findrailignore"), []byte("# root policy\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := filesystem.New(root, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	r, err := c.Scan(context.Background(), func(d connector.Document) error { paths = append(paths, d.Path); return nil })
+	if err != nil || r.Seen != 1 || len(paths) != 1 || paths[0] != "nested/visible.md" {
+		t.Fatalf("nested ignore activated or policy indexed: report=%+v paths=%v err=%v", r, paths, err)
+	}
+}
+
+func TestWatchDirectoriesKeepsRootAndPolicyEventsRelevant(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "generated"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".findrailignore"), []byte("generated/\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := filesystem.New(root, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirs, err := c.WatchDirectories(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirs) != 1 || dirs[0] != root {
+		t.Fatalf("policy-pruned watch directories: %v", dirs)
+	}
+	if !c.RelevantPath(filepath.Join(root, ".findrailignore")) {
+		t.Fatal("root policy file event ignored")
+	}
+	if c.RelevantPath(filepath.Join(root, "nested", ".findrailignore")) {
+		t.Fatal("nested policy event activated policy")
+	}
+}
+
+func TestExplainHonorsDedicatedIndexDirectoryWithoutOpeningIt(t *testing.T) {
+	root := t.TempDir()
+	indexPath := filepath.Join(root, ".private-index")
+	decisions, err := filesystem.ExplainMany(context.Background(), root, []string{".private-index/deep/document.md"}, false, indexPath)
+	if err != nil || len(decisions) != 1 || decisions[0].Reason != "excluded_builtin:index_directory" || decisions[0].Ancestor != ".private-index" {
+		t.Fatalf("dedicated index decision: %+v %v", decisions, err)
+	}
+}
+
 func TestSymlinkOutsideRootIsNotIndexed(t *testing.T) {
 	root, outside := t.TempDir(), t.TempDir()
 	path := filepath.Join(outside, "outside.md")
@@ -141,6 +405,9 @@ func TestSymlinkOutsideRootIsNotIndexed(t *testing.T) {
 	}
 	if err := os.Symlink(path, filepath.Join(root, "linked.md")); err != nil {
 		t.Skip("symlink unavailable:", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".findrailignore"), []byte("!linked.md\n"), 0600); err != nil {
+		t.Fatal(err)
 	}
 	c, err := filesystem.New(root, 128)
 	if err != nil {

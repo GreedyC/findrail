@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -32,10 +31,9 @@ func (e *Error) Error() string {
 	return "ignore policy " + e.Code
 }
 
-var ErrCanceled = errors.New("ignore policy canceled")
-
 type Rule struct {
 	pattern                    string
+	display                    string
 	line                       int
 	negated, dirOnly, anchored bool
 	segments                   []string
@@ -61,23 +59,28 @@ func Parse(ctx context.Context, data []byte) (*Policy, error) {
 		return nil, &Error{Code: "invalid_utf8"}
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, ErrCanceled
+		return nil, ctx.Err()
 	}
 	data = bytesBOM(data)
-	p := &Policy{fingerprint: hash(data)}
+	p := &Policy{fingerprint: Fingerprint(data)}
 	text := strings.ReplaceAll(string(data), "\r\n", "\n")
 	if strings.ContainsRune(text, '\r') {
 		return nil, &Error{Code: "invalid_line_ending"}
 	}
-	for _, r := range text {
+	for index, r := range text {
+		if index&4095 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if r != '\n' && unicode.IsControl(r) {
-			return nil, &Error{Code: "unsupported_character"}
+			return nil, &Error{Code: "unsupported_character", Line: strings.Count(text[:index], "\n") + 1}
 		}
 	}
 	for i, line := range strings.Split(text, "\n") {
 		if i&15 == 0 {
 			if ctx.Err() != nil {
-				return nil, ErrCanceled
+				return nil, ctx.Err()
 			}
 		}
 		n := i + 1
@@ -88,6 +91,7 @@ func Parse(ctx context.Context, data []byte) (*Policy, error) {
 		if line == "" {
 			continue
 		}
+		display := line
 		if hasControl(line) {
 			return nil, &Error{Code: "unsupported_character", Line: n}
 		}
@@ -135,7 +139,7 @@ func Parse(ctx context.Context, data []byte) (*Policy, error) {
 		if len(p.rules) > 0 && len(p.rules)+len(parts) > 4096 {
 			return nil, &Error{Code: "compiled_limit", Line: n}
 		}
-		p.rules = append(p.rules, Rule{pattern: line, line: n, negated: neg, dirOnly: dir, anchored: anchored, segments: parts})
+		p.rules = append(p.rules, Rule{pattern: line, display: display, line: n, negated: neg, dirOnly: dir, anchored: anchored, segments: parts})
 	}
 	return p, nil
 }
@@ -173,6 +177,10 @@ func bytesBOM(b []byte) []byte {
 	return b
 }
 func hash(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:16]) }
+
+// Fingerprint returns a bounded, deterministic identity for policy bytes; it is
+// not authentication and does not imply that the supplied bytes are valid.
+func Fingerprint(data []byte) string { return hash(bytesBOM(data)) }
 func (p *Policy) Fingerprint() string {
 	if p == nil {
 		return ""
@@ -193,7 +201,7 @@ func ValidatePath(path string) error {
 			return &Error{Code: "unsafe_path"}
 		}
 		for _, r := range s {
-			if r < 32 || r == 127 {
+			if unicode.IsControl(r) {
 				return &Error{Code: "unsafe_path"}
 			}
 		}
@@ -218,19 +226,25 @@ func (p *Policy) Decide(ctx context.Context, path string, isDir bool) Decision {
 			d.Reason = "canceled"
 			return d
 		}
-		if r.dirOnly && !isDir && !hasExcludedParentRule(p, parts, r.line) {
+		if r.dirOnly && !isDir {
 			continue
 		}
-		work += (len(r.pattern) + 1) * (len(path) + 1)
-		if work > maxMatchWork {
+		charge := (len(r.pattern) + 1) * (len(path) + 1)
+		if charge > maxMatchWork-work {
 			d.Reason = "matching_limit"
 			return d
 		}
-		if matches(r, parts) {
+		work += charge
+		matched := matches(ctx, r, parts)
+		if ctx.Err() != nil {
+			d.Reason = "canceled"
+			return d
+		}
+		if matched {
 			excluded = !r.negated
 			if excluded {
 				d.Line = r.line
-				d.Rule = r.pattern
+				d.Rule = r.display
 			} else {
 				d.Line = 0
 				d.Rule = ""
@@ -243,23 +257,28 @@ func (p *Policy) Decide(ctx context.Context, path string, isDir bool) Decision {
 	}
 	return d
 }
-func hasExcludedParentRule(_ *Policy, _ []string, _ int) bool { return false }
-func matches(r Rule, path []string) bool {
+func matches(ctx context.Context, r Rule, path []string) bool {
 	if len(r.segments) == 1 && !strings.Contains(r.pattern, "/") && !r.anchored {
 		for _, s := range path {
-			if segment(r.segments[0], s) {
+			if ctx.Err() != nil {
+				return false
+			}
+			if segment(ctx, r.segments[0], s) {
 				return true
 			}
 		}
 		return false
 	}
-	return globSegments(r.segments, path)
+	return globSegments(ctx, r.segments, path)
 }
-func segment(p, s string) bool {
+func segment(ctx context.Context, p, s string) bool {
 	a, b := []rune(p), []rune(s)
 	dp := make([]bool, len(b)+1)
 	dp[0] = true
 	for _, c := range a {
+		if ctx.Err() != nil {
+			return false
+		}
 		next := make([]bool, len(b)+1)
 		if c == '*' {
 			next[0] = dp[0]
@@ -275,10 +294,13 @@ func segment(p, s string) bool {
 	}
 	return dp[len(b)]
 }
-func globSegments(p, s []string) bool {
+func globSegments(ctx context.Context, p, s []string) bool {
 	dp := make([]bool, len(s)+1)
 	dp[0] = true
 	for _, x := range p {
+		if ctx.Err() != nil {
+			return false
+		}
 		n := make([]bool, len(s)+1)
 		if x == "**" {
 			n[0] = dp[0]
@@ -287,7 +309,7 @@ func globSegments(p, s []string) bool {
 			}
 		} else {
 			for j := 1; j <= len(s); j++ {
-				n[j] = dp[j-1] && segment(x, s[j-1])
+				n[j] = dp[j-1] && segment(ctx, x, s[j-1])
 			}
 		}
 		dp = n

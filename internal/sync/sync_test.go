@@ -187,3 +187,105 @@ func TestMissingRootPreservesSnapshotAndRecovers(t *testing.T) {
 		t.Fatal("successful watcher recovery did not publish a new report")
 	}
 }
+
+func TestRootIgnorePolicyWatcherAtomicRecoveryAndPrunedDiscovery(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root, data := t.TempDir(), t.TempDir()
+	generated := filepath.Join(root, "generated", "nested")
+	if err := os.MkdirAll(generated, 0700); err != nil {
+		t.Fatal(err)
+	}
+	put(t, filepath.Join(generated, "old.md"), "old generated marker")
+	put(t, filepath.Join(root, "keep.md"), "permanent keep marker")
+	s, err := sqlite.Open(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	factory := func(source connector.Source) (*filesystem.Connector, error) {
+		return filesystem.NewWithOptions(source.Root, filesystem.Options{MaxTextBytes: source.MaxTextBytes, MaxPDFBytes: source.MaxPDFBytes, MaxDOCXBytes: source.MaxDOCXBytes, RegistrationToken: source.RegistrationToken, RegistrationRevision: source.RegistrationRevision}, data)
+	}
+	conn, err := filesystem.New(root, 1<<20, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, s, conn); err != nil {
+		t.Fatal(err)
+	}
+	m := syncer.New(s, syncer.Config{Factory: factory, Interval: time.Hour, DiscoveryInterval: 20 * time.Millisecond, Debounce: 20 * time.Millisecond})
+	done := make(chan struct{})
+	go func() { defer close(done); m.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	eventually(t, func() bool { return len(m.Status()) == 1 && m.Status()[0].State == "idle" })
+	has := func(q string, n int) bool {
+		r, e := s.Search(ctx, search.Request{Query: q, Limit: 10})
+		return e == nil && r.Total == n
+	}
+	policy := filepath.Join(root, ".findrailignore")
+	atomicPolicy := func(content string) {
+		t.Helper()
+		tmp := filepath.Join(root, ".policy-save.tmp")
+		put(t, tmp, content)
+		if e := os.Rename(tmp, policy); e != nil {
+			t.Fatal(e)
+		}
+	}
+	atomicPolicy("generated/\n")
+	eventually(t, func() bool { return has("old", 0) && m.Status()[0].State == "idle" })
+	prior, err := s.SourceReport(ctx, conn.Source().ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priorID := prior["report"].(sqlite.ReportSummary).ReportID
+	var reconciled bool
+	for _, reason := range prior["report"].(sqlite.ReportSummary).Reasons {
+		if reason.Code == "excluded_path" && reason.Unit == "directory" && reason.Count == 1 {
+			reconciled = true
+		}
+	}
+	if !reconciled {
+		t.Fatalf("ignore decision missing from durable diagnostics: %+v", prior["report"])
+	}
+	put(t, filepath.Join(generated, "new.md"), "newly discovered marker")
+	if has("newly", 1) {
+		t.Fatal("ignored subtree was indexed before policy changed")
+	}
+	atomicPolicy("!generated/\n")
+	eventually(t, func() bool { return has("newly", 1) })
+	validReport, err := s.SourceReport(ctx, conn.Source().ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validReportID := validReport["report"].(sqlite.ReportSummary).ReportID
+	atomicPolicy("[malformed\n")
+	eventually(t, func() bool { return m.Status()[0].State == "error" })
+	if status := m.Status()[0]; status.Progress.FailureCode != "scan_failed" || status.Progress.Committed {
+		t.Fatalf("policy failure progress leaked or committed: %+v", status.Progress)
+	}
+	if !has("newly", 1) {
+		t.Fatal("malformed policy replaced the previous searchable snapshot")
+	}
+	failedReport, err := s.SourceReport(ctx, conn.Source().ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedReportID := failedReport["report"].(sqlite.ReportSummary).ReportID
+	if failedReportID != validReportID || failedReportID == priorID {
+		t.Fatal("malformed policy replaced the prior successful report")
+	}
+	atomicPolicy("generated/\n")
+	eventually(t, func() bool { return has("newly", 0) && m.Status()[0].State == "idle" })
+	if err := os.Remove(policy); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, func() bool { return has("newly", 1) })
+	if err := s.ForgetSource(ctx, conn.Source().ID); err != nil {
+		t.Fatal(err)
+	}
+	put(t, filepath.Join(root, "another.md"), "forgotten source stays forgotten")
+	eventually(t, func() bool { return len(m.Status()) == 0 })
+	if has("forgotten", 1) {
+		t.Fatal("forget allowed refresh re-registration")
+	}
+}

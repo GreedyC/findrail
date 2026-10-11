@@ -2,6 +2,7 @@ package ignorepolicy
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -22,7 +23,7 @@ func TestRules(t *testing.T) {
 	}
 }
 func TestSyntaxAndBounds(t *testing.T) {
-	for _, s := range []string{"a**b\n", "../x\n", "[a]\n", "C:/x\n"} {
+	for _, s := range []string{"a**b\n", "../x\n", "[a]\n", "C:/x\n", "a\\b\n", "a//b\n", "./a\n", "scheme://host\n"} {
 		if _, err := Parse(context.Background(), []byte(s)); err == nil {
 			t.Errorf("accepted %q", s)
 		}
@@ -40,6 +41,64 @@ func TestBOMCommentEscapesAndUnicode(t *testing.T) {
 		t.Fatal("expected matching rules")
 	}
 }
+func TestDirectoryOnlyPrecedenceCaseAndLiteralBang(t *testing.T) {
+	p, err := Parse(context.Background(), []byte("cache/\n*.LOG\n\\!literal.md\nname   \n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		path      string
+		dir, want bool
+	}{{"cache", true, true}, {"cache", false, false}, {"nested/cache", true, true}, {"nested/a.log", false, false}, {"nested/a.LOG", false, true}, {"!literal.md", false, true}, {"name", false, true}} {
+		if got := p.Decide(context.Background(), tc.path, tc.dir).Excluded; got != tc.want {
+			t.Errorf("%q dir=%v excluded=%v want=%v", tc.path, tc.dir, got, tc.want)
+		}
+	}
+	if _, err := Parse(context.Background(), []byte("# comment\x00\n")); err == nil {
+		t.Fatal("control in comment accepted")
+	}
+}
+
+func TestParseLimitsAndSafeErrors(t *testing.T) {
+	if _, err := Parse(context.Background(), []byte(strings.Repeat("#", MaxInput+1))); err == nil || strings.Contains(err.Error(), "#") {
+		t.Fatalf("input limit/safe error: %v", err)
+	}
+	tooMany := strings.Repeat("a\n", MaxRules+1)
+	if _, err := Parse(context.Background(), []byte(tooMany)); err == nil {
+		t.Fatal("rule limit ignored")
+	}
+	tooLong := strings.Repeat("a", MaxPatternBytes+1)
+	if _, err := Parse(context.Background(), []byte(tooLong)); err == nil {
+		t.Fatal("pattern limit ignored")
+	}
+	tooManySegments := strings.Repeat("a/", MaxPatternSegments) + "a"
+	if _, err := Parse(context.Background(), []byte(tooManySegments)); err == nil {
+		t.Fatal("pattern segment limit ignored")
+	}
+	if _, err := Parse(context.Background(), []byte{0xff}); err == nil {
+		t.Fatal("invalid UTF-8 accepted")
+	}
+	for _, path := range []string{"C:\\notes\\a.md", "//server/share/a", "scheme://host/path", "a//b", "a/./b", "a/../b"} {
+		if ValidatePath(path) == nil {
+			t.Errorf("accepted unsafe path %q", path)
+		}
+	}
+}
+
+func TestCancellationDuringPolicyParseAndMatch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := Parse(ctx, []byte("*.md\n")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("parse cancellation: %v", err)
+	}
+	p, err := Parse(context.Background(), []byte("*.md\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Decide(ctx, "note.md", false).Reason; got != "canceled" {
+		t.Fatalf("match cancellation: %s", got)
+	}
+}
 func FuzzParseAndMatch(f *testing.F) {
 	f.Add("*.log\n", "a.log")
 	f.Add("/cache/**\n", "cache/a")
@@ -52,6 +111,28 @@ func FuzzParseAndMatch(f *testing.F) {
 			_ = p.Decide(context.Background(), path, false)
 		} else if len(e.Error()) > 128 {
 			t.Fatal("unbounded error")
+		}
+	})
+}
+
+func FuzzValidateRelativePath(f *testing.F) {
+	for _, seed := range []string{"notes.md", "a/b/é.md", "../escape", `C:\\secret`, "a//b", ""} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, path string) {
+		if len(path) > MaxPathBytes+1 {
+			return
+		}
+		err := ValidatePath(path)
+		if err == nil {
+			p, e := Parse(context.Background(), []byte("*\n"))
+			if e != nil {
+				t.Fatal(e)
+			}
+			d := p.Decide(context.Background(), path, false)
+			if d.Reason != "eligible" && d.Reason != "user_rule" {
+				t.Fatalf("validated path had inconsistent decision: %q %+v", path, d)
+			}
 		}
 	})
 }

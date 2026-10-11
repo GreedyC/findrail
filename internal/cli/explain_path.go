@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,7 +10,9 @@ import (
 	"io"
 	"strings"
 
+	"github.com/Lephiziel/findrail/internal/config"
 	"github.com/Lephiziel/findrail/internal/connectors/filesystem"
+	"github.com/Lephiziel/findrail/internal/ignorepolicy"
 )
 
 type pathsFlag []string
@@ -42,10 +45,16 @@ func runExplainPath(ctx context.Context, args []string, out, stderr io.Writer) e
 	if fs.NArg() != 0 || len(paths) == 0 || len(paths) > 100 {
 		return errors.New("explain-path requires ROOT and 1–100 --path values")
 	}
+	for _, path := range paths {
+		if err := ignorepolicy.ValidatePath(path); err != nil {
+			return err
+		}
+	}
 	type row struct {
 		Path        string `json:"path"`
 		Status      string `json:"status"`
 		Reason      string `json:"reason,omitempty"`
+		ErrorCode   string `json:"error_code,omitempty"`
 		Fingerprint string `json:"policy_fingerprint,omitempty"`
 		Rule        string `json:"rule,omitempty"`
 		Line        int    `json:"line,omitempty"`
@@ -53,17 +62,32 @@ func runExplainPath(ctx context.Context, args []string, out, stderr io.Writer) e
 	}
 	rows := make([]row, 0, len(paths))
 	present := false
-	for _, path := range paths {
-		d, err := filesystem.Explain(ctx, root, path, *show)
-		if err != nil {
+	var policyFailure error
+	defaultIndex, err := config.DataDir("")
+	if err != nil {
+		return errors.New("cannot resolve default index location")
+	}
+	decisions, err := filesystem.ExplainMany(ctx, root, paths, *show, defaultIndex)
+	if err != nil {
+		var pe *ignorepolicy.Error
+		if !errors.As(err, &pe) || pe.Code == "unsafe_path" || pe.Code == "too_many_path_segments" {
 			return err
 		}
-		present = present || d.Fingerprint != ""
-		status, reason := d.Reason, ""
-		if strings.HasPrefix(status, "excluded_builtin:") {
-			status, reason = "excluded_builtin", strings.TrimPrefix(status, "excluded_builtin:")
+		policyFailure = err
+		present = true
+		for _, requested := range paths {
+			rows = append(rows, row{Path: requested, Status: "policy_error", ErrorCode: pe.Code, Line: pe.Line})
 		}
-		rows = append(rows, row{Path: path, Status: status, Reason: reason, Fingerprint: d.Fingerprint, Rule: d.Rule, Line: d.Line, Ancestor: d.Ancestor})
+	} else {
+		for i, d := range decisions {
+			path := paths[i]
+			present = present || d.Fingerprint != ""
+			status, reason := d.Reason, ""
+			if strings.HasPrefix(status, "excluded_builtin:") {
+				status, reason = "excluded_builtin", strings.TrimPrefix(status, "excluded_builtin:")
+			}
+			rows = append(rows, row{Path: path, Status: status, Reason: reason, Fingerprint: d.Fingerprint, Rule: d.Rule, Line: d.Line, Ancestor: d.Ancestor})
+		}
 	}
 	if *jsonOut {
 		b, err := json.Marshal(struct {
@@ -77,43 +101,72 @@ func runExplainPath(ctx context.Context, args []string, out, stderr io.Writer) e
 		if len(b) > 256<<10 {
 			return errors.New("explanation output limit exceeded")
 		}
-		_, err = fmt.Fprintln(out, string(b))
-		return err
+		b = append(b, '\n')
+		_, err = out.Write(b)
+		if err != nil {
+			return err
+		}
+		return policyFailure
 	}
-	if present {
-		if _, err := fmt.Fprintf(out, "Policy: present (%s)\n", rows[0].Fingerprint); err != nil {
+	var text bytes.Buffer
+	if policyFailure != nil {
+		if _, err := fmt.Fprintln(&text, "Policy: error"); err != nil {
+			return err
+		}
+	} else if present {
+		if _, err := fmt.Fprintf(&text, "Policy: present (%s)\n", rows[0].Fingerprint); err != nil {
 			return err
 		}
 	} else {
-		if _, err := fmt.Fprintln(out, "Policy: absent"); err != nil {
+		if _, err := fmt.Fprintln(&text, "Policy: absent"); err != nil {
 			return err
 		}
 	}
 	for _, r := range rows {
-		if _, err := fmt.Fprintf(out, "%s: %s", r.Path, r.Status); err != nil {
+		if _, err := fmt.Fprintf(&text, "%s: %s", r.Path, r.Status); err != nil {
 			return err
 		}
-		if r.Line > 0 {
-			if _, err := fmt.Fprintf(out, " (line %d", r.Line); err != nil {
+		if r.ErrorCode != "" {
+			if _, err := fmt.Fprintf(&text, " (code %s", r.ErrorCode); err != nil {
 				return err
 			}
-			if r.Rule != "" {
-				if _, err := fmt.Fprintf(out, ": %s", safe(r.Rule)); err != nil {
+			if r.Line > 0 {
+				if _, err := fmt.Fprintf(&text, ", line %d", r.Line); err != nil {
 					return err
 				}
 			}
-			if _, err := fmt.Fprint(out, ")"); err != nil {
+			if _, err := fmt.Fprint(&text, ")"); err != nil {
+				return err
+			}
+		}
+		if r.Line > 0 && r.ErrorCode == "" {
+			if _, err := fmt.Fprintf(&text, " (line %d", r.Line); err != nil {
+				return err
+			}
+			if r.Rule != "" {
+				if _, err := fmt.Fprintf(&text, ": %s", safe(r.Rule)); err != nil {
+					return err
+				}
+			}
+			if _, err := fmt.Fprint(&text, ")"); err != nil {
 				return err
 			}
 		}
 		if r.Ancestor != "" && r.Ancestor != r.Path {
-			if _, err := fmt.Fprintf(out, " (%s)", r.Ancestor); err != nil {
+			if _, err := fmt.Fprintf(&text, " (%s)", r.Ancestor); err != nil {
 				return err
 			}
 		}
-		if _, err := fmt.Fprintln(out); err != nil {
+		if _, err := fmt.Fprintln(&text); err != nil {
 			return err
 		}
 	}
-	return nil
+	if text.Len() > 256<<10 {
+		return errors.New("explanation output limit exceeded")
+	}
+	_, err = out.Write(text.Bytes())
+	if err != nil {
+		return err
+	}
+	return policyFailure
 }
