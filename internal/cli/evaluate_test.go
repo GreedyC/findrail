@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -23,7 +24,7 @@ func TestRunEvaluationHelp(t *testing.T) {
 
 	ctx := context.Background()
 
-	err := runEvaluate(ctx, []string{"--help"}, &out, &stderr)
+	err := Run(ctx, []string{"evaluate", "--help"}, &out, &stderr, "test")
 	if err != nil {
 		t.Fatalf("runEvaluate() error=%v, want no error", err)
 	}
@@ -43,6 +44,50 @@ func TestRunEvaluationHelp(t *testing.T) {
 	}
 	if !strings.Contains(help, "-json") {
 		t.Errorf("help does not contain -json: %q", help)
+	}
+}
+
+func TestRunEvaluateDoesNotMigrateIndex(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store, err := sqlite.Open(ctx, dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dataDir, "findrail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("DROP TABLE indexing_reports; PRAGMA user_version=5"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	queriesPath := filepath.Join(t.TempDir(), "queries.json")
+	if err := os.WriteFile(queriesPath, []byte(`[{"query":"hello","expected_paths":[]}]`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	err = runEvaluate(ctx, []string{"--queries", queriesPath, "--data-dir", dataDir, "--source", "missing"}, &out, &stderr)
+	if err == nil {
+		t.Fatal("runEvaluate() error=nil, want unsupported index error")
+	}
+	db, err = sql.Open("sqlite", filepath.Join(dataDir, "findrail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 5 {
+		t.Fatalf("schema version=%d, want unchanged version 5", version)
 	}
 }
 

@@ -2,25 +2,46 @@
 
 ## Current behaviour
 
-- Local files are indexed only from explicit roots passed to `index`.
+- Local files are indexed only from explicit roots passed to `index`, `start`, or
+  selected in the `start` Sources panel. The browser accepts an absolute path; it
+  does not upload files or invoke a native folder picker.
+- Public GitHub files are downloaded only by explicit `index-github` or
+  `refresh-github`; retrieval reads the committed local snapshot.
+- Portable source archives are explicit CLI exports of indexed text and
+  provenance, not original attachments or database backups. They are plaintext
+  and may expose original paths/usernames; no secret-redaction guarantee is made.
 - The index contains extracted text, locations, source names, and timestamps.
 - Runtime local search does not call a hosted model, analytics service, or source API.
 - The database is plaintext, protected by local filesystem permissions rather than encryption.
 - Common credential-like names, hidden entries, and symlinks are skipped. This is not a universal secret detector.
 - Document contents are treated as text and never executed.
-- HTTP is loopback-only with Host / Origin checks and no source-mutation endpoint.
+- DOCX body extraction is bounded, offline, in-memory and stores plaintext; the
+  index is not a sanitization/redaction tool. Unsupported Word features are omitted.
+- HTTP is loopback-only. `serve` and `demo` remain read-only. `start` additionally
+  exposes source mutations guarded by the actual bound authority, exact Origin,
+  process-memory CSRF capability, Fetch Metadata and strict bounded JSON. The
+  capability is not persisted; it does not protect against same-user processes.
 - `forget` removes searchable source data logically. Old disk / WAL / backup bytes may remain.
+- Imported archive sources are frozen, offline SQLite data; removal does not
+  delete exported archive copies or guarantee physical erasure.
+- The last successful indexing report is stored locally with the committed
+  snapshot. Optional examples contain bounded relative names; sensitive-name
+  paths are redacted. Reports are not part of portable exports and are not telemetry.
 
 ## User controls
 
 Choose a dedicated index directory, inspect `sources`, and remove a source with
-`forget`. Original files stay untouched. Deleting the complete dedicated data
+`forget` or the confirmed `start` Sources action. Removal clears only local
+searchable records. Original files stay untouched. Deleting the complete dedicated data
 directory while Findrail is stopped removes the active index; secure disk erasure
 depends on the OS and storage device.
 
-## Planned cloud adapters
+## Connected adapters
 
-Adapters need explicit scopes, credential vault integration, visible sync
+Public GitHub file snapshots use no credentials and refresh only on explicit
+Add/Refresh actions; routine search, preview, citations, polling and MCP read the
+committed local snapshot. Future
+private adapters need explicit scopes, credential vault integration, visible sync
 status, deletion propagation, and revocation handling. API permissions at the
 source must determine what can be indexed. Private-data support is not unlocked
 just by accepting a token string.

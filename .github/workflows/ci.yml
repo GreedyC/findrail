@@ -8,6 +8,17 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.x'
+      - name: Web UI regression tests
+        run: node --test internal/transport/http/web/*_test.mjs
+      - name: Packaging safety tests
+        run: python3 scripts/test_package.py
   check:
     strategy:
       fail-fast: false
@@ -15,8 +26,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.x'
           cache: true
@@ -34,11 +45,35 @@ jobs:
       - name: Compiled alpha smoke (Windows)
         if: runner.os == 'Windows'
         run: python scripts/smoke.py ./findrail.exe
+      - name: Compiled search query smoke (Unix)
+        if: runner.os != 'Windows'
+        run: python3 scripts/search_smoke.py ./findrail
+      - name: Compiled search query smoke (Windows)
+        if: runner.os == 'Windows'
+        run: python scripts/search_smoke.py ./findrail.exe
+      - name: Compiled MCP smoke (Unix)
+        if: runner.os != 'Windows'
+        run: python3 scripts/mcp_smoke.py ./findrail
+      - name: Compiled MCP smoke (Windows)
+        if: runner.os == 'Windows'
+        run: python scripts/mcp_smoke.py ./findrail.exe
+      - name: Compiled portable snapshot smoke (Unix)
+        if: runner.os != 'Windows'
+        run: python3 scripts/portable_smoke.py ./findrail
+      - name: Compiled portable snapshot smoke (Windows)
+        if: runner.os == 'Windows'
+        run: python scripts/portable_smoke.py ./findrail.exe
+      - name: Compiled indexing diagnostics smoke (Unix)
+        if: runner.os != 'Windows'
+        run: python3 scripts/diagnostics_smoke.py ./findrail
+      - name: Compiled indexing diagnostics smoke (Windows)
+        if: runner.os == 'Windows'
+        run: python scripts/diagnostics_smoke.py ./findrail.exe
   race:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.x'
           cache: true

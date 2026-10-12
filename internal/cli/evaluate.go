@@ -78,7 +78,7 @@ func runEvaluate(ctx context.Context, args []string, out, stderr io.Writer) erro
 		return fmt.Errorf("index %q is not a regular file", path)
 	}
 
-	store, err := sqlite.Open(ctx, dataDirPath)
+	store, err := sqlite.OpenReadOnly(ctx, dataDirPath)
 	if err != nil {
 		return fmt.Errorf("open index: %w", err)
 	}

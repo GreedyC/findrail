@@ -49,7 +49,7 @@ func TestAutomaticLifecycle(t *testing.T) {
 			}
 			defer s.Close()
 			factory := func(source connector.Source) (*filesystem.Connector, error) {
-				return filesystem.New(source.Root, source.MaxTextBytes, data)
+				return filesystem.NewWithOptions(source.Root, filesystem.Options{MaxTextBytes: source.MaxTextBytes, MaxPDFBytes: source.MaxPDFBytes, MaxDOCXBytes: source.MaxDOCXBytes, RegistrationToken: source.RegistrationToken, RegistrationRevision: source.RegistrationRevision}, data)
 			}
 			conn, err := filesystem.New(root, 1<<20, data)
 			if err != nil {
@@ -69,12 +69,23 @@ func TestAutomaticLifecycle(t *testing.T) {
 			go func() { defer close(done); m.Run(ctx) }()
 			defer func() { cancel(); <-done }()
 			eventually(t, func() bool { status := m.Status(); return len(status) == 1 && status[0].State == "idle" })
+			initialProgress := m.Status()[0].Progress
+			if !initialProgress.Committed || initialProgress.ReportID == "" || initialProgress.Phase != "done" || initialProgress.Sequence < 3 {
+				t.Fatalf("watcher did not publish committed progress: %+v", initialProgress)
+			}
 			has := func(query string, count int) bool {
 				r, e := s.Search(ctx, search.Request{Query: query, Limit: 20})
 				return e == nil && r.Total == count
 			}
 			put(t, path, "updated evidence")
 			eventually(t, func() bool { return has("updated", 1) && has("initial", 0) })
+			eventually(t, func() bool {
+				status := m.Status()
+				return len(status) == 1 && status[0].Progress.Committed && status[0].Progress.ProcessedDocuments >= 1 && status[0].Progress.ReportID != initialProgress.ReportID
+			})
+			if p := m.Status()[0].Progress; !p.Committed || p.ProcessedDocuments < 1 || p.ReportID == initialProgress.ReportID {
+				t.Fatalf("successful watcher refresh progress/report not updated: %+v", p)
+			}
 			nested := filepath.Join(root, "nested")
 			if err := os.Mkdir(nested, 0700); err != nil {
 				t.Fatal(err)
@@ -129,17 +140,33 @@ func TestMissingRootPreservesSnapshotAndRecovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := syncer.New(s, syncer.Config{Factory: func(source connector.Source) (*filesystem.Connector, error) {
-		return filesystem.New(source.Root, source.MaxTextBytes)
+		return filesystem.NewWithOptions(source.Root, filesystem.Options{MaxTextBytes: source.MaxTextBytes, MaxPDFBytes: source.MaxPDFBytes, MaxDOCXBytes: source.MaxDOCXBytes, RegistrationToken: source.RegistrationToken, RegistrationRevision: source.RegistrationRevision})
 	}, Interval: 50 * time.Millisecond, PollOnly: true})
 	done := make(chan struct{})
 	go func() { defer close(done); m.Run(ctx) }()
 	defer func() { cancel(); <-done }()
 	eventually(t, func() bool { return len(m.Status()) == 1 && m.Status()[0].State == "idle" })
+	prior, err := s.SourceReport(ctx, conn.Source().ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priorID := prior["report"].(sqlite.ReportSummary).ReportID
 	moved := filepath.Join(parent, "moved")
 	if err := os.Rename(root, moved); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, func() bool { return m.Status()[0].State == "error" })
+	failed := m.Status()[0].Progress
+	if failed.Committed || !failed.Partial || failed.FailureCode != "scan_failed" || failed.Phase != "done" {
+		t.Fatalf("failed watcher attempt progress: %+v", failed)
+	}
+	beforeReport, err := s.SourceReport(ctx, conn.Source().ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if beforeReport["report"].(sqlite.ReportSummary).ReportID != priorID {
+		t.Fatal("failed refresh overwrote previous durable report")
+	}
 	r, err := s.Search(ctx, search.Request{Query: "retained", Limit: 20})
 	if err != nil || r.Total != 1 {
 		t.Fatalf("missing root pruned snapshot: %+v %v", r, err)
@@ -152,4 +179,113 @@ func TestMissingRootPreservesSnapshotAndRecovers(t *testing.T) {
 		r, e := s.Search(ctx, search.Request{Query: "recovered", Limit: 20})
 		return e == nil && r.Total == 1
 	})
+	after, err := s.SourceReport(ctx, conn.Source().ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after["report"].(sqlite.ReportSummary).ReportID == priorID {
+		t.Fatal("successful watcher recovery did not publish a new report")
+	}
+}
+
+func TestRootIgnorePolicyWatcherAtomicRecoveryAndPrunedDiscovery(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root, data := t.TempDir(), t.TempDir()
+	generated := filepath.Join(root, "generated", "nested")
+	if err := os.MkdirAll(generated, 0700); err != nil {
+		t.Fatal(err)
+	}
+	put(t, filepath.Join(generated, "old.md"), "old generated marker")
+	put(t, filepath.Join(root, "keep.md"), "permanent keep marker")
+	s, err := sqlite.Open(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	factory := func(source connector.Source) (*filesystem.Connector, error) {
+		return filesystem.NewWithOptions(source.Root, filesystem.Options{MaxTextBytes: source.MaxTextBytes, MaxPDFBytes: source.MaxPDFBytes, MaxDOCXBytes: source.MaxDOCXBytes, RegistrationToken: source.RegistrationToken, RegistrationRevision: source.RegistrationRevision}, data)
+	}
+	conn, err := filesystem.New(root, 1<<20, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, s, conn); err != nil {
+		t.Fatal(err)
+	}
+	m := syncer.New(s, syncer.Config{Factory: factory, Interval: time.Hour, DiscoveryInterval: 20 * time.Millisecond, Debounce: 20 * time.Millisecond})
+	done := make(chan struct{})
+	go func() { defer close(done); m.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	eventually(t, func() bool { return len(m.Status()) == 1 && m.Status()[0].State == "idle" })
+	has := func(q string, n int) bool {
+		r, e := s.Search(ctx, search.Request{Query: q, Limit: 10})
+		return e == nil && r.Total == n
+	}
+	policy := filepath.Join(root, ".findrailignore")
+	atomicPolicy := func(content string) {
+		t.Helper()
+		tmp := filepath.Join(root, ".policy-save.tmp")
+		put(t, tmp, content)
+		if e := os.Rename(tmp, policy); e != nil {
+			t.Fatal(e)
+		}
+	}
+	atomicPolicy("generated/\n")
+	eventually(t, func() bool { return has("old", 0) && m.Status()[0].State == "idle" })
+	prior, err := s.SourceReport(ctx, conn.Source().ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priorID := prior["report"].(sqlite.ReportSummary).ReportID
+	var reconciled bool
+	for _, reason := range prior["report"].(sqlite.ReportSummary).Reasons {
+		if reason.Code == "excluded_path" && reason.Unit == "directory" && reason.Count == 1 {
+			reconciled = true
+		}
+	}
+	if !reconciled {
+		t.Fatalf("ignore decision missing from durable diagnostics: %+v", prior["report"])
+	}
+	put(t, filepath.Join(generated, "new.md"), "newly discovered marker")
+	if has("newly", 1) {
+		t.Fatal("ignored subtree was indexed before policy changed")
+	}
+	atomicPolicy("!generated/\n")
+	eventually(t, func() bool { return has("newly", 1) })
+	validReport, err := s.SourceReport(ctx, conn.Source().ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validReportID := validReport["report"].(sqlite.ReportSummary).ReportID
+	atomicPolicy("[malformed\n")
+	eventually(t, func() bool { return m.Status()[0].State == "error" })
+	if status := m.Status()[0]; status.Progress.FailureCode != "scan_failed" || status.Progress.Committed {
+		t.Fatalf("policy failure progress leaked or committed: %+v", status.Progress)
+	}
+	if !has("newly", 1) {
+		t.Fatal("malformed policy replaced the previous searchable snapshot")
+	}
+	failedReport, err := s.SourceReport(ctx, conn.Source().ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedReportID := failedReport["report"].(sqlite.ReportSummary).ReportID
+	if failedReportID != validReportID || failedReportID == priorID {
+		t.Fatal("malformed policy replaced the prior successful report")
+	}
+	atomicPolicy("generated/\n")
+	eventually(t, func() bool { return has("newly", 0) && m.Status()[0].State == "idle" })
+	if err := os.Remove(policy); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, func() bool { return has("newly", 1) })
+	if err := s.ForgetSource(ctx, conn.Source().ID); err != nil {
+		t.Fatal(err)
+	}
+	put(t, filepath.Join(root, "another.md"), "forgotten source stays forgotten")
+	eventually(t, func() bool { return len(m.Status()) == 0 })
+	if has("forgotten", 1) {
+		t.Fatal("forget allowed refresh re-registration")
+	}
 }
