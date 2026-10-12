@@ -15,6 +15,8 @@ import (
 	"github.com/Lephiziel/findrail/internal/store/sqlite"
 )
 
+var ErrMismatchedResults = errors.New("evaluation results do not match expected paths")
+
 func runEvaluate(ctx context.Context, args []string, out, stderr io.Writer) error {
 	fs := flag.NewFlagSet("evaluate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -57,7 +59,7 @@ func runEvaluate(ctx context.Context, args []string, out, stderr io.Writer) erro
 
 	cases, casesErr := evaluation.LoadCases(file)
 	if casesErr != nil {
-		return fmt.Errorf("load queries=%w", casesErr)
+		return fmt.Errorf("load queries: %w", casesErr)
 	}
 
 	dataDirPath, pathErr := config.DataDir(dataDir)
@@ -76,7 +78,7 @@ func runEvaluate(ctx context.Context, args []string, out, stderr io.Writer) erro
 		return fmt.Errorf("index %q is not a regular file", path)
 	}
 
-	store, err := sqlite.Open(ctx, path)
+	store, err := sqlite.Open(ctx, dataDirPath)
 	if err != nil {
 		return fmt.Errorf("open index: %w", err)
 	}
@@ -114,9 +116,35 @@ func runEvaluate(ctx context.Context, args []string, out, stderr io.Writer) erro
 	} else {
 		_, err := fmt.Fprintf(out, "%d cases: %d passed, %d failed\n", report.Total, report.Passed, report.Failed)
 		if err != nil {
-			return fmt.Errorf("fprintf: %w", err)
+			return fmt.Errorf("write report: %w", err)
+		}
+
+		for _, result := range report.Results {
+			if result.Passed {
+				continue
+			}
+			safeMissingPaths := make([]string, len(result.MissingPaths))
+			for i, p := range result.MissingPaths {
+				safeMissingPaths[i] = safe(p)
+			}
+
+			safeUnexpectedPaths := make([]string, len(result.UnexpectedPaths))
+			for i, p := range result.UnexpectedPaths {
+				safeUnexpectedPaths[i] = safe(p)
+			}
+
+			_, err := fmt.Fprintf(
+				out,
+				"query: %q, missing_paths=%q, unexpected_paths=%q\n",
+				safe(result.Query), safeMissingPaths, safeUnexpectedPaths,
+			)
+			if err != nil {
+				return fmt.Errorf("write report: %w", err)
+			}
 		}
 	}
-
+	if report.Failed > 0 {
+		return ErrMismatchedResults
+	}
 	return nil
 }
