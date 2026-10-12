@@ -19,6 +19,8 @@ jobs:
         run: node --test internal/transport/http/web/*_test.mjs
       - name: Packaging safety tests
         run: python3 scripts/test_package.py
+      - name: Release asset contract tests
+        run: python3 -m unittest scripts/test_release_assets.py scripts/test_release_gate.py
   check:
     strategy:
       fail-fast: false

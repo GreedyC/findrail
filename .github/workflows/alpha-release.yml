@@ -1,105 +1,368 @@
-name: Alpha release
+name: Alpha release candidate
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact main commit to package; use for preview/rehearsal
+        required: true
+        type: string
+      candidate_version:
+        description: Preview package version (ignored for main push; must match VERSION to publish)
+        required: true
+        default: 0.1.0-alpha.3
+        type: string
+      publish:
+        description: Publish only if every gate passes (normally leave false for preparation)
+        required: true
+        default: false
+        type: boolean
 permissions:
   contents: read
 concurrency:
-  group: alpha-release
+  group: alpha-release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  release:
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+  validate-source:
+    runs-on: ubuntu-latest
+    outputs:
+      candidate_sha: ${{ steps.source.outputs.sha }}
+      version: ${{ steps.source.outputs.version }}
+      publish: ${{ steps.source.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.sha }}
+          persist-credentials: false
+      - id: source
+        env:
+          INPUT_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.sha }}
+          INPUT_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_version || '' }}
+          REQUEST_PUBLISH: ${{ github.event_name == 'workflow_dispatch' && inputs.publish || false }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$INPUT_SHA"
+          test "$INPUT_SHA" = "$GITHUB_SHA"
+          if [[ "$GITHUB_EVENT_NAME" != push && "$GITHUB_EVENT_NAME" != workflow_dispatch ]]; then
+            echo "Unsupported release upstream event: $GITHUB_EVENT_NAME" >&2; exit 1
+          fi
+          if [[ "$GITHUB_REPOSITORY" != 'Lephiziel/findrail' || "$GITHUB_REF" != 'refs/heads/main' ]]; then
+            echo 'Only the canonical repository main branch is eligible.' >&2; exit 1
+          fi
+          RELEASE_VERSION=$(cat build/package/VERSION)
+          VERSION="$RELEASE_VERSION"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then VERSION="$INPUT_VERSION"; fi
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]
+          PUBLISH=false
+          if [[ "$GITHUB_EVENT_NAME" == push || "$REQUEST_PUBLISH" == true ]]; then PUBLISH=true; fi
+          if [[ "$PUBLISH" == true && "$VERSION" != "$RELEASE_VERSION" ]]; then
+            echo 'Publishing requires candidate_version to match build/package/VERSION.' >&2; exit 1
+          fi
+          {
+            echo "sha=$INPUT_SHA"
+            echo "version=$VERSION"
+            echo "publish=$PUBLISH"
+          } >> "$GITHUB_OUTPUT"
+  source-checks:
+    needs: validate-source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-source.outputs.candidate_sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31d06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.x'
+          cache: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.x'
+      - name: Formatting, Go tests, vet, and module integrity
+        run: |
+          test -z "$(gofmt -l $(git ls-files '*.go'))"
+          go test ./...
+          go vet ./...
+          go mod verify
+      - name: Browser UI regressions and packaging safety
+        run: |
+          node --test internal/transport/http/web/*_test.mjs
+          python3 scripts/test_package.py
+          python3 -m unittest scripts/test_release_assets.py scripts/test_release_gate.py
+  native-packages:
+    needs: validate-source
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin-amd64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-14
+          - target: windows-amd64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-source.outputs.candidate_sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31d06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.x'
+          cache: true
+      - name: Build on native target with exact provenance
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate-source.outputs.version }}
+          CANDIDATE_SHA: ${{ needs.validate-source.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          PY=python3; [[ '${{ runner.os }}' != Windows ]] || PY=python
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          "$PY" scripts/package.py --version "$VERSION" --require-clean --target '${{ matrix.target }}' --output "$RUNNER_TEMP/candidate"
+          "$PY" scripts/package.py --verify-only --output "$RUNNER_TEMP/candidate"
+          mkdir -p "$RUNNER_TEMP/install space 📦"
+          "$PY" - "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/install space 📦" "$VERSION" "$CANDIDATE_SHA" '${{ matrix.target }}' <<'PY'
+          import json, pathlib, sys
+          sys.path.insert(0, 'scripts')
+          import package
+          source, destination, version, revision, target = map(pathlib.Path, sys.argv[1:])
+          version, revision, target = str(version), str(revision), str(target)
+          archive = next(p for p in source.iterdir() if p.name.endswith(('.zip', '.tar.gz')))
+          package.verify_archive(archive, target, version)
+          extracted = package.extract_verified(archive, destination)
+          info = json.loads((extracted / 'BUILD-INFO.json').read_text(encoding='utf-8'))
+          if (info.get('revision'), info.get('dirty'), info.get('version'), info.get('target')) != (revision, False, version, target):
+              raise SystemExit('candidate BUILD-INFO provenance mismatch')
+          binary = extracted / ('findrail.exe' if target.startswith('windows-') else 'findrail')
+          (destination.parent / 'verified-binary-path.txt').write_text(str(binary), encoding='utf-8')
+          PY
+          BINARY="$RUNNER_TEMP/install space 📦/findrail_${VERSION}_${{ matrix.target }}/findrail"
+          [[ '${{ matrix.target }}' != windows-* ]] || BINARY="$RUNNER_TEMP/install space 📦/findrail_${VERSION}_${{ matrix.target }}/findrail.exe"
+          "$PY" scripts/smoke.py --expected-version "$VERSION" "$BINARY"
+          "$PY" scripts/search_smoke.py "$BINARY"
+          "$PY" scripts/mcp_smoke.py "$BINARY"
+          "$PY" scripts/portable_smoke.py "$BINARY"
+          "$PY" scripts/diagnostics_smoke.py "$BINARY"
+          if [[ '${{ matrix.target }}' == linux-amd64 ]]; then
+            "$PY" scripts/upgrade_smoke.py "$BINARY"
+          fi
+      - name: Save verification result and archive
+        if: always()
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate-source.outputs.version }}
+          CANDIDATE_SHA: ${{ needs.validate-source.outputs.candidate_sha }}
+          JOB_STATUS: ${{ job.status }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-evidence"
+          if [[ -d "$RUNNER_TEMP/candidate" ]]; then
+            find "$RUNNER_TEMP/candidate" -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp {} "$RUNNER_TEMP/release-evidence/" \;
+          fi
+          python3 - <<'PY'
+          import json, os, pathlib
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'release-evidence'/'verification.json'
+          checks=['archive_checksum','archive_contents','exact_build_info','executable_version','cli','search','browser_api','mcp','portable_snapshot','diagnostics']
+          if os.environ['TARGET']=='linux-amd64': checks.append('upgrade_and_rollback')
+          out.write_text(json.dumps({'candidate_sha':os.environ['CANDIDATE_SHA'],'candidate_version':os.environ['VERSION'],'target':os.environ['TARGET'],'status':os.environ['JOB_STATUS'],'checks':checks if os.environ['JOB_STATUS']=='success' else []}, sort_keys=True, indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-package-${{ needs.validate-source.outputs.candidate_sha }}-${{ matrix.target }}
+          path: ${{ runner.temp }}/release-evidence/
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 30
+  installed-vsix:
+    needs: validate-source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-source.outputs.candidate_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.x'
+          cache: npm
+          cache-dependency-path: extensions/vscode/package-lock.json
+      - uses: actions/setup-go@b7ad1dad31d06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.x'
+          cache: true
+      - working-directory: extensions/vscode
+        run: npm ci --ignore-scripts
+      - working-directory: extensions/vscode
+        run: npm run typecheck
+      - working-directory: extensions/vscode
+        run: npm test
+      - working-directory: extensions/vscode
+        run: npm run test:integration
+      - run: go test ./internal/transport/http/...
+      - name: Package and install VSIX in an isolated VS Code profile
+        working-directory: extensions/vscode
+        run: |
+          npm run package
+          node - <<'JS'
+          const {downloadAndUnzipVSCode}=require('@vscode/test-electron');
+          const {spawnSync}=require('node:child_process');
+          const fs=require('node:fs');
+          (async()=>{
+            const executable=await downloadAndUnzipVSCode('1.95.0');
+            const dir=process.env.RUNNER_TEMP+'/installed-vsix-extensions';
+            fs.mkdirSync(dir,{recursive:true});
+            const install=spawnSync('xvfb-run',['-a',executable,'--disable-updates','--extensions-dir',dir,'--install-extension','findrail-readonly-0.1.0.vsix','--force'],{stdio:'inherit',cwd:process.cwd(),timeout:90000});
+            if(install.error) throw install.error;
+            if(install.status!==0) throw new Error(`VSIX installation failed: ${install.status}`);
+            const list=spawnSync('xvfb-run',['-a',executable,'--disable-updates','--extensions-dir',dir,'--list-extensions'],{encoding:'utf8',timeout:30000});
+            if(list.error) throw list.error;
+            if(list.status!==0) throw new Error(`VSIX listing failed: ${list.status}`);
+            const installed=list.stdout;
+            if(!installed.toLowerCase().includes('findrail-local.findrail-readonly')) throw new Error('VSIX was not installed');
+          })().catch(e=>{console.error(e);process.exit(1)});
+          JS
+      - working-directory: extensions/vscode
+        run: xvfb-run -a npm run test:host
+      - name: Assert VSIX contract and save
+        run: |
+          set -euo pipefail
+          test -f extensions/vscode/findrail-readonly-0.1.0.vsix
+          unzip -Z1 extensions/vscode/findrail-readonly-0.1.0.vsix | grep -qx 'extension/package.json'
+          mkdir -p "$RUNNER_TEMP/vsix"
+          cp extensions/vscode/findrail-readonly-0.1.0.vsix "$RUNNER_TEMP/vsix/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-vsix-${{ needs.validate-source.outputs.candidate_sha }}
+          path: ${{ runner.temp }}/vsix/findrail-readonly-0.1.0.vsix
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+  aggregate-and-verify:
+    needs: [validate-source, source-checks, native-packages, installed-vsix]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-source.outputs.candidate_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-package-${{ needs.validate-source.outputs.candidate_sha }}-*
+          path: ${{ runner.temp }}/native
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-vsix-${{ needs.validate-source.outputs.candidate_sha }}
+          path: ${{ runner.temp }}/client
+      - name: Assemble exact set and verify all content
+        env:
+          VERSION: ${{ needs.validate-source.outputs.version }}
+          CANDIDATE_SHA: ${{ needs.validate-source.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/asset-input" "$RUNNER_TEMP/release-assets"
+          find "$RUNNER_TEMP/native" -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp {} "$RUNNER_TEMP/asset-input/" \;
+          cp "$RUNNER_TEMP/client/findrail-readonly-0.1.0.vsix" "$RUNNER_TEMP/asset-input/"
+          python3 scripts/release_assets.py assemble --input "$RUNNER_TEMP/asset-input" --output "$RUNNER_TEMP/release-assets" --version "$VERSION" --revision "$CANDIDATE_SHA"
+          python3 scripts/release_assets.py verify --directory "$RUNNER_TEMP/release-assets" --version "$VERSION" --revision "$CANDIDATE_SHA"
+          python3 - "$RUNNER_TEMP/verification-summary.json" <<'PY'
+          import json, pathlib, sys
+          pathlib.Path(sys.argv[1]).write_text(json.dumps({'candidate_sha':'${{ needs.validate-source.outputs.candidate_sha }}','candidate_version':'${{ needs.validate-source.outputs.version }}','status':'passed'}, sort_keys=True, indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ needs.validate-source.outputs.candidate_sha }}
+          path: ${{ runner.temp }}/release-assets/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-verification-${{ needs.validate-source.outputs.candidate_sha }}
+          path: ${{ runner.temp }}/verification-summary.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+  reusable-final-verification:
+    needs: [validate-source, aggregate-and-verify]
+    uses: ./.github/workflows/release-asset-verification.yml
+    with:
+      candidate_sha: ${{ needs.validate-source.outputs.candidate_sha }}
+      candidate_version: ${{ needs.validate-source.outputs.version }}
+  release-state:
+    needs: [validate-source, reusable-final-verification]
+    if: needs.validate-source.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      decision: ${{ steps.decision.outputs.decision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-source.outputs.candidate_sha }}
+          persist-credentials: false
+      - id: decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate-source.outputs.version }}
+          CANDIDATE_SHA: ${{ needs.validate-source.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          result=$(python3 scripts/release_gate.py --repository "$GITHUB_REPOSITORY" --version "$VERSION" --current-sha "$CANDIDATE_SHA")
+          echo "decision=$result" >> "$GITHUB_OUTPUT"
+  publish:
+    needs: [validate-source, source-checks, native-packages, installed-vsix, aggregate-and-verify, reusable-final-verification, release-state]
+    if: needs.validate-source.outputs.publish == 'true' && needs.release-state.outputs.decision == 'publish'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ needs.validate-source.outputs.candidate_sha }}
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/download-artifact@v4
         with:
-          go-version: '1.27.x'
-          cache: true
-      - name: Read and validate version
-        id: version
-        run: |
-          python3 - <<'PY'
-          import os, pathlib, re
-          version = pathlib.Path('build/package/VERSION').read_text().strip()
-          assert re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+', version)
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write('tag=v' + version + '\n')
-          PY
-      - name: Check whether the prerelease already exists
-        id: existing
+          name: release-assets-${{ needs.validate-source.outputs.candidate_sha }}
+          path: ${{ runner.temp }}/release-assets
+      - name: Recheck exact candidate and publish immutable release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ needs.validate-source.outputs.version }}
+          CANDIDATE_SHA: ${{ needs.validate-source.outputs.candidate_sha }}
         run: |
-          release_error="$RUNNER_TEMP/findrail-release-query.err"
-          tag_error="$RUNNER_TEMP/findrail-tag-query.err"
-          set +e
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" >/dev/null 2>"$release_error"
-          release_status=$?
-          set -e
-          if [[ $release_status -eq 0 ]]; then
-            echo 'exists=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          elif ! grep -q 'HTTP 404' "$release_error"; then
-            cat "$release_error" >&2
-            echo 'Could not determine whether release exists; refusing publication.' >&2
-            exit 1
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Lephiziel/findrail'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          if [[ "$GITHUB_EVENT_NAME" != push && "$GITHUB_EVENT_NAME" != workflow_dispatch ]]; then
+            echo "Unsupported publisher event: $GITHUB_EVENT_NAME" >&2; exit 1
           fi
-          set +e
-          gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>"$tag_error"
-          tag_status=$?
-          set -e
-          if [[ $tag_status -eq 0 ]]; then
-            echo 'exists=true' >> "$GITHUB_OUTPUT"
-          elif grep -q 'HTTP 404' "$tag_error"; then
-            echo 'exists=false' >> "$GITHUB_OUTPUT"
-          else
-            cat "$tag_error" >&2
-            echo 'Could not determine whether tag exists; refusing publication.' >&2
-            exit 1
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          python3 scripts/release_assets.py verify --directory "$RUNNER_TEMP/release-assets" --version "$VERSION" --revision "$CANDIDATE_SHA"
+          TAG="v$VERSION"
+          decision=$(python3 scripts/release_gate.py --repository "$GITHUB_REPOSITORY" --version "$VERSION" --current-sha "$CANDIDATE_SHA")
+          if [[ "$decision" != publish ]]; then
+            echo "Release/tag state changed after read-only gate ($decision); refusing to replace it." >&2; exit 1
           fi
-      - name: Build archives and license notices
-        if: steps.existing.outputs.exists == 'false'
-        run: python3 scripts/package.py --require-clean
-      - name: Smoke test the packaged Linux executable
-        if: steps.existing.outputs.exists == 'false'
-        run: |
-          python3 scripts/package.py --verify-only --output dist
-          python3 - <<'PY'
-          import pathlib, sys
-          sys.path.insert(0, 'scripts')
-          import package
-          version = pathlib.Path('build/package/VERSION').read_text().strip()
-          archive = pathlib.Path('dist') / f'findrail_{version}_linux-amd64.tar.gz'
-          package.verify_archive(archive, 'linux-amd64', version)
-          root = package.extract_verified(archive, pathlib.Path('/tmp/findrail-release-smoke'))
-          print(root / 'findrail')
+          mapfile -t INSTALL_ASSETS < <(python3 - "$RUNNER_TEMP/release-assets/release-manifest.json" <<'PY'
+          import json, sys
+          manifest=json.load(open(sys.argv[1], encoding='utf-8'))
+          print('\n'.join(sorted([item['basename'] for item in manifest['assets']] + ['release-manifest.json','SHA256SUMS.txt'])))
           PY
-          VERSION=$(cat build/package/VERSION)
-          python3 scripts/smoke.py --expected-version "$VERSION" "/tmp/findrail-release-smoke/findrail_${VERSION}_linux-amd64/findrail"
-          python3 scripts/mcp_smoke.py "/tmp/findrail-release-smoke/findrail_${VERSION}_linux-amd64/findrail"
-      - name: Publish alpha archives
-        if: steps.existing.outputs.exists == 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-          COMMIT: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          mapfile -t files < <(python3 scripts/package.py --verify-only --output dist)
-          assets=()
-          for file in "${files[@]}"; do assets+=("dist/$file"); done
-          assets+=(dist/SHA256SUMS.txt)
-          gh release create "$TAG" "${assets[@]}" --target "$COMMIT" --prerelease --title "Findrail $TAG" --notes-file docs/release-notes.md
+          )
+          files=()
+          for name in "${INSTALL_ASSETS[@]}"; do
+            test -f "$RUNNER_TEMP/release-assets/$name"
+            files+=("$RUNNER_TEMP/release-assets/$name")
+          done
+          gh release create "$TAG" "${files[@]}" --target "$CANDIDATE_SHA" --prerelease --title "Findrail $TAG" --notes-file docs/release-notes.md
