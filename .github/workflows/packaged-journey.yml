@@ -1,0 +1,67 @@
+name: Packaged candidate journey
+
+on:
+  workflow_dispatch:
+    inputs:
+      archive_url:
+        description: Public URL of the already-built candidate archive
+        required: true
+        type: string
+      archive_sha256:
+        description: SHA-256 of that archive
+        required: true
+        type: string
+      candidate_sha:
+        description: Full source revision recorded in BUILD-INFO.json
+        required: true
+        type: string
+      candidate_version:
+        description: Version reported by the packaged executable
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  linux-packaged-journey:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Download and verify candidate archive
+        env:
+          ARCHIVE_URL: ${{ inputs.archive_url }}
+          ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+        run: |
+          set -euo pipefail
+          case "$ARCHIVE_URL" in https://*) ;; *) echo 'archive_url must use HTTPS' >&2; exit 1;; esac
+          curl --fail --location --silent --show-error "$ARCHIVE_URL" -o /tmp/candidate.tar.gz
+          echo "$ARCHIVE_SHA256  /tmp/candidate.tar.gz" | sha256sum --check --status
+          mkdir /tmp/extracted
+          tar -xzf /tmp/candidate.tar.gz --directory /tmp/extracted --no-same-owner
+          test "$(find /tmp/extracted -name BUILD-INFO.json -type f | wc -l)" -eq 1
+          echo "CANDIDATE_DIR=$(dirname "$(find /tmp/extracted -name BUILD-INFO.json -type f)")" >> "$GITHUB_ENV"
+      - name: Install pinned matched Chromium and driver
+        run: |
+          python -m pip install --disable-pip-version-check 'selenium==4.35.0'
+          npm install --global --ignore-scripts '@puppeteer/browsers@2.10.6'
+          mkdir -p /tmp/chrome-for-testing
+          npx --yes @puppeteer/browsers@2.10.6 install chrome@139.0.7258.66 --path /tmp/chrome-for-testing
+          npx --yes @puppeteer/browsers@2.10.6 install chromedriver@139.0.7258.66 --path /tmp/chrome-for-testing
+      - name: Run compiled candidate journey
+        env:
+          FINDRAIL_CHROME: /tmp/chrome-for-testing/chrome/linux-139.0.7258.66/chrome-linux64/chrome
+          FINDRAIL_CHROMEDRIVER: /tmp/chrome-for-testing/chromedriver/linux-139.0.7258.66/chromedriver-linux64/chromedriver
+        run: |
+          set -euo pipefail
+          python scripts/packaged_journey.py "$CANDIDATE_DIR/findrail" \
+            --candidate-sha '${{ inputs.candidate_sha }}' \
+            --candidate-version '${{ inputs.candidate_version }}' \
+            --report /tmp/packaged-journey-report.json

@@ -35,6 +35,16 @@ def create_schema2(directory, source_root):
     return dbpath, folder_id
 
 
+def directory_digest(directory):
+    """Hash a stopped data directory including any SQLite WAL/SHM sidecars."""
+    digest = hashlib.sha256()
+    for path in sorted(p for p in pathlib.Path(directory).rglob('*') if p.is_file()):
+        digest.update(path.relative_to(directory).as_posix().encode())
+        digest.update(b'\0')
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
 def invoke(binary, args):
     cwd = pathlib.Path(args[args.index('--data-dir') + 1]).parent
     return subprocess.run([str(binary), *args], text=True, capture_output=True, timeout=20, check=True, cwd=cwd)
@@ -117,10 +127,10 @@ def main():
         historical.close()
         if before_state['sources'] != 1 or before_state['documents'] != 1 or before_state['search'] != 1 or before_state['pages'][1][0] != 2:
             raise SystemExit('synthetic alpha.2 baseline inventory/search/PDF evidence invalid')
-        before = hashlib.sha256(dbpath.read_bytes()).hexdigest()
+        before = directory_digest(data)
         backup = root / 'stopped full backup'
         shutil.copytree(data, backup)
-        backup_hash = hashlib.sha256((backup / 'findrail.db').read_bytes()).hexdigest()
+        backup_hash = directory_digest(backup)
         if before != backup_hash: raise SystemExit('backup hash differs')
         listing = json.loads(invoke(binary, ['sources', '--data-dir', str(data), '--json']).stdout)
         if len(listing['sources']) != 1: raise SystemExit('migration lost alpha.2 source')
@@ -150,9 +160,15 @@ def main():
         if result['total'] != 1: raise SystemExit('explicitly configured legacy DOCX was not indexed')
         restored = root / 'rollback restore'
         shutil.copytree(backup, restored)
-        if hashlib.sha256((restored / 'findrail.db').read_bytes()).hexdigest() != before:
+        if directory_digest(restored) != before:
             raise SystemExit('whole-directory rollback restore differed')
-        print('Packaged alpha.2 schema-2 upgrade passed: source inventory, FTS/PDF page, schema-6 disabled DOCX default, unavailable pre-scan diagnostics, Configure/index/restart, stopped full-directory rollback copy.')
+        restored_db = sqlite3.connect(restored / 'findrail.db')
+        restored_schema = restored_db.execute('PRAGMA user_version').fetchone()[0]
+        restored_state = restored_db.execute("SELECT id,content_hash FROM documents WHERE id='legacy-pdf-doc'").fetchone()
+        restored_db.close()
+        if restored_schema != 2 or restored_state != ('legacy-pdf-doc', 'synthetic-hash'):
+            raise SystemExit('rollback did not preserve the original schema-2 fixture')
+        print('Packaged alpha.2 schema-2 upgrade passed: source inventory, FTS/PDF page, schema-6 disabled DOCX default, unavailable pre-scan diagnostics, Configure/index/restart, stopped full-directory rollback including sidecars; restored schema remains 2. No reverse migration was attempted.')
 
 
 if __name__ == '__main__': main()
