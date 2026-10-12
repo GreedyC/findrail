@@ -14,6 +14,32 @@ import (
 	"github.com/Lephiziel/findrail/pkg/connector"
 )
 
+func TestIgnoreRuleRedactsSensitiveAncestorSamples(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "secret-folder"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".findrailignore"), []byte("secret-folder/\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := filesystem.New(root, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, report, err := c.ScanWithDiagnostics(context.Background(), func(connector.Document) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.RedactedSamples == 0 {
+		t.Fatal("sensitive user-excluded path was not redacted")
+	}
+	for _, sample := range report.Examples {
+		if strings.Contains(sample.Path, "secret-folder") {
+			t.Fatalf("sensitive ancestor retained in sample: %+v", sample)
+		}
+	}
+}
+
 func writeDOCX(t *testing.T, path string) {
 	t.Helper()
 	var b bytes.Buffer

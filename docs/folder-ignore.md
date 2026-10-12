@@ -69,10 +69,11 @@ contents. Source builds only; this is not a shipped alpha.2 capability.
 
 ## Matcher resource spot check
 
-One Linux amd64 run with Go `go1.27.2-X:nodwarf5` ran
+One Linux amd64 run with Go `go1.27.2` ran
 `go test ./internal/ignorepolicy -run '^$' -bench BenchmarkNearLimitMatch -benchtime=1x -benchmem`:
-256 active rules (64 segments each, about 49 KiB input) against a 4,095-byte,
-256-segment path took 396,660 ns and allocated 445,856 bytes (4,055 allocations).
+64 active rules (64 segments each, 4,096 compiled segments, about 12 KiB input)
+against a 4,095-byte, 256-segment path took 466,173 ns and allocated 445,856 bytes
+(4,055 allocations).
 This is one bounded-work spot check, not p95, scale certification or a security
 sandbox claim.
 

@@ -199,7 +199,8 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 			}
 			if decision.Excluded {
 				report.Skipped++
-				d.Add("excluded_path", "directory", filepath.ToSlash(strings.TrimPrefix(path, c.source.Root+string(filepath.Separator))), false)
+				relative := filepath.ToSlash(strings.TrimPrefix(path, c.source.Root+string(filepath.Separator)))
+				d.Add("excluded_path", "directory", relative, sensitiveRelativePath(relative))
 				return filepath.SkipDir
 			}
 			return nil
@@ -261,7 +262,8 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 		}
 		if decision.Excluded {
 			report.Skipped++
-			d.Add("excluded_path", "file", filepath.ToSlash(strings.TrimPrefix(path, c.source.Root+string(filepath.Separator))), false)
+			relative := filepath.ToSlash(strings.TrimPrefix(path, c.source.Root+string(filepath.Separator)))
+			d.Add("excluded_path", "file", relative, sensitiveRelativePath(relative))
 			return nil
 		}
 		rel, err := filepath.Rel(c.source.Root, path)
@@ -408,6 +410,12 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 }
 
 func policyDecision(ctx context.Context, p *ignorepolicy.Policy, root, path string, dir bool) ignorepolicy.Decision {
+	if ctx.Err() != nil {
+		return ignorepolicy.Decision{Reason: "canceled"}
+	}
+	if p == nil {
+		return ignorepolicy.Decision{Reason: "eligible"}
+	}
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		return ignorepolicy.Decision{}
@@ -691,6 +699,15 @@ func builtinExclusion(name string, directory, symlink, regular, pdfEnabled, docx
 func sensitive(name string) bool {
 	lower := strings.ToLower(name)
 	return strings.Contains(lower, "credential") || strings.Contains(lower, "secret") || strings.Contains(lower, "private_key")
+}
+
+func sensitiveRelativePath(relative string) bool {
+	for _, part := range strings.Split(relative, "/") {
+		if sensitive(part) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Connector) validateRoot() error {

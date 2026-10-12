@@ -43,3 +43,20 @@ func TestIgnoreNegationCannotOverrideSpecialEntry(t *testing.T) {
 		t.Fatalf("special-entry hard decision missing: %+v", report.Reasons)
 	}
 }
+
+func TestAbsentIgnorePreservesUnixPaths(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"colon:name.md", `back\slash.md`} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("ordinary indexed text"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, err := filesystem.New(root, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := c.Scan(context.Background(), func(connector.Document) error { return nil })
+	if err != nil || r.Seen != 2 {
+		t.Fatalf("Scan() without policy: seen=%d err=%v, want 2 documents", r.Seen, err)
+	}
+}

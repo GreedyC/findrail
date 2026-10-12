@@ -99,6 +99,19 @@ func TestCancellationDuringPolicyParseAndMatch(t *testing.T) {
 		t.Fatalf("match cancellation: %s", got)
 	}
 }
+
+func TestCompiledSegmentBudget(t *testing.T) {
+	line := strings.Repeat("a/", MaxPatternSegments-1) + "a\n"
+	raw := strings.Repeat(line, MaxCompiledSegments/MaxPatternSegments)
+	if _, err := Parse(context.Background(), []byte(raw)); err != nil {
+		t.Fatalf("Parse() at segment limit: %v", err)
+	}
+	_, err := Parse(context.Background(), []byte(raw+"a\n"))
+	var policyErr *Error
+	if !errors.As(err, &policyErr) || policyErr.Code != "compiled_limit" {
+		t.Fatalf("Parse() above segment limit: %v, want compiled_limit", err)
+	}
+}
 func FuzzParseAndMatch(f *testing.F) {
 	f.Add("*.log\n", "a.log")
 	f.Add("/cache/**\n", "cache/a")
@@ -139,7 +152,7 @@ func FuzzValidateRelativePath(f *testing.F) {
 
 func BenchmarkNearLimitMatch(b *testing.B) {
 	line := strings.Repeat("a*/", MaxPatternSegments-1) + "a*\n"
-	raw := strings.Repeat(line, MaxRules)
+	raw := strings.Repeat(line, MaxCompiledSegments/MaxPatternSegments)
 	p, err := Parse(context.Background(), []byte(raw))
 	if err != nil {
 		b.Fatal(err)

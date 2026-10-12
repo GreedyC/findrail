@@ -15,6 +15,7 @@ const MaxInput = 64 << 10
 const MaxRules = 256
 const MaxPatternBytes = 1024
 const MaxPatternSegments = 64
+const MaxCompiledSegments = 4096
 const MaxPathBytes = 4096
 const MaxPathSegments = 256
 const maxMatchWork = 16 << 20
@@ -63,6 +64,7 @@ func Parse(ctx context.Context, data []byte) (*Policy, error) {
 	}
 	data = bytesBOM(data)
 	p := &Policy{fingerprint: Fingerprint(data)}
+	compiledSegments := 0
 	text := strings.ReplaceAll(string(data), "\r\n", "\n")
 	if strings.ContainsRune(text, '\r') {
 		return nil, &Error{Code: "invalid_line_ending"}
@@ -136,9 +138,10 @@ func Parse(ctx context.Context, data []byte) (*Policy, error) {
 		if len(p.rules) >= MaxRules {
 			return nil, &Error{Code: "too_many_rules", Line: n}
 		}
-		if len(p.rules) > 0 && len(p.rules)+len(parts) > 4096 {
+		if compiledSegments+len(parts) > MaxCompiledSegments {
 			return nil, &Error{Code: "compiled_limit", Line: n}
 		}
+		compiledSegments += len(parts)
 		p.rules = append(p.rules, Rule{pattern: line, display: display, line: n, negated: neg, dirOnly: dir, anchored: anchored, segments: parts})
 	}
 	return p, nil
