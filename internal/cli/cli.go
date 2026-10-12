@@ -31,6 +31,7 @@ Usage:
   findrail start [--data-dir DIR] [--addr 127.0.0.1:7766] [--no-open] [DIRECTORY]
   findrail demo [--addr 127.0.0.1:7766] [--no-open]
   findrail search [--data-dir DIR] [--limit N] [--source ID] [--mode MODE] [--format FORMAT] [--path-prefix PATH] [--title-contains TEXT] [--json] QUERY
+  findrail evaluate --queries FILE --source ID [--data-dir DIR] [--json]
   findrail sources [--data-dir DIR] [--json]
   findrail source-report --data-dir DIR --source SOURCE_ID [--json] [--show-paths]
   findrail export-source --data-dir DIR --source ID --output FILE [--timeout 2m] [--json]
@@ -61,6 +62,9 @@ func Run(ctx context.Context, args []string, out, stderr io.Writer, version stri
 	if args[0] == "version" {
 		_, err := fmt.Fprintln(out, "findrail", version)
 		return err
+	}
+	if args[0] == "evaluate" {
+		return runEvaluate(ctx, args[1:], out, stderr)
 	}
 	if args[0] == "explain-path" {
 		return runExplainPath(ctx, args[1:], out, stderr)

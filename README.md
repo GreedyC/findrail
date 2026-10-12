@@ -201,6 +201,7 @@ findrail start
 findrail index --max-pdf-bytes 0 /path/to/text-only
 findrail search --limit 10 "payment webhook"
 findrail search --source SOURCE_ID --json "architecture"
+findrail evaluate --queries examples/evaluation/queries.json --source SOURCE_ID --json
 findrail sources --json
 findrail source-report --data-dir .findrail --source SOURCE_ID
 findrail serve --sync-interval 5m
