@@ -9,10 +9,9 @@ index while the app runs. Keyword search needs no AI account and uploads no
 documents. Source builds also provide a scoped, read-only stdio MCP server.
 Connected services and optional semantic retrieval are the next product stages.
 
-**Status: local alpha, `0.1.0-alpha.2`.** It is ready for testing, not a stable
-release. Public GitHub snapshots, portable source snapshots, bounded local DOCX extraction, MCP, and the
-new Advanced query/filter behavior are source-build features. Existing alpha.2
-release archives do not include DOCX, MCP, portable snapshots, or these search additions.
+**Status: local alpha.** The latest published release is `0.1.0-alpha.2`.
+Alpha.3 is in preparation and is not yet available to download. This is testing
+software, not a stable release. See the [version matrix](docs/launch/press-kit.md#version-boundaries).
 Private GitHub, OCR, semantic search and desktop launching remain on the roadmap.
 
 [Releases](https://github.com/Lephiziel/findrail/releases) ·
@@ -24,7 +23,8 @@ Private GitHub, OCR, semantic search and desktop launching remain on the roadmap
 [Roadmap](docs/roadmap.md) · [VS Code client](docs/vscode.md) · [Contributing](CONTRIBUTING.md) ·
 [Русский](docs/ru/overview.md)
 
-[![Findrail screen recording: keyword search and PDF page preview](docs/assets/demo.gif)](docs/assets/demo.mp4)
+[Older demo: this recording shows the narrower alpha.2 workflow, not newer
+source-management, snapshot, collection or evaluation features.](docs/assets/demo.mp4)
 
 [Try the three-document demo](docs/demo.md) ·
 [Watch / download the 37-second video](docs/assets/demo.mp4) ·
@@ -37,14 +37,14 @@ Recorded from the running web interface using the fictional demo documents.
 The video shows search, PDF page 2 and an automatic refresh after a note edit.
 The GIF is a short preview; use the MP4 for the full recording and larger text.
 
-## Install and try
+## Install and try — published alpha.2
 
 Download the archive for Linux, macOS or Windows from
 [Releases](https://github.com/Lephiziel/findrail/releases), compare it against
 `SHA256SUMS.txt`, and extract it. Go and an external database are not required.
-These alpha binaries are unsigned; macOS may require an explicit allowance in
-Privacy & Security. Each archive contains installation instructions and license
-notices.
+These alpha binaries are unsigned; macOS may require a per-app allowance in
+Privacy & Security. Do not disable system-wide security protections. Each archive
+contains installation instructions and license notices.
 
 Direct downloads for **`0.1.0-alpha.2`**:
 
@@ -57,8 +57,9 @@ Direct downloads for **`0.1.0-alpha.2`**:
 | Windows, x86-64 | [Windows amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.2/findrail_0.1.0-alpha.2_windows-amd64.zip) |
 
 [Checksums for these archives](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.2/SHA256SUMS.txt).
-These archives cover local search, `demo` and `start`. MCP and public GitHub
-snapshots currently require a source build; see the [version table](docs/launch/press-kit.md#version-boundaries).
+These archives cover the alpha.2 workflow only; the [version table](docs/launch/press-kit.md#version-boundaries)
+separates published alpha.2, current main/candidate alpha.3 and unpublished
+Marketplace/Open VSX distribution.
 
 ```bash
 # Linux / macOS, inside the extracted directory:
@@ -92,12 +93,14 @@ your registered folders. Ctrl+C stops it. No background daemon
 is installed. You can register another folder using `index` while the server
 runs; it will appear automatically.
 
-Source builds also let `start` create an empty index and manage folder/public
-GitHub sources in the Sources panel. Folder selection uses an absolute path on
-the machine running Findrail; browser file pickers cannot choose a server path.
-Manual GitHub refresh, job cancellation and logical removal are documented in
-[source management](docs/source-management.md). Existing release archives do
-not yet include this new web management flow.
+Alpha.2 archives do not include the newer first-run source manager. Alpha.3
+preparation documents are not download links. When alpha.3 is actually released,
+the intended first path is: download a standalone archive, verify its checksum,
+extract it, start with an empty index, choose **Add folder**, find a technical
+document, inspect **Preview** (including its PDF page), add two exact passages
+with a note, download the Markdown citations, then restart and confirm startup.
+No initial MCP, GitHub, VS Code, or source-build setup is required. See the
+[install/upgrade guide](build/package/INSTALL.txt) and [manual smoke sheet](docs/release-smoke-alpha3.md).
 
 ### Build from source
 
@@ -142,7 +145,11 @@ chosen document-size limits to that folder, just like `index`; omitting DIRECTOR
 resumes stored sources with their existing limits. Initial extraction errors
 stop startup and preserve the prior committed inventory.
 
-## What works today
+## Current main behavior (alpha.3 candidate; alpha.2 archives differ)
+
+The features below are present in the current source tree. The published alpha.2
+archives do not contain all of them; alpha.3 is not yet a download. See the
+[version matrix](docs/launch/press-kit.md#version-boundaries).
 
 - A built-in three-document demo and one-command startup for your own folders.
 - Explicit local folders containing UTF-8 text, Markdown and common source files.
@@ -185,10 +192,12 @@ The index stores plaintext text and original paths. It is **not encrypted at
 rest**. On Unix, newly created directories and database files use private modes.
 There is no runtime telemetry. See [data handling](docs/data-handling.md).
 
-Upgrading from the foundation migrates the existing index automatically. Existing
-sources retain their previous policy; re-run `index` to enable formats. Back up the
-data directory while Findrail is stopped before upgrading; the older binary
-cannot read schema 5.
+Schema upgrades are forward-only. Existing sources retain their previous format
+policy; legacy DOCX remains disabled until explicitly enabled. Stop Findrail and
+back up the entire data directory (including SQLite WAL/SHM) before upgrading.
+An older binary cannot read schema 6; rollback means restoring the whole backup to
+a separate location and using a binary compatible with that schema. See the
+[complete install, upgrade, rollback and uninstall guide](build/package/INSTALL.txt).
 
 ## Commands
 
@@ -229,11 +238,11 @@ Linux; `~/Library/Application Support/Findrail` on macOS;
 | Capability | Local alpha | Next stages |
 |---|---|---|
 | Documents | Text / Markdown / code / PDF text / bounded DOCX body text in source builds | optional OCR |
-| Sources | Local folders; public GitHub snapshots and frozen portable archive imports in source builds | Private GitHub, bookmarks, work tools |
+| Sources | Local folders; public GitHub snapshots and frozen portable archive imports | Private GitHub, bookmarks, work tools |
 | Freshness | File watching and full reconciliation | Resumable remote sync |
 | Retrieval | Literal search, opt-in Advanced queries, source/format/path/title filters, PDF evidence | Query evaluation, optional semantics |
-| Clients | CLI, local web UI, HTTP, read-only stdio MCP and VS Code source-build client | Desktop launcher, broader editor support |
-| Extensions | Experimental connector contract | Versioned SDK and conformance harness |
+| Clients | CLI, local web UI, HTTP, read-only stdio MCP and VS Code source-build client (server/client API v1) | Desktop launcher, broader editor support |
+| Extensions | Experimental connector kit; independent adoption not established | Stable SDK and conformance harness |
 
 The advantage to validate is easy installation, useful retrieval, inspectable
 sources and local ownership. Unified search already exists; user testing must

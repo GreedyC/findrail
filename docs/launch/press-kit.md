@@ -37,45 +37,40 @@ No Go installation is needed for these archives. They are unsigned alpha
 binaries; macOS may require an explicit allowance in Privacy & Security.
 The [demo guide](../demo.md) includes a synthetic live-refresh test.
 
-## Current source-build development
+## Candidate first path — not a download offer
 
-Main now includes web source management in `start`, bounded DOCX body-text
-indexing, opt-in Advanced lexical queries and server-side format/path/title
-filters, offline `doctor` diagnostics, public GitHub file snapshots and
-read-only MCP. PRs #22–28 also add portable indexed-text snapshots, committed
-indexing reports, an experimental connector conformance kit, a separately
-packaged VS Code client, folder ignore rules, session evidence collections with
-Markdown export and read-only literal query evaluation. Existing alpha.2
-archives do not include these additions. See the
-[12 October status update](update-2026-10-12.md).
-
-The stronger next release demonstration is a selected folder with notes, code,
-text PDFs and DOCX, with inspectable source evidence and explicit search
-controls. DOCX previews are plain body text without pages or Word layout.
-Advanced phrases follow FTS tokenization; they are not byte-exact or semantic
-matches. Literal remains the default query mode.
+After the archive is actually released: download the standalone archive, verify
+its checksum against the manifest from that release, extract, start into an empty
+index, choose **Add folder**, find a technical document, inspect Preview and the
+PDF page, save two exact passages with a note, download Markdown, then restart.
+No initial MCP, GitHub, VS Code or source build is needed. Until publication,
+use alpha.2 for the released workflow above; candidate notes are not asset links.
+See [install/upgrade](../../build/package/INSTALL.txt), [candidate notes](../release-notes-alpha3-candidate.md),
+and the [manual smoke sheet](../release-smoke-alpha3.md).
 
 ## Version boundaries
 
-| Capability | Published alpha.2 archives | Current source build |
-|---|---|---|
-| Local text, Markdown and common code files | Included | Included |
-| Text PDFs, page attribution, snapshot preview, Copy location | Included | Included |
-| Folder refresh, `start`, three-document `demo` | Included | Included |
-| Copy preview text as Markdown with its source | Not included | Included |
-| Scoped read-only stdio MCP | Not included | Included; [configuration](../mcp.md) |
-| Commit-pinned public GitHub text/code file snapshots | Not included | Included; [instructions](../github.md) |
-| Empty-index onboarding and web source management | Not included | Included; [instructions](../source-management.md) |
-| Bounded DOCX body-text indexing and folder policy | Not included | Included; [supported subset](../docx.md) |
-| Opt-in Advanced queries; format/path/title filters | Not included | Included; [query semantics](../search-query.md) |
-| Read-only offline `doctor` diagnostics | Not included | Included |
-| Portable indexed-text snapshots and isolated frozen imports | Not included | Included; [scope](../portable-snapshots.md) |
-| Committed indexing reports and folder ignore rules | Not included | Included; [reports](../indexing-diagnostics.md), [rules](../folder-ignore.md) |
-| Session evidence collections and Markdown export | Not included | Included; in-tab memory only; [scope](../evidence-collections.md) |
-| Read-only literal `evaluate` command | Not included | Included; path-set agreement, not a semantic benchmark; [corpus](../search-evaluation.md) |
-| Read-only VS Code client | Not compatible | Separate source-built VSIX; [installation](../vscode.md); no Marketplace claim |
-| Experimental connector conformance kit | Not included | Public test profile and separate-module sample; independent-contributor gate remains open |
-| OCR, semantic retrieval, private GitHub | Not included | Not implemented |
+| Capability | Published alpha.2 archives | Main / alpha.3 candidate (not yet released) | Separate distribution |
+|---|---|---|---|
+| Local text, Markdown and common code files | Included | Included | — |
+| Text PDFs, page attribution, snapshot preview, Copy location | Included | Included | — |
+| Folder refresh, `start`, three-document `demo` | Included | Included | — |
+| Copy preview text as Markdown with its source | Not included | Included | — |
+| Scoped read-only stdio MCP | Not included | Included; [configuration](../mcp.md) | — |
+| Commit-pinned public GitHub file snapshots | Not included | Included; [instructions](../github.md) | — |
+| Empty-index onboarding and web source management | Not included | Included; [instructions](../source-management.md) | — |
+| Bounded DOCX body-text indexing; legacy sources disabled by default | Not included | Included; [supported subset](../docx.md) | — |
+| Advanced lexical queries and format/path/title filters | Not included | Included; [query semantics](../search-query.md) | — |
+| Read-only offline `doctor` | Not included | Included | — |
+| Portable snapshots | Not included | Indexed plaintext and provenance, not original files; import is frozen, not a frozen database; [scope](../portable-snapshots.md) | — |
+| Indexing report | Not included | Last committed successful scan only, not failed-attempt history; [details](../indexing-diagnostics.md) | — |
+| `.findrailignore` | Not included | Root-only rules; failed policy scan retains prior committed content/report; [syntax](../folder-ignore.md) | — |
+| Evidence collection | Not included | In-tab only; reload clears it; explicit Markdown download; [scope](../evidence-collections.md) | — |
+| `evaluate` | Not included | Read-only Literal path sets, 1–100 cases, at most 100 results/case; incomplete is error; mismatch nonzero after full report; [details](../search-evaluation.md) | — |
+| VS Code read-only client | Not included | Requires compatible server/client API v1; [setup](../vscode.md) | VSIX installable locally; not published on Marketplace/Open VSX |
+| Connector kit | Not included | Experimental; independent adoption not established; [guide](../connectors.md) | — |
+| Marketplace / Open VSX listings | Not published | Not published | Not published |
+| OCR, semantic retrieval, private GitHub | Not included | Not implemented | — |
 
 Search is literal keyword retrieval, not an AI answer or a promise of semantic
 recall. The app searches explicitly indexed sources and previews saved text.
@@ -91,12 +86,10 @@ indexing does not establish another client's privacy policy.
 - [PNG from the recording](../assets/demo.png)
 - [Three-document demo instructions](../demo.md)
 
-The recording uses synthetic documents and illustrates the local search
-workflow. It is not a performance benchmark, a customer testimonial or a demo
-of the source-only MCP / GitHub features. The older UI wording in the recording
-does not override the version table above.
-The same recording does not show the new DOCX, source-management or Advanced
-workflow; use it as the released local-demo reference.
+The recording uses synthetic documents and shows the narrower old alpha.2 demo
+workflow. It is not a performance benchmark, a customer testimonial, or a demo
+of the new source management, portable imports, collections or evaluation. It is
+not evidence for candidate/release UI checks; use the manual smoke sheet for that.
 
 ## Links and feedback
 

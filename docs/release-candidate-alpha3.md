@@ -1,81 +1,73 @@
 # alpha.3 release-candidate rehearsal (not a release)
 
-This document records local rehearsal work for a candidate. It does not mean
-alpha.3 is published, reviewed, signed, or ready to announce. Current published
-downloads remain alpha.2. No tag or release was created and
-`build/package/VERSION` remains unchanged.
+This document records preparation evidence only. It does not mean alpha.3 is
+published, signed, or certified for every user/platform. Published downloads
+remain alpha.2. No release was created by this documentation work.
 
 ## Candidate scope
 
-The package builder now emits BUILD-INFO.json, deterministic archive metadata,
-and an explicit checksum manifest. The extracted Linux/amd64 candidate was
-smoke-tested from a path containing spaces and Unicode, outside the repository.
-The archive included the existing CLI, HTTP and MCP functionality, including
-DOCX. `findrail doctor` offers read-only, redacted JSON/human diagnostics and
-distinguishes an absent index from unsupported/corrupt data.
-
-Candidate version: `0.1.0-alpha.3` (explicit build override only).
-Source revision: `6f32727fb8eed1d804e0ed48049ca8ef577376e1`; candidate was built
-from a clean checkout (`BUILD-INFO.json` marks provenance clean). Go toolchain:
-`go version go1.27.1-X:nodwarf5 linux/amd64` (local rehearsal environment).
-Current schema: 4 (migrations 1–4); legacy folder DOCX policy defaults disabled.
+Candidate version: `0.1.0-alpha.3` (explicit build override only). Current main
+at the start of this documentation task was
+`ed249148d8b01a17480b3acfeaf077bc7dc4395c`; the packaged-candidate PR #31 head
+was `8d6f629ac3824a86d77cf9f61b681923c20321fc`, based on release-pipeline PR #30
+head `38e9a044e8c186d8ced2659444cf746804e48c91`. Do not treat this report's
+documentation commit as a rebuilt package revision. Current schema is 6
+(migrations 1–6); published alpha.2 is legacy schema 2 and legacy DOCX is disabled
+by default. The PR #31 runs validate its submitted candidate head, not an eventual
+post-merge main/release SHA.
 
 ## Artifact and platform status
 
-| Target | Build | Archive/checksum | Extracted native smoke | Browser QA |
-|---|---|---|---|---|
-| linux-amd64 | native build passed | metadata/checksum passed | smoke + MCP + alpha.2 upgrade passed | not run |
-| linux-arm64 | native build passed | metadata/checksum passed | smoke + MCP passed | not run |
-| darwin-amd64 | native build passed (macos-15-intel) | metadata/checksum passed | smoke + MCP passed | not run |
-| darwin-arm64 | native build passed (macos-14) | metadata/checksum passed | smoke + MCP passed | not run |
-| windows-amd64 | native build passed | metadata/checksum passed | smoke + MCP passed | not run |
+| Target | Cross-compilation | Native package build | Archive + checksum | Extracted native packaged journey | Actual interactive browser / installed editor |
+|---|---|---|---|---|---|
+| linux-amd64 | not used as acceptance evidence | passed on Linux runner | passed | passed in PR #31 packaged-native | Candidate browser smoke pending; editor install not run |
+| linux-arm64 | not used as acceptance evidence | passed on Linux ARM runner | passed | passed in PR #31 packaged-native | Candidate browser smoke pending; editor install not run |
+| darwin-amd64 | not used as acceptance evidence | passed on macOS Intel runner | passed | passed in PR #31 packaged-native | Finder/Gatekeeper and candidate browser smoke not run |
+| darwin-arm64 | not used as acceptance evidence | passed on macOS ARM runner | passed | passed in PR #31 packaged-native | Finder/Gatekeeper and candidate browser smoke not run |
+| windows-amd64 | not used as acceptance evidence | passed on Windows runner | passed | passed in PR #31 packaged-native | Candidate browser smoke pending; editor install not run |
 
-Repository checks passed locally: `gofmt`, `git diff --check`, `go test ./...`,
-`go test -race ./...`, `go vet ./...`, `go mod verify`, CGO-free build, UI Node
-tests, and packaging unit tests.
+PR #30 CI, race, UI and native packaged checks passed, including five native
+package targets; PR #31's packaged-native matrix also passed for all five targets.
+See [PR #30 checks](https://github.com/Lephiziel/findrail/actions/runs/38240473871),
+[PR #30 packaged matrix](https://github.com/Lephiziel/findrail/actions/runs/38241009225),
+[PR #31 latest checks](https://github.com/Lephiziel/findrail/actions/runs/38242300031),
+and [PR #31 packaged matrix](https://github.com/Lephiziel/findrail/actions/runs/38242299947).
+PR #31 also has a separate failed Windows check run
+([run](https://github.com/Lephiziel/findrail/actions/runs/38242262198)); a later
+Windows check run passed. Report both; do not erase the earlier failure.
 
-The PR CI and native packaged rehearsal matrix completed successfully on the
-latest implementation; see [package rehearsal run](https://github.com/Lephiziel/findrail/actions/runs/37722720804)
-and [CI run](https://github.com/Lephiziel/findrail/actions/runs/37722720869).
-
-Local artifact staging: `/tmp/opencode/alpha3-candidate-final8` (not committed and
-not uploaded). A repeated native Linux/amd64 package run produced byte-identical
-archive and checksum manifest. These results do not establish Gatekeeper
-approval, Finder behavior, or browser interaction. The native jobs validate
-headless packaged journeys, not end-user desktop/browser behavior.
+Cross-compilation is not used as evidence for native execution; the named native
+jobs build, package, extract and run on the target OS/architecture. The PR #27
+[evidence browser run](https://github.com/Lephiziel/findrail/actions/runs/38144655363)
+passed its feature browser journey, but does not establish the packaged alpha.3
+empty-start/Add-folder/restart workflow. PR #31's manual candidate-browser
+workflow is not shown as executed. PR #29's [editor checks](https://github.com/Lephiziel/findrail/actions/runs/38214019150)
+passed the client matrix and Linux extension-host interaction; this is not an
+installed VS Code editor/VSIX test. Manual macOS Finder/Gatekeeper behavior is
+not evidenced. Pending/not-run checks remain pending.
 
 ## Upgrade / rollback contract and outstanding work
 
-The published alpha.2 tag `v0.1.0-alpha.2` resolves to
-`7573802a45962702a66eeecc8fb79a4ac2d680db`; its source contains migrations 001
-and 002 only, so its index schema is 2. The packaged Linux binary was exercised
-against a synthetic schema-2 index generated directly from those historical SQL
-migrations (not by opening it with the current writable store). The journey
-confirms source inventory, PDF page-2 FTS evidence, migration to schema 4, and
-the legacy DOCX disabled default. The separate existing migration-3 lifecycle
-test verifies GitHub revision metadata survives migration to schema 4. It copies
-and hashes a stopped whole-directory backup and
-restores that backup into a separate test location; it does not run an old binary
-against schema 4. The packaged UI journey then explicitly enables legacy DOCX,
-waits for the atomic Configure job, restarts, and verifies the indexed body and
-persisted policy. No reverse migration is supported.
+Published alpha.2 tag `v0.1.0-alpha.2` resolves to
+`7573802a45962702a66eeecc8fb79a4ac2d680db`; it has only migrations 001–002 and
+schema 2. PR #31's synthetic legacy fixture exercises the packaged migration to
+schema 6 and confirms legacy DOCX remains disabled. Its upgrade journey backs up
+and restores the stopped whole data directory separately, retaining WAL/SHM when
+present; it does not run the old alpha.2 binary against schema 6. Never point an
+old binary at schema 6. No reverse migration exists. Migration-failure rollback,
+manual browser interaction, installed editor/VSIX, Gatekeeper/Finder behavior,
+and real-user retrieval remain distinct checks and must not be inferred from the
+native package matrix.
 
-**Release blockers:** simulated migration-failure atomicity is covered by a
-storage test, but not by fault injection in the packaged journey. Doctor's
-canceled-context, busy-timeout, and read-only-permission checks pass in local/CI
-coverage. Native packaged checks passed for all five targets. Manual browser
-interaction, macOS Gatekeeper/Finder behavior, and real-user retrieval
-evaluation remain untested. No release should be made based on this report.
+## Dated historical evidence (schema 4; not current readiness)
 
-## Future publication checklist
+The earlier rehearsal recorded on 2026-10-12 for source
+`6f32727fb8eed1d804e0ed48049ca8ef577376e1` tested schema 4 / migrations 1–4 and
+the then-current package matrix. Those results are historical only: they do not
+prove schema-6 migration, PR #22–28 behavior, PR #30–31 candidate checks, or
+readiness of the current candidate. Keep them for provenance, not as current
+release evidence.
 
-1. Review and merge the readiness change.
-2. Wait for full main CI and package-native rehearsal to pass.
-3. In a separately authorized change, update `build/package/VERSION` and
-   published release notes.
-4. Verify the alpha-release workflow's actual trigger: successful CI `push` to
-   `main` can invoke it, and the workflow creates a GitHub prerelease when its
-   version tag is absent.
-5. Inspect every uploaded archive, embedded instructions, provenance and
-   SHA256SUMS; verify installed journeys.
-6. Only then update README downloads and press kit to the published release.
+For post-publication source-only → released wording, use the separate
+[promotion checklist](release-alpha3-promotion.md). It is intentionally not
+applied by this preparation PR.
