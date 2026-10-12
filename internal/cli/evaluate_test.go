@@ -265,3 +265,144 @@ func TestRunEvaluateSuccessJSON(t *testing.T) {
 		t.Errorf("result.ActualPaths=%#v, want %#v", result.ActualPaths, wantPaths)
 	}
 }
+
+func TestRunEvaluateMismatchText(t *testing.T) {
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+
+	ctx := context.Background()
+
+	dataDir := t.TempDir()
+	sourceDir := t.TempDir()
+
+	queriesPath := filepath.Join(dataDir, "queries.json")
+	filePath := filepath.Join(sourceDir, "a.md")
+
+	if err := os.WriteFile(filePath, []byte(`hello`), 0644); err != nil {
+		t.Fatalf("os.WriteFile() error=%v", err)
+	}
+	if err := os.WriteFile(queriesPath, []byte(`[{"query":"hello","expected_paths":["b.md"]}]`), 0644); err != nil {
+		t.Fatalf("os.WriteFile() error=%v", err)
+	}
+
+	store, storeErr := sqlite.Open(ctx, dataDir)
+	if storeErr != nil {
+		t.Fatalf("sqlite.Open() error=%v, want no error", storeErr)
+	}
+	storeClosed := false
+	defer func() {
+		if !storeClosed {
+			_ = store.Close()
+		}
+	}()
+	conn, connErr := filesystem.New(sourceDir, filesystem.DefaultMaxBytes)
+	if connErr != nil {
+		t.Fatalf("filesystem.New() error=%v, want no error", connErr)
+	}
+
+	indexed, indexErr := ingest.Run(ctx, store, conn)
+	if indexErr != nil {
+		t.Fatalf("ingest.Run() error=%v, want no error", indexErr)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("store.Close() error=%v, want no error", err)
+	}
+	storeClosed = true
+
+	args := []string{"--queries", queriesPath, "--source", indexed.Source.ID, "--data-dir", dataDir}
+	err := runEvaluate(ctx, args, &out, &stderr)
+	if !errors.Is(err, ErrMismatchedResults) {
+		t.Fatalf("runEvaluate() error=%v, want ErrMismatchedResults", err)
+	}
+
+	for _, want := range []string{
+		"1 cases: 0 passed, 1 failed",
+		`query: "hello"`,
+		`missing_paths=["b.md"]`,
+		`unexpected_paths=["a.md"]`,
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output %q does not contain %q", out.String(), want)
+		}
+	}
+}
+
+func TestRunEvaluateMismatchJSON(t *testing.T) {
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+
+	ctx := context.Background()
+
+	dataDir := t.TempDir()
+	sourceDir := t.TempDir()
+
+	queriesPath := filepath.Join(dataDir, "queries.json")
+	filePath := filepath.Join(sourceDir, "a.md")
+
+	if err := os.WriteFile(filePath, []byte(`hello`), 0644); err != nil {
+		t.Fatalf("os.WriteFile() error=%v", err)
+	}
+	if err := os.WriteFile(queriesPath, []byte(`[{"query":"hello","expected_paths":["b.md"]}]`), 0644); err != nil {
+		t.Fatalf("os.WriteFile() error=%v", err)
+	}
+
+	store, storeErr := sqlite.Open(ctx, dataDir)
+	if storeErr != nil {
+		t.Fatalf("sqlite.Open() error=%v, want no error", storeErr)
+	}
+	storeClosed := false
+	defer func() {
+		if !storeClosed {
+			_ = store.Close()
+		}
+	}()
+	conn, connErr := filesystem.New(sourceDir, filesystem.DefaultMaxBytes)
+	if connErr != nil {
+		t.Fatalf("filesystem.New() error=%v, want no error", connErr)
+	}
+
+	indexed, indexErr := ingest.Run(ctx, store, conn)
+	if indexErr != nil {
+		t.Fatalf("ingest.Run() error=%v, want no error", indexErr)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("store.Close() error=%v, want no error", err)
+	}
+	storeClosed = true
+
+	args := []string{"--queries", queriesPath, "--source", indexed.Source.ID, "--data-dir", dataDir, "--json"}
+	err := runEvaluate(ctx, args, &out, &stderr)
+	if !errors.Is(err, ErrMismatchedResults) {
+		t.Fatalf("runEvaluate() error=%v, want ErrMismatchedResults", err)
+	}
+
+	var report evaluation.Report
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v; output=%q", err, out.String())
+	}
+	if report.SourceID != indexed.Source.ID {
+		t.Errorf("report.SourceID=%q, want %q", report.SourceID, indexed.Source.ID)
+	}
+	if report.Total != 1 {
+		t.Errorf("report.Total=%d, want 1", report.Total)
+	}
+	if report.Passed != 0 {
+		t.Errorf("report.Passed=%d, want 0", report.Passed)
+	}
+	if report.Failed != 1 {
+		t.Errorf("report.Failed=%d, want 1", report.Failed)
+	}
+	if report.ExactMatchRate != 0 {
+		t.Errorf("report.ExactMatchRate=%v, want 0", report.ExactMatchRate)
+	}
+	if len(report.Results) != 1 {
+		t.Fatalf("len(report.Results)=%d, want 1", len(report.Results))
+	}
+	result := report.Results[0]
+	if !reflect.DeepEqual(result.MissingPaths, []string{"b.md"}) {
+		t.Errorf("result.MissingPaths=%#v, want %#v", result.MissingPaths, []string{"b.md"})
+	}
+	if !reflect.DeepEqual(result.UnexpectedPaths, []string{"a.md"}) {
+		t.Errorf("result.UnexpectedPaths=%#v, want %#v", result.UnexpectedPaths, []string{"a.md"})
+	}
+}
