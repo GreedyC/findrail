@@ -21,14 +21,19 @@ still match it).
 makes the pattern root-relative; a pattern without slashes matches a basename
 at every depth. A trailing slash matches directories only. `*` and `?` match
 within one segment; `**` is a complete segment matching zero or more segments.
-Last matching user rule wins. For example:
+Last matching user rule wins. Comments occupy their own lines; there is no
+inline-comment syntax. For example:
 
 ```text
-*.log                       # basename at any depth
-/scratch/                   # root-level directory only
-notes/**/draft-?.md         # zero or more intermediate directories
+# Basename at any depth
+*.log
+# Root-level directory only
+/scratch/
+# Zero or more intermediate directories
+notes/**/draft-?.md
 /notes/*
-!/notes/keep.md             # keep this file, but not a pruned parent
+# Keep this file, but not a pruned parent
+!/notes/keep.md
 \#literal.md
 \!literal.md
 ```
