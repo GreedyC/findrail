@@ -75,11 +75,20 @@ The latest published version remains alpha.2. Source builds now also provide
 DOCX body text, web source management, Advanced lexical queries and filters,
 offline diagnostics, MCP and public GitHub file snapshots. PR #16 prepared
 alpha.3 packages; it did not publish alpha.3. See the
-[9 October update](update-2026-10-09.md) and
+[12 October update](update-2026-10-12.md) and
 [facts sheet](press-kit.md#version-boundaries).
+
+PRs #22–28 also add portable indexed-text exports/imports, committed indexing
+reports, an experimental connector conformance kit, a separately packaged
+read-only VS Code client, folder ignore rules, in-tab evidence collections with
+explicit Markdown export, and a read-only literal `evaluate` command. These
+are still source-build additions. A VSIX built in CI is not a Marketplace
+publication or a release asset.
 
 For the next broader editorial wave, finish and verify the new release, then
 demonstrate selected notes/code/text-PDF/DOCX sources and the original evidence.
+The primary new workflow is finding a passage, collecting explicit citations
+and exporting a Markdown note. Collection state lasts only for the open tab.
 Before publication, label the new workflow as requiring a source build and
 keep any alpha.2 submission limited to its shipped features. Existing media
 shows the older local workflow. The MCP client may forward retrieved text to

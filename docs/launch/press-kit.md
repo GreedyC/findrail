@@ -1,6 +1,6 @@
 # Findrail: project facts and media
 
-Checked on 2026-10-09. Findrail is an Apache-2.0 open-source project built in Go.
+Checked on 2026-10-12. Findrail is an Apache-2.0 open-source project built in Go.
 The current published local alpha is `0.1.0-alpha.2`.
 The merged alpha.3 preparation work has not published a new release.
 
@@ -42,8 +42,12 @@ The [demo guide](../demo.md) includes a synthetic live-refresh test.
 Main now includes web source management in `start`, bounded DOCX body-text
 indexing, opt-in Advanced lexical queries and server-side format/path/title
 filters, offline `doctor` diagnostics, public GitHub file snapshots and
-read-only MCP. Existing alpha.2 archives do not include these additions.
-See the [9 October status update](update-2026-10-09.md).
+read-only MCP. PRs #22–28 also add portable indexed-text snapshots, committed
+indexing reports, an experimental connector conformance kit, a separately
+packaged VS Code client, folder ignore rules, session evidence collections with
+Markdown export and read-only literal query evaluation. Existing alpha.2
+archives do not include these additions. See the
+[12 October status update](update-2026-10-12.md).
 
 The stronger next release demonstration is a selected folder with notes, code,
 text PDFs and DOCX, with inspectable source evidence and explicit search
@@ -65,6 +69,12 @@ matches. Literal remains the default query mode.
 | Bounded DOCX body-text indexing and folder policy | Not included | Included; [supported subset](../docx.md) |
 | Opt-in Advanced queries; format/path/title filters | Not included | Included; [query semantics](../search-query.md) |
 | Read-only offline `doctor` diagnostics | Not included | Included |
+| Portable indexed-text snapshots and isolated frozen imports | Not included | Included; [scope](../portable-snapshots.md) |
+| Committed indexing reports and folder ignore rules | Not included | Included; [reports](../indexing-diagnostics.md), [rules](../folder-ignore.md) |
+| Session evidence collections and Markdown export | Not included | Included; in-tab memory only; [scope](../evidence-collections.md) |
+| Read-only literal `evaluate` command | Not included | Included; path-set agreement, not a semantic benchmark; [corpus](../search-evaluation.md) |
+| Read-only VS Code client | Not compatible | Separate source-built VSIX; [installation](../vscode.md); no Marketplace claim |
+| Experimental connector conformance kit | Not included | Public test profile and separate-module sample; independent-contributor gate remains open |
 | OCR, semantic retrieval, private GitHub | Not included | Not implemented |
 
 Search is literal keyword retrieval, not an AI answer or a promise of semantic
