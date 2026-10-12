@@ -37,6 +37,9 @@ Read `internal/connectors/filesystem/filesystem.go` and the lifecycle tests unde
 `internal/store/sqlite/`. The filesystem connector uses a selected root, skips
 symlinks, reads through an `os.Root`, limits document bytes, and reports errors
 that prevent partial pruning.
+Source-build filesystem roots may additionally use a root-level
+[`.findrailignore`](folder-ignore.md); GitHub and imported archive behavior is
+unchanged.
 
 ## Conformance kit
 

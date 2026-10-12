@@ -69,6 +69,100 @@ func TestArchiveSourceCannotBeConfiguredOrRefreshed(t *testing.T) {
 	}
 }
 
+func TestFilesystemPolicyRefreshConfigureAndRollback(t *testing.T) {
+	a, store, _ := openApp(t)
+	root := filepath.Join(t.TempDir(), "folder with spaces")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "generated.md")
+	if err := os.WriteFile(file, []byte("sourceapp policy marker"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	added, err := a.AddFolder(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := await(t, a, added.ID)
+	if done.Status != "succeeded" {
+		t.Fatalf("add folder: %+v", done)
+	}
+	sources, err := store.Sources(context.Background())
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("sources: %+v %v", sources, err)
+	}
+	id := sources[0].ID
+	searchCount := func(q string) int {
+		r, e := store.Search(context.Background(), search.Request{Query: q, Limit: 10})
+		if e != nil {
+			t.Fatal(e)
+		}
+		return r.Total
+	}
+	if searchCount("sourceapp") != 1 {
+		t.Fatal("initial document missing")
+	}
+	policy := filepath.Join(root, ".findrailignore")
+	if err := os.WriteFile(policy, []byte("generated.md\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	job, err := a.Refresh(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done = await(t, a, job.ID)
+	if done.Status != "succeeded" || searchCount("sourceapp") != 0 {
+		t.Fatalf("policy refresh failed: %+v", done)
+	}
+	if err := os.WriteFile(policy, []byte("generated.md\n!generated.md\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	job, err = a.Refresh(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done = await(t, a, job.ID)
+	if done.Status != "succeeded" || searchCount("sourceapp") != 1 {
+		t.Fatalf("sourceapp policy reinclusion: %+v", done)
+	}
+	if err := os.WriteFile(policy, []byte("[invalid\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	job, err = a.Refresh(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done = await(t, a, job.ID)
+	if done.Status != "failed" {
+		t.Fatalf("malformed refresh: %+v", done)
+	}
+	if searchCount("sourceapp") != 1 {
+		t.Fatal("failed sourceapp refresh removed previous snapshot")
+	}
+	if err := os.WriteFile(policy, []byte("generated.md\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	job, err = a.Configure(id, 8<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done = await(t, a, job.ID)
+	if done.Status != "succeeded" || searchCount("sourceapp") != 0 {
+		t.Fatalf("Configure ignored root policy: %+v", done)
+	}
+	if err := os.Remove(policy); err != nil {
+		t.Fatal(err)
+	}
+	job, err = a.Refresh(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done = await(t, a, job.ID)
+	if done.Status != "succeeded" || searchCount("sourceapp") != 1 {
+		t.Fatalf("Configure did not rescan using current filesystem policy: %+v", done)
+	}
+}
+
 type fakeRoundTripper func(*http.Request) (*http.Response, error)
 
 func (f fakeRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

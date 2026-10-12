@@ -15,6 +15,7 @@ import (
 	"github.com/Lephiziel/findrail/internal/diagnostics"
 	docxextract "github.com/Lephiziel/findrail/internal/extract/docx"
 	"github.com/Lephiziel/findrail/internal/extract/text"
+	"github.com/Lephiziel/findrail/internal/ignorepolicy"
 	"github.com/Lephiziel/findrail/pkg/connector"
 )
 
@@ -41,6 +42,19 @@ type Connector struct {
 	maxDOCXBytes int64
 	extractPDF   func(context.Context, io.Reader, int64) ([]connector.Page, error)
 	excluded     []string
+}
+
+type ignoreSnapshot struct {
+	policy      *ignorepolicy.Policy
+	info        os.FileInfo
+	fingerprint string
+}
+
+func (p *ignoreSnapshot) matcher() *ignorepolicy.Policy {
+	if p == nil {
+		return nil
+	}
+	return p.policy
 }
 
 func New(root string, maxBytes int64, excluded ...string) (*Connector, error) {
@@ -120,6 +134,10 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 		return report, emptyDiagnostics, err
 	}
 	defer root.Close()
+	policy, policyErr := loadIgnore(ctx, root)
+	if policyErr != nil {
+		return report, emptyDiagnostics, policyErr
+	}
 	err = filepath.WalkDir(c.source.Root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -163,13 +181,26 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 		}
 		name := entry.Name()
 		if entry.IsDir() {
-			if strings.HasPrefix(name, ".") || ignoredDirs[name] {
+			if reason := builtinExclusion(name, true, false, true, true, true); reason != "" {
 				report.Skipped++
-				reason := "hidden_entry"
-				if ignoredDirs[name] {
-					reason = "dependency_directory"
-				}
 				d.Add(reason, "directory", filepath.ToSlash(strings.TrimPrefix(path, c.source.Root+string(filepath.Separator))), sensitive(name))
+				return filepath.SkipDir
+			}
+			decision := policyDecision(ctx, policy.matcher(), c.source.Root, path, true)
+			if decision.Reason == "canceled" {
+				return cancellationError(ctx)
+			}
+			if decision.Reason == "matching_limit" || decision.Reason == "invalid_path" {
+				code := "matching_limit"
+				if decision.Reason == "invalid_path" {
+					code = "invalid_relative_path"
+				}
+				return &ignorepolicy.Error{Code: code}
+			}
+			if decision.Excluded {
+				report.Skipped++
+				relative := filepath.ToSlash(strings.TrimPrefix(path, c.source.Root+string(filepath.Separator)))
+				d.Add("excluded_path", "directory", relative, sensitiveRelativePath(relative))
 				return filepath.SkipDir
 			}
 			return nil
@@ -177,35 +208,14 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 		isPDF := strings.EqualFold(filepath.Ext(name), ".pdf") && c.maxPDFBytes > 0
 		docxFile := strings.EqualFold(filepath.Ext(name), ".docx")
 		isDOCX := docxFile && c.maxDOCXBytes > 0
-		if strings.HasPrefix(name, "~$") && strings.EqualFold(filepath.Ext(name), ".docx") {
+		hardReason := builtinExclusion(name, false, entry.Type()&os.ModeSymlink != 0, entry.Type().IsRegular(), c.maxPDFBytes > 0, c.maxDOCXBytes > 0)
+		if hardReason != "" {
 			report.Skipped++
 			unit := "file"
 			if !entry.Type().IsRegular() {
 				unit = "entry"
 			}
-			d.Add("office_lock_file", unit, filepath.ToSlash(strings.TrimPrefix(path, c.source.Root+string(filepath.Separator))), sensitive(name))
-			return nil
-		}
-		if entry.Type()&os.ModeSymlink != 0 || strings.HasPrefix(name, ".") || sensitive(name) || (!isPDF && !isDOCX && !supported(name)) {
-			report.Skipped++
-			unit := "file"
-			if !entry.Type().IsRegular() {
-				unit = "entry"
-			}
-			reason, redact := "unsupported_format", sensitive(name)
-			switch {
-			case entry.Type()&os.ModeSymlink != 0:
-				reason = "symlink"
-				unit = "entry"
-			case strings.HasPrefix(name, "."):
-				reason = "hidden_entry"
-			case sensitive(name):
-				reason = "sensitive_name"
-				redact = true
-			case (docxFile && c.maxDOCXBytes == 0) || (strings.EqualFold(filepath.Ext(name), ".pdf") && c.maxPDFBytes == 0):
-				reason = "format_disabled"
-			}
-			d.Add(reason, unit, filepath.ToSlash(strings.TrimPrefix(path, c.source.Root+string(filepath.Separator))), redact)
+			d.Add(hardReason, unit, filepath.ToSlash(strings.TrimPrefix(path, c.source.Root+string(filepath.Separator))), sensitive(name))
 			if docxFile {
 				report.SkippedDOCX++
 			}
@@ -237,6 +247,23 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 			if isPDF {
 				report.SkippedPDF++
 			}
+			return nil
+		}
+		decision := policyDecision(ctx, policy.matcher(), c.source.Root, path, false)
+		if decision.Reason == "canceled" {
+			return cancellationError(ctx)
+		}
+		if decision.Reason == "matching_limit" || decision.Reason == "invalid_path" {
+			code := "matching_limit"
+			if decision.Reason == "invalid_path" {
+				code = "invalid_relative_path"
+			}
+			return &ignorepolicy.Error{Code: code}
+		}
+		if decision.Excluded {
+			report.Skipped++
+			relative := filepath.ToSlash(strings.TrimPrefix(path, c.source.Root+string(filepath.Separator)))
+			d.Add("excluded_path", "file", relative, sensitiveRelativePath(relative))
 			return nil
 		}
 		rel, err := filepath.Rel(c.source.Root, path)
@@ -369,6 +396,9 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 		report.Seen++
 		return nil
 	})
+	if err == nil {
+		err = verifyIgnore(ctx, root, policy)
+	}
 	rs, examples, omitted, redacted := d.Finish()
 	// The filesystem legacy counter includes pruned directories; the detailed
 	// aggregate keeps file and directory decisions in separate units.
@@ -379,10 +409,238 @@ func (c *Connector) ScanWithDiagnostics(ctx context.Context, emit func(connector
 	return report, payload, err
 }
 
+func policyDecision(ctx context.Context, p *ignorepolicy.Policy, root, path string, dir bool) ignorepolicy.Decision {
+	if ctx.Err() != nil {
+		return ignorepolicy.Decision{Reason: "canceled"}
+	}
+	if p == nil {
+		return ignorepolicy.Decision{Reason: "eligible"}
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return ignorepolicy.Decision{}
+	}
+	return p.Decide(ctx, filepath.ToSlash(rel), dir)
+}
+
+func loadIgnore(ctx context.Context, root *os.Root) (*ignoreSnapshot, error) {
+	info, err := root.Lstat(".findrailignore")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, &ignorepolicy.Error{Code: "unreadable"}
+	}
+	if !info.Mode().IsRegular() || info.Size() > ignorepolicy.MaxInput {
+		return nil, &ignorepolicy.Error{Code: "invalid_file_type_or_size"}
+	}
+	f, err := openIgnoreFile(root)
+	if err != nil {
+		return nil, &ignorepolicy.Error{Code: "unreadable"}
+	}
+	opened, err := f.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		f.Close()
+		return nil, &ignorepolicy.Error{Code: "changed"}
+	}
+	data, err := io.ReadAll(io.LimitReader(f, ignorepolicy.MaxInput+1))
+	final, se := f.Stat()
+	ce := f.Close()
+	if err != nil || se != nil || ce != nil || int64(len(data)) != info.Size() || !final.ModTime().Equal(opened.ModTime()) {
+		return nil, &ignorepolicy.Error{Code: "changed"}
+	}
+	p, err := ignorepolicy.Parse(ctx, data)
+	if err != nil {
+		return nil, err
+	}
+	return &ignoreSnapshot{policy: p, info: opened, fingerprint: p.Fingerprint()}, nil
+}
+func verifyIgnore(ctx context.Context, root *os.Root, p *ignoreSnapshot) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	current, err := root.Lstat(".findrailignore")
+	if p == nil && errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || p == nil || !current.Mode().IsRegular() || !os.SameFile(p.info, current) || p.info.Size() != current.Size() || !p.info.ModTime().Equal(current.ModTime()) || current.Size() > ignorepolicy.MaxInput {
+		return &ignorepolicy.Error{Code: "changed"}
+	}
+	f, err := openIgnoreFile(root)
+	if err != nil {
+		return &ignorepolicy.Error{Code: "changed"}
+	}
+	opened, err := f.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(current, opened) {
+		f.Close()
+		return &ignorepolicy.Error{Code: "changed"}
+	}
+	data, readErr := io.ReadAll(io.LimitReader(f, ignorepolicy.MaxInput+1))
+	final, statErr := f.Stat()
+	closeErr := f.Close()
+	if readErr != nil || statErr != nil || closeErr != nil || int64(len(data)) != current.Size() || final.Size() != opened.Size() || final.Size() != current.Size() || !final.ModTime().Equal(opened.ModTime()) || !os.SameFile(opened, final) || ignorepolicy.Fingerprint(data) != p.fingerprint {
+		return &ignorepolicy.Error{Code: "changed"}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Explain evaluates path policy and filesystem metadata only; it never reads document content.
+func Explain(ctx context.Context, rootPath, relative string, showRule bool) (ignorepolicy.Decision, error) {
+	decisions, err := ExplainMany(ctx, rootPath, []string{relative}, showRule)
+	if err != nil {
+		return ignorepolicy.Decision{}, err
+	}
+	return decisions[0], nil
+}
+
+// ExplainMany loads a single immutable policy snapshot and evaluates all paths
+// against it, publishing no decisions if the policy changes during the request.
+func ExplainMany(ctx context.Context, rootPath string, relatives []string, showRule bool, excluded ...string) ([]ignorepolicy.Decision, error) {
+	if len(relatives) == 0 || len(relatives) > 100 {
+		return nil, errors.New("invalid path count")
+	}
+	for _, relative := range relatives {
+		if err := ignorepolicy.ValidatePath(relative); err != nil {
+			return nil, err
+		}
+	}
+	abs, err := filepath.Abs(rootPath)
+	if err != nil {
+		return nil, errors.New("invalid root")
+	}
+	info, err := os.Lstat(abs)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("invalid root")
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil, errors.New("invalid root")
+	}
+	abs = resolved
+	r, err := os.OpenRoot(abs)
+	if err != nil {
+		return nil, errors.New("cannot open root")
+	}
+	defer r.Close()
+	p, err := loadIgnore(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	decisions := make([]ignorepolicy.Decision, 0, len(relatives))
+	for _, relative := range relatives {
+		d, e := explainWithPolicy(ctx, r, abs, p, relative, showRule, excluded)
+		if e != nil {
+			return nil, e
+		}
+		decisions = append(decisions, d)
+	}
+	if err := verifyIgnore(ctx, r, p); err != nil {
+		return nil, err
+	}
+	return decisions, nil
+}
+
+func explainWithPolicy(ctx context.Context, r *os.Root, rootPath string, p *ignoreSnapshot, relative string, showRule bool, excluded []string) (ignorepolicy.Decision, error) {
+	parts := strings.Split(relative, "/")
+	for i := range parts {
+		if err := ctx.Err(); err != nil {
+			return ignorepolicy.Decision{}, err
+		}
+		partial := strings.Join(parts[:i+1], "/")
+		if insideExcludedPath(filepath.Join(rootPath, filepath.FromSlash(partial)), excluded) {
+			reason := ignorepolicy.Decision{Reason: "excluded_builtin:index_directory", Fingerprint: policyFingerprint(p), Ancestor: partial}
+			if partial == relative {
+				reason.Ancestor = ""
+			}
+			return reason, nil
+		}
+		st, e := r.Lstat(filepath.FromSlash(partial))
+		if e != nil {
+			if errors.Is(e, os.ErrNotExist) {
+				return ignorepolicy.Decision{Reason: "not_found", Fingerprint: policyFingerprint(p)}, nil
+			}
+			return ignorepolicy.Decision{}, errors.New("metadata unavailable")
+		}
+		isDir := st.IsDir()
+		name := parts[i]
+		reason := builtinExclusion(name, isDir, st.Mode()&os.ModeSymlink != 0, st.Mode().IsRegular(), true, true)
+		if reason != "" {
+			return ignorepolicy.Decision{Reason: "excluded_builtin:" + reason, Fingerprint: policyFingerprint(p)}, nil
+		}
+		d := p.matcher().Decide(ctx, partial, isDir)
+		if d.Reason == "canceled" {
+			return ignorepolicy.Decision{}, cancellationError(ctx)
+		}
+		if d.Reason == "matching_limit" {
+			return ignorepolicy.Decision{}, &ignorepolicy.Error{Code: "matching_limit"}
+		}
+		if d.Excluded {
+			d.Reason = "blocked_by_pruned_ancestor"
+			d.Ancestor = partial
+			if partial == relative {
+				d.Reason = "excluded_user_rule"
+			}
+			if !showRule {
+				d.Rule = ""
+			}
+			return d, nil
+		}
+		if i < len(parts)-1 && !isDir {
+			return ignorepolicy.Decision{Reason: "not_found", Fingerprint: policyFingerprint(p)}, nil
+		}
+	}
+	return ignorepolicy.Decision{Reason: "eligible_by_path_policy", Fingerprint: policyFingerprint(p)}, nil
+}
+
+func policyFingerprint(p *ignoreSnapshot) string { return p.matcher().Fingerprint() }
+func insideExcludedPath(path string, excluded []string) bool {
+	for _, base := range excluded {
+		base := canonicalPath(base)
+		if pathWithin(base, path) {
+			return true
+		}
+	}
+	return false
+}
+func canonicalPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	candidate := abs
+	suffix := []string{}
+	for {
+		if resolved, e := filepath.EvalSymlinks(candidate); e == nil {
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return filepath.Clean(resolved)
+		}
+		parent := filepath.Dir(candidate)
+		if parent == candidate {
+			return abs
+		}
+		suffix = append(suffix, filepath.Base(candidate))
+		candidate = parent
+	}
+}
+func pathWithin(base, path string) bool {
+	rel, err := filepath.Rel(base, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+func cancellationError(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return context.Canceled
+}
+
 func (c *Connector) isExcluded(path string) bool {
 	for _, exclude := range c.excluded {
-		rel, err := filepath.Rel(exclude, path)
-		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if pathWithin(exclude, path) {
 			return true
 		}
 	}
@@ -396,9 +654,60 @@ func supported(name string) bool {
 	return extensions[strings.ToLower(filepath.Ext(name))]
 }
 
+// builtinExclusion is shared by complete scans and metadata explanations so a
+// user negation cannot override a hard path gate in either view.
+func builtinExclusion(name string, directory, symlink, regular, pdfEnabled, docxEnabled bool) string {
+	if directory {
+		if strings.HasPrefix(name, ".") {
+			return "hidden_entry"
+		}
+		if ignoredDirs[name] {
+			return "dependency_directory"
+		}
+		return ""
+	}
+	ext := filepath.Ext(name)
+	if strings.HasPrefix(name, "~$") && strings.EqualFold(ext, ".docx") {
+		return "office_lock_file"
+	}
+	if symlink {
+		return "symlink"
+	}
+	if strings.HasPrefix(name, ".") {
+		return "hidden_entry"
+	}
+	if sensitive(name) {
+		return "sensitive_name"
+	}
+	if strings.EqualFold(ext, ".pdf") {
+		if !pdfEnabled {
+			return "format_disabled"
+		}
+	} else if strings.EqualFold(ext, ".docx") {
+		if !docxEnabled {
+			return "format_disabled"
+		}
+	} else if !supported(name) {
+		return "unsupported_format"
+	}
+	if !regular {
+		return "special_entry"
+	}
+	return ""
+}
+
 func sensitive(name string) bool {
 	lower := strings.ToLower(name)
 	return strings.Contains(lower, "credential") || strings.Contains(lower, "secret") || strings.Contains(lower, "private_key")
+}
+
+func sensitiveRelativePath(relative string) bool {
+	for _, part := range strings.Split(relative, "/") {
+		if sensitive(part) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Connector) validateRoot() error {
@@ -421,9 +730,6 @@ func (c *Connector) validateRoot() error {
 
 // RelevantPath applies the same directory exclusions to native watch events.
 func (c *Connector) RelevantPath(path string) bool {
-	if c.isExcluded(path) {
-		return false
-	}
 	rel, err := filepath.Rel(c.source.Root, path)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return false
@@ -432,6 +738,14 @@ func (c *Connector) RelevantPath(path string) bool {
 		return true
 	}
 	parts := strings.Split(rel, string(filepath.Separator))
+	// Editors often replace a root control file through a hidden temporary
+	// sibling; treat root-hidden hints as relevant while nested dotfiles remain inert.
+	if len(parts) == 1 && strings.HasPrefix(parts[0], ".") {
+		return true
+	}
+	if c.isExcluded(path) {
+		return false
+	}
 	for _, p := range parts {
 		if strings.HasPrefix(p, ".") || ignoredDirs[p] {
 			return false
@@ -447,7 +761,16 @@ func (c *Connector) WatchDirectories(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	dirs := []string{}
-	err := filepath.WalkDir(c.source.Root, func(path string, e fs.DirEntry, walkErr error) error {
+	root, err := os.OpenRoot(c.source.Root)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	policy, err := loadIgnore(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	err = filepath.WalkDir(c.source.Root, func(path string, e fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -460,6 +783,19 @@ func (c *Connector) WatchDirectories(ctx context.Context) ([]string, error) {
 		if path != c.source.Root && !c.RelevantPath(path) {
 			return filepath.SkipDir
 		}
+		if path != c.source.Root {
+			decision := policyDecision(ctx, policy.matcher(), c.source.Root, path, true)
+			if decision.Reason == "matching_limit" || decision.Reason == "invalid_path" {
+				code := "matching_limit"
+				if decision.Reason == "invalid_path" {
+					code = "invalid_relative_path"
+				}
+				return &ignorepolicy.Error{Code: code}
+			}
+			if decision.Excluded {
+				return filepath.SkipDir
+			}
+		}
 		if c.isExcluded(path) {
 			return filepath.SkipDir
 		}
@@ -469,5 +805,8 @@ func (c *Connector) WatchDirectories(ctx context.Context) ([]string, error) {
 		}
 		return nil
 	})
+	if err == nil {
+		err = verifyIgnore(ctx, root, policy)
+	}
 	return dirs, err
 }

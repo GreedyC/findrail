@@ -39,6 +39,7 @@ Usage:
   findrail forget [--data-dir DIR] SOURCE_ID
   findrail serve [--data-dir DIR] [--addr 127.0.0.1:7766] [--no-sync]
   findrail watch [--data-dir DIR] [--sync-interval 5m]
+  findrail explain-path ROOT --path RELATIVE [--path RELATIVE ...] [--data-dir DIR] [--json] [--show-rule]
   findrail mcp --data-dir DIR --source ID [--source ID ...]
   findrail version
   findrail doctor [--data-dir DIR] [--json] [--show-paths]
@@ -60,6 +61,9 @@ func Run(ctx context.Context, args []string, out, stderr io.Writer, version stri
 	if args[0] == "version" {
 		_, err := fmt.Fprintln(out, "findrail", version)
 		return err
+	}
+	if args[0] == "explain-path" {
+		return runExplainPath(ctx, args[1:], out, stderr)
 	}
 	if args[0] == "doctor" {
 		return runDoctor(ctx, args[1:], out, stderr, version)
