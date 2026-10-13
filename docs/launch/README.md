@@ -8,8 +8,9 @@ remembered word, inspecting the match and recovering its original location.
 
 - [Release archives](https://github.com/Lephiziel/findrail/releases): five OS / architecture combinations.
 - [Three-document demo](../demo.md): notes, Go code, PDF page 2 and live refresh.
-- [37-second video](../assets/demo.mp4) and [GIF](../assets/demo.gif): the
-  author's recording of the running web UI, without added captions or end card.
+- [Older 37-second demo](../assets/demo.mp4) and [GIF](../assets/demo.gif): a
+  narrower alpha.2 workflow; they do not demonstrate the new source manager,
+  portable snapshots, collections or evaluation.
 - [Short English launch copy](announcement.md): X / Bluesky post and follow-ups.
 - [Contributing](../../CONTRIBUTING.md): small tasks and contribution guidance.
 - [Project facts and media](press-kit.md): descriptions, version boundaries,
@@ -71,10 +72,11 @@ asset download counts are not unique installations or active users.
 
 ## Version boundaries
 
-The latest published version remains alpha.2. Source builds now also provide
+The latest published version remains alpha.2. Main/candidate alpha.3 includes
 DOCX body text, web source management, Advanced lexical queries and filters,
 offline diagnostics, MCP and public GitHub file snapshots. PR #16 prepared
-alpha.3 packages; it did not publish alpha.3. See the
+alpha.3 packages; PRs #30–31 add release-pipeline and packaged-journey checks.
+None of these preparations published alpha.3. See the
 [12 October update](update-2026-10-12.md) and
 [facts sheet](press-kit.md#version-boundaries).
 
@@ -82,17 +84,19 @@ PRs #22–28 also add portable indexed-text exports/imports, committed indexing
 reports, an experimental connector conformance kit, a separately packaged
 read-only VS Code client, folder ignore rules, in-tab evidence collections with
 explicit Markdown export, and a read-only literal `evaluate` command. These
-are still source-build additions. A VSIX built in CI is not a Marketplace
-publication or a release asset.
+are in main/candidate alpha.3, not in published alpha.2. A VSIX requires a
+compatible server/client API v1 and is a separate local install; a VSIX built in
+CI is not a Marketplace/Open VSX publication or a release asset.
 
-For the next broader editorial wave, finish and verify the new release, then
-demonstrate selected notes/code/text-PDF/DOCX sources and the original evidence.
-The primary new workflow is finding a passage, collecting explicit citations
-and exporting a Markdown note. Collection state lasts only for the open tab.
-Before publication, label the new workflow as requiring a source build and
-keep any alpha.2 submission limited to its shipped features. Existing media
-shows the older local workflow. The MCP client may forward retrieved text to
-its own model provider.
+The first-user path after verified publication is a standalone archive, checksum
+verification, extraction, empty start, Add folder, search a technical document,
+Preview/PDF page, two exact passages with a note, Markdown download, then restart.
+It does not require MCP, GitHub, VS Code or a source build. Until actual release,
+keep alpha.2 downloads distinct from candidate features. Collection state lasts
+only for the open tab. MCP clients may forward retrieved text to their own model
+providers. Ask for one 10–15 minute human smoke run, not a five-OS matrix; do not
+request private documents, paths or logs. See the [smoke sheet](../release-smoke-alpha3.md)
+and [promotion checklist](../release-alpha3-promotion.md).
 
 ## Platform constraints checked on 2026-10-02
 
