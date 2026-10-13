@@ -110,7 +110,6 @@ jobs:
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           "$PY" scripts/package.py --version "$VERSION" --require-clean --target '${{ matrix.target }}' --output "$RUNNER_TEMP/candidate"
           "$PY" scripts/package.py --verify-only --output "$RUNNER_TEMP/candidate"
-          mkdir -p "$RUNNER_TEMP/install space 📦"
           "$PY" - "$RUNNER_TEMP/candidate" "$RUNNER_TEMP/install space 📦" "$VERSION" "$CANDIDATE_SHA" '${{ matrix.target }}' <<'PY'
           import json, pathlib, sys
           sys.path.insert(0, 'scripts')
