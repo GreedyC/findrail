@@ -95,8 +95,15 @@ def main():
 
             for query in ("First", "Second"):
                 driver.execute_script("document.getElementById('query').value=arguments[0];document.getElementById('search-form').requestSubmit()", query)
-                wait.until(lambda d: d.find_element(By.XPATH, "//button[normalize-space()='Preview']"))
-                driver.find_element(By.XPATH, "//button[normalize-space()='Preview']").click()
+                # Activate a matching result in one browser turn: live refresh
+                # can replace search cards between separate WebDriver calls.
+                wait.until(lambda d: d.execute_script("""
+                    const row=[...document.querySelectorAll('.result')]
+                      .find(x=>x.querySelector('.snippet')?.textContent.includes(arguments[0]));
+                    const button=row?.querySelector('.location button');
+                    if(!button||button.textContent!=='Preview')return false;
+                    button.click();return true;
+                """, query))
                 wait.until(lambda d: d.find_element(By.ID, "preview-body").text.startswith(query))
                 assert not driver.find_element(By.ID, "open-original").get_attribute("hidden")
                 driver.execute_script("document.getElementById('whole-preview').checked=true")
@@ -157,8 +164,7 @@ def main():
             assert driver.find_element(By.ID, "collection-count").text == "0"
             Select(picker).select_by_value(first_id)
             wait.until(lambda d: d.find_element(By.ID, "collection-count").text == "2")
-            rows = driver.find_elements(By.CSS_SELECTOR, ".collection-row")
-            assert rows[1].find_element(By.TAG_NAME, "textarea").get_attribute("value") == "Saved note"
+            assert driver.execute_script("return document.querySelectorAll('.collection-row textarea')[1]?.value") == "Saved note"
             export = driver.execute_script("return window.localEvidenceCollection.export()")
             assert "First persistent citation passage" in export and "Second persistent citation passage" in export
             assert export.index("Second persistent citation passage") < export.index("First persistent citation passage")
