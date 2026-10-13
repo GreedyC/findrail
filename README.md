@@ -95,9 +95,11 @@ evidence, but the opener does not request page navigation from an unknown viewer
 the current file may open at its default page. DOCX has no page-number claim.
 The opened file is current; preview and saved citations remain the indexed snapshot.
 
-Select two exact passages in Preview, add them to the evidence collection, add a
-note, and download the Markdown citations. The collection is in-tab memory and
-clears on reload; the downloaded file is separate. Keep `start` running for
+Select exact passages in Preview and add them to a named evidence collection.
+In source builds using writable `start`, explicitly save notes and ordering;
+saved collections are restored from the same data directory after restart.
+Read-only `serve`/`demo` keeps the temporary in-tab collection. Downloaded
+Markdown is separate and may contain private text and paths. Keep `start` running for
 folder refresh. Ctrl+C stops it; later `./findrail start` resumes the same index.
 If you set `--data-dir`, use that same directory each time.
 
@@ -195,11 +197,11 @@ The index stores plaintext text and original paths. It is **not encrypted at
 rest**. On Unix, newly created directories and database files use private modes.
 There is no runtime telemetry. See [data handling](docs/data-handling.md).
 
-Schema upgrades are forward-only. Existing sources retain their previous format
-policy; legacy DOCX remains disabled until explicitly enabled. Stop Findrail and
-back up the entire data directory (including SQLite WAL/SHM) before upgrading.
-An older binary cannot read schema 6; rollback means restoring the whole backup to
-a separate location and using a binary compatible with that schema. See the
+Schema upgrades are forward-only. This source build uses schema 7; the published
+alpha.3 binaries use schema 6 and cannot read an upgraded data directory. Stop
+Findrail and back up the entire data directory (including SQLite WAL/SHM) before
+upgrading. Rollback means restoring that whole backup to a separate location and
+using a binary compatible with its schema. See the
 [complete install, upgrade, rollback and uninstall guide](build/package/INSTALL.txt).
 
 ## Commands

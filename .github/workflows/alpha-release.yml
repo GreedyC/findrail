@@ -13,7 +13,7 @@ on:
       candidate_version:
         description: Preview package version (ignored for main push; must match VERSION to publish)
         required: true
-        default: 0.1.0-alpha.3
+        default: 0.1.0-alpha.4
         type: string
       publish:
         description: Publish only if every gate passes (normally leave false for preparation)
@@ -31,6 +31,7 @@ jobs:
     outputs:
       candidate_sha: ${{ steps.source.outputs.sha }}
       version: ${{ steps.source.outputs.version }}
+      release_version: ${{ steps.source.outputs.release_version }}
       publish: ${{ steps.source.outputs.publish }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -55,17 +56,21 @@ jobs:
           fi
           RELEASE_VERSION=$(cat build/package/VERSION)
           VERSION="$RELEASE_VERSION"
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then VERSION=0.1.0-alpha.3; fi
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then VERSION=0.1.0-alpha.4; fi
+          # While VERSION still selects immutable alpha.3, verify new source as
+          # an unpublished alpha.4 candidate; the release gate still checks alpha.3.
+          if [[ "$GITHUB_EVENT_NAME" == push && "$RELEASE_VERSION" == 0.1.0-alpha.3 ]]; then VERSION=0.1.0-alpha.4; fi
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then VERSION="$INPUT_VERSION"; fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]
           PUBLISH=false
           if [[ "$GITHUB_EVENT_NAME" == push || "$REQUEST_PUBLISH" == true ]]; then PUBLISH=true; fi
-          if [[ "$PUBLISH" == true && "$VERSION" != "$RELEASE_VERSION" ]]; then
+          if [[ "$REQUEST_PUBLISH" == true && "$VERSION" != "$RELEASE_VERSION" ]]; then
             echo 'Publishing requires candidate_version to match build/package/VERSION.' >&2; exit 1
           fi
           {
             echo "sha=$INPUT_SHA"
             echo "version=$VERSION"
+            echo "release_version=$RELEASE_VERSION"
             echo "publish=$PUBLISH"
           } >> "$GITHUB_OUTPUT"
   source-checks:
@@ -354,7 +359,7 @@ jobs:
       - id: decision
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.validate-source.outputs.version }}
+          VERSION: ${{ needs.validate-source.outputs.release_version }}
           CANDIDATE_SHA: ${{ needs.validate-source.outputs.candidate_sha }}
         run: |
           set -euo pipefail
@@ -362,7 +367,7 @@ jobs:
           echo "decision=$result" >> "$GITHUB_OUTPUT"
   publish:
     needs: [validate-source, source-checks, native-packages, installed-vsix, packaged-browser-journey, aggregate-and-verify, reusable-final-verification, release-state]
-    if: needs.validate-source.outputs.publish == 'true' && needs.release-state.outputs.decision == 'publish'
+    if: needs.validate-source.outputs.publish == 'true' && needs.release-state.outputs.decision == 'publish' && needs.validate-source.outputs.version == needs.validate-source.outputs.release_version
     runs-on: ubuntu-latest
     permissions:
       contents: write

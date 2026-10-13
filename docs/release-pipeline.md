@@ -118,3 +118,13 @@ main advances with VERSION unchanged; its established contract is five archives
 plus `SHA256SUMS.txt`, without a VSIX or manifest. The publisher has write
 permission only in the final job, rechecks that the tag does not already exist,
 and refuses to replace or move an existing tag/release.
+
+## Source candidates after alpha.3
+
+PR checks and main source checks package an unpublished alpha.4 candidate.
+The version in build/package/VERSION continues to select the published release
+for the read-only release-state gate. While that file remains alpha.3, main
+verifies the unchanged historical alpha.3 assets and does not publish the
+alpha.4 candidate. Publication additionally requires candidate and release
+versions to match. Schema metadata comes from the candidate source migrations;
+historical alpha.3 remains schema 6. No release assets or tags are replaced.

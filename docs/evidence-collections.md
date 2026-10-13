@@ -1,78 +1,100 @@
-# Browser evidence collections (source builds)
+# Evidence collections (source builds)
 
-Evidence collections are available in the source-built embedded browser UI. They
-are not part of published alpha archives. Search and preview retain their existing
-read-only HTTP contract; collection actions never write to the index or transmit
-notes/passages to a service.
+Named evidence collections are available when Findrail runs through writable
+`start`. Collections are stored in the current data directory's SQLite database;
+they are not included in published alpha.3 archives. `serve`, `demo`, MCP and
+read-only composition retain the temporary in-page collection and expose no
+collection persistence routes. The browser does not use localStorage, IndexedDB,
+accounts, sharing, or hidden network requests.
 
-## Collect and inspect
+## Collect, save and restore
 
-Open a search result's **Preview**, select a non-empty passage wholly inside the
-visible preview, then choose **Add to collection**. Alternatively, deliberately
-select **Use whole visible preview**. This saves the visible indexed snapshot and
-passage without another retrieval. A duplicate exact source/document/hash/page/
-passage is not added twice. The collection panel allows inspection, notes, ordering,
-and removal. **Open current indexed evidence** is a separate action; it does not
-change the saved snapshot. PDFs keep their actual page; title-only PDF results have
-no page claim. Text and DOCX have no page citation. A truncated preview contains
-only the visible indexed text; it is not the complete original document.
+Open a result's **Preview**, select a non-empty passage wholly inside the visible
+preview and choose **Add to collection**, or deliberately choose **Use whole
+visible preview**. Create a named collection and press **Save** to persist it.
+Choose saved collections from the collection panel after restart. Notes, removal,
+rename and ordering are saved explicitly with **Save**. The server assigns the
+entry key and derives provenance from the current indexed document; the browser
+cannot submit a URI, hash, title, source identity or page as authoritative data.
+Exact source/document/content-hash/page/passage duplicates are rejected.
 
-Collections exist only in page memory. Reloading or closing the tab clears them.
-No browser storage, query persistence, account, sharing, or original-file access is
-used.
+Stored entries are immutable historical evidence snapshots. A rescan with changed
+content does not rewrite their passage/hash. **Open current indexed evidence** is a
+separate action and may show the new version or report that it is unavailable.
+PDF entries preserve a real selected page; a title-only PDF has page 0 and no page
+locator. Text and DOCX do not claim a page. Truncated previews contain only the
+visible indexed text, not a full original document.
+
+## API and concurrency
+
+Collection routes exist only in writable management composition and use the same
+loopback authority, per-process session token, same-origin/cross-site guards and
+strict JSON checks as other mutations. `GET /api/v1/collections` returns metadata
+and entry counts; `GET /api/v1/collections/{id}` loads one bounded collection.
+`POST /api/v1/collections` creates; `POST /api/v1/collections/{id}/entries`
+pins a verified preview passage; `PUT /api/v1/collections/{id}` updates title,
+notes, order and removals; `DELETE /api/v1/collections/{id}?revision=N` deletes.
+Collection writes are capped at 4 MiB. Updates carry an integer revision and stale edits
+return HTTP 409; the UI keeps local edits and requires reload/retry rather than
+silently replacing newer data. SQLite transactions make pin, reorder/save, delete
+and Forget atomic. Late collection loads are ignored if the user has selected a
+different collection or edited local state.
 
 ## Limits and privacy
 
-The implementation limits collections to 40 entries, 256 KiB UTF-8 preview text
-per entry, 2 MiB aggregate retained preview/excerpt text, 16 KiB metadata per
-entry, 2,048 UTF-8 bytes per note, 256 UTF-8 bytes for the title, and 4 MiB for
-Markdown. Entries are not silently evicted or truncated. With these limits, the
-retained collection data is bounded by 2 MiB preview/excerpt text + 640 KiB entry
-metadata + 80 KiB notes (about 2.71 MiB retained state). During rendering, the
-bounded row DOM and snapshot copies can each add up to a comparable amount. GET
-parsing is capped at 1 MiB for source inventory and 2 MiB per evidence body; the
-reader checks actual streamed bytes. Export text, its manual-copy field, and a
-download Blob are individually capped at 4 MiB and replaced/revoked on the next
-export, clear, removal or page teardown. A conservative feature-owned UTF-8
-payload accounting bound is 32 MiB across retained state and simultaneous bounded
-copies (browser runtime/engine bookkeeping is implementation-specific and is not
-an RSS guarantee). Export may contain private passages and local file paths; a
-downloaded or copied export cannot be recalled by later removing an index entry.
+Limits are enforced in UTF-8 bytes, before commit, without truncation or eviction:
 
-## Snapshot checks and provenance
+| Limit | Value |
+|---|---:|
+| Collections per data directory | 100 |
+| Entries per collection | 40 |
+| Preview text per entry | 256 KiB |
+| Preview plus excerpt per collection | 2 MiB |
+| Serialized metadata per entry (excluding preview, excerpt, note) | 16 KiB |
+| Note | 2,048 bytes |
+| Collection name | 256 bytes |
+| Markdown export | 4 MiB |
+| Serialized collection payload across data directory | 64 MiB |
+| Feature-owned in-memory UTF-8 payload | 32 MiB |
 
-**Check current snapshots** explicitly compares each saved snapshot with the
-current indexed evidence. It does not read live files, authenticate the file, or
-provide continuous authorization. A changed snapshot remains saved as historical
-evidence; a missing document or removed source is purged from this page's
-collection. A failed inventory request does not prove removal. Checks are
-best-effort and cannot make removal atomic with data already retrieved or
-exported. Export first requires a successful source inventory check, but does not
-automatically recheck document freshness.
+The serialized-payload quota is the sum of UTF-8 bytes in each stored
+`snapshot_json` value plus collection-name bytes; it excludes SQLite page/WAL overhead. The in-memory limit
+accounts for bounded retained entry text, metadata, notes and simultaneous
+feature-owned copies; it is not an RSS guarantee. List operations do not load
+passages; one collection is loaded on demand. Export is bounded plain text, safely
+rendered as text, and may contain private passages and local paths. Copy/download
+cannot be recalled after issuance.
 
-Markdown uses Findrail's existing citation formatter. File URIs remain local
-provenance, not public download links. GitHub provenance remains pinned to its
-indexed commit. Imported archive provenance is frozen and historical. Exports are
-plain text, not a persistent notebook, backup of original documents, authenticated
-citation format, or AI summary. Clipboard failure presents the same bounded
-Markdown in a read-only field for manual selection. Download is explicit and uses
-the fixed `findrail-evidence.md` filename.
+## Forget and backups
 
-## Reproducible browser smoke
+Deleting a source or pruning a document on a successfully committed scan removes
+entries tied to it through SQLite foreign-key cascades in the same transaction.
+Collection name and other entries remain. Changed documents keep historical
+snapshots; failed/canceled scans do not purge from an uncommitted inventory. A
+later source re-add cannot resurrect forgotten entries. Deletion is logical, not
+forensic erasure; SQLite/WAL/filesystem remnants may be recoverable. The UI warns
+before Forget. A stopped full data-directory backup includes collections. Portable
+source snapshot v1 remains source-scoped and does not include unrelated collections
+or notes.
 
-The dedicated workflow installs matched Chrome for Testing/ChromeDriver using the
-test-only pinned `@puppeteer/browsers==2.10.6` installer and pinned
-`selenium==4.35.0`, then builds Findrail and runs
-`python scripts/evidence_collection_smoke.py /path/to/findrail`. Locally, install
-Chromium and a matching ChromeDriver, install that Selenium version in a virtual
-environment, build `./cmd/findrail`, and run the same command. The compiled
-journey uses temporary synthetic text/PDF/DOCX, a CLI-imported archive, and a
-locally seeded pinned-GitHub document with no public network calls. It exercises
-selected/whole-preview and duplicate pins, separate PDF pages/title-only page 0,
-DOCX no-page provenance, notes/order, changed and missing snapshots, delayed
-responses during note/order/removal/clear/export/source-removal mutations, the
-real clipboard where supported and denied-permission fallback, downloaded bytes,
-Escape/focus restoration, clear/reload, 375px layout, and actual Chromium 200%
-page zoom at 375px physical width. It does not certify every
-assistive-technology/native-browser behavior or every possible timing
-permutation.
+Markdown uses Findrail's citation formatter. GitHub provenance stays pinned to its
+indexed commit; archive provenance remains frozen. Export does not read original
+files or authenticate them. A successful inventory is required before export;
+inventory failure reports unavailable rather than claiming freshness. Check status
+is only a point-in-time comparison to indexed evidence.
+
+## Checks
+
+The browser journeys are `python scripts/evidence_collection_smoke.py /path/to/findrail`
+and `python scripts/persistent_collection_smoke.py /path/to/findrail`, with pinned
+Selenium and matching local Chromium/ChromeDriver. They use synthetic documents
+and local fixtures. They do not certify every browser, assistive technology or
+OS-specific behavior.
+
+New pins include the opaque original_identity from the visible indexed evidence.
+The store verifies it in the same transaction as the save, including source
+registration and indexed content, so a delayed save cannot attach an old passage
+to a forgotten and re-registered source. Existing saved entries retain their
+historical snapshots. Collection reads use one SQLite snapshot for both revision
+and entries. Export checks the active saved collection before using its entries;
+a failed check stops export without treating an outage as deletion.

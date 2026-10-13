@@ -169,11 +169,12 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [management, desktop, open_originals, client_api_version, search_modes, search_filters, pdf_title_only_evidence]
+                required: [management, desktop, open_originals, collection_persistence, client_api_version, search_modes, search_filters, pdf_title_only_evidence]
                 properties:
                   management: {type: boolean}
                   desktop: {type: boolean, description: Explicit desktop quit is available only in the desktop composition}
                   open_originals: {type: boolean}
+                  collection_persistence: {type: boolean, description: "True only for writable start composition"}
                   client_api_version: {type: integer, const: 1}
                   search_modes:
                     type: array
@@ -182,6 +183,99 @@ paths:
                     type: array
                     items: {type: string, enum: [source, format, path_prefix, title_contains]}
                   pdf_title_only_evidence: {type: boolean, const: true}
+  /api/v1/collections:
+    get:
+      operationId: listEvidenceCollections
+      summary: List named collection metadata without passage payloads (start only)
+      parameters: [{$ref: '#/components/parameters/ManagementToken'}]
+      responses:
+        '200': {description: Collection IDs, names, revisions, timestamps and entry counts}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    post:
+      operationId: createEvidenceCollection
+      summary: Create a named collection (start only)
+      parameters: [{$ref: '#/components/parameters/ManagementToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, required: [title], properties: {title: {type: string, maxLength: 256}}}
+      responses:
+        '201': {description: Created collection at revision 1}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /api/v1/collections/{id}:
+    get:
+      operationId: getEvidenceCollection
+      summary: Load one collection and its bounded immutable snapshots (start only)
+      parameters: [{$ref: '#/components/parameters/ManagementToken'}, {name: id, in: path, required: true, schema: {type: string}}]
+      responses:
+        '200': {description: Collection including ordered entries and notes}
+        '404': {description: Collection not found}
+    put:
+      operationId: updateEvidenceCollection
+      summary: Atomically rename, reorder, edit notes or remove entries using an expected revision
+      parameters: [{$ref: '#/components/parameters/ManagementToken'}, {name: id, in: path, required: true, schema: {type: string}}]
+      description: The complete edit is one SQLite transaction. Request bodies are capped at 4 MiB. Stale revisions or changed indexed identities return 409 without applying any edits. New entries require document_id, original_identity, page and excerpt; existing entry keys retain their historical snapshots.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, title, entries]
+              properties:
+                revision: {type: integer, minimum: 1}
+                title: {type: string, maxLength: 256}
+                entries:
+                  type: array
+                  maxItems: 40
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [note]
+                    properties:
+                      key: {type: string, description: Existing saved entry key; omit/empty to pin a new exact passage}
+                      note: {type: string, maxLength: 2048}
+                      document_id: {type: string}
+                      original_identity: {type: string, pattern: '^[0-9a-f]{64}$', description: Indexed identity from the selected preview; required for new entries}
+                      page: {type: integer, minimum: 0}
+                      excerpt: {type: string, maxLength: 262144}
+                      whole_preview: {type: boolean}
+      responses:
+        '200': {description: Updated collection and incremented revision}
+        '409': {description: Stale revision or indexed identity; reload before retrying}
+    delete:
+      operationId: deleteEvidenceCollection
+      summary: Delete a collection under an expected revision
+      parameters: [{$ref: '#/components/parameters/ManagementToken'}, {name: id, in: path, required: true, schema: {type: string}}, {name: revision, in: query, required: true, schema: {type: integer, minimum: 1}}]
+      responses:
+        '204': {description: Deleted}
+        '409': {description: Stale revision}
+  /api/v1/collections/{id}/entries:
+    post:
+      operationId: pinEvidenceEntry
+      summary: Pin an exact passage using document ID, indexed identity and page; provenance is resolved server-side
+      parameters: [{$ref: '#/components/parameters/ManagementToken'}, {name: id, in: path, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, document_id, original_identity, page, excerpt]
+              properties:
+                revision: {type: integer, minimum: 1}
+                document_id: {type: string}
+                original_identity: {type: string, pattern: '^[0-9a-f]{64}$'}
+                page: {type: integer, minimum: 0}
+                excerpt: {type: string, maxLength: 262144}
+                whole_preview: {type: boolean}
+      responses:
+        '200': {description: Collection with immutable server-verified snapshot}
+        '404': {description: Collection or indexed document not found}
+        '409': {description: Stale revision or indexed identity}
   /api/v1/session:
     get:
       operationId: getManagementSession

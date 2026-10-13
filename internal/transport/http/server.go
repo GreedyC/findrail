@@ -59,6 +59,15 @@ func WithDesktop(record *desktop.Record, quit func()) Option {
 	return func(o *options) { o.desktop, o.quit = record, quit }
 }
 
+type collectionBackend interface {
+	ListCollections(context.Context) ([]sqlite.Collection, error)
+	CreateCollection(context.Context, string) (sqlite.Collection, error)
+	LoadCollection(context.Context, string) (sqlite.Collection, error)
+	PinCollectionEntry(context.Context, string, int64, string, int, string, bool, string) (sqlite.Collection, error)
+	SaveCollection(context.Context, string, int64, string, []sqlite.CollectionEdit) (sqlite.Collection, error)
+	DeleteCollection(context.Context, string, int64) error
+}
+
 type Option func(*options)
 
 type OriginalResolver interface {
@@ -92,8 +101,117 @@ func Handler(backend Backend, opts ...Option) http.Handler {
 }
 
 func handlerWithOptions(backend Backend, config options) http.Handler {
+	mux := http.NewServeMux()
 	if config.management != nil && config.authority == "" {
 		config.management = nil
+	}
+	collections, hasCollections := backend.(collectionBackend)
+	if config.management != nil && hasCollections {
+		mux.HandleFunc("GET /api/v1/collections", func(w http.ResponseWriter, r *http.Request) {
+			if !collectionReadAllowed(w, r, config) {
+				return
+			}
+			s := collections
+			v, e := s.ListCollections(r.Context())
+			if e != nil {
+				writeError(w, 500, "collections unavailable")
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, 200, map[string]any{"collections": v})
+		})
+		mux.HandleFunc("POST /api/v1/collections", func(w http.ResponseWriter, r *http.Request) {
+			var b struct {
+				Title string `json:"title"`
+			}
+			if !mutationAllowed(w, r, config) || !decodeCollectionMutation(w, r, &b) {
+				return
+			}
+			s := collections
+			v, e := s.CreateCollection(r.Context(), b.Title)
+			if e != nil {
+				writeCollectionError(w, e)
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, 201, v)
+		})
+		mux.HandleFunc("GET /api/v1/collections/{id}", func(w http.ResponseWriter, r *http.Request) {
+			if !collectionReadAllowed(w, r, config) {
+				return
+			}
+			s := collections
+			v, e := s.LoadCollection(r.Context(), r.PathValue("id"))
+			if e != nil {
+				writeCollectionError(w, e)
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, 200, v)
+		})
+		mux.HandleFunc("POST /api/v1/collections/{id}/entries", func(w http.ResponseWriter, r *http.Request) {
+			var b struct {
+				Revision   int64  `json:"revision"`
+				DocumentID string `json:"document_id"`
+				Page       int    `json:"page"`
+				Excerpt    string `json:"excerpt"`
+				Whole      bool   `json:"whole_preview"`
+				Identity   string `json:"original_identity"`
+			}
+			if !mutationAllowed(w, r, config) || !decodeCollectionMutation(w, r, &b) {
+				return
+			}
+			s := collections
+			v, e := s.PinCollectionEntry(r.Context(), r.PathValue("id"), b.Revision, b.DocumentID, b.Page, b.Excerpt, b.Whole, b.Identity)
+			if e != nil {
+				writeCollectionError(w, e)
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, 200, v)
+		})
+		mux.HandleFunc("PUT /api/v1/collections/{id}", func(w http.ResponseWriter, r *http.Request) {
+			var b struct {
+				Revision int64                   `json:"revision"`
+				Title    string                  `json:"title"`
+				Entries  []sqlite.CollectionEdit `json:"entries"`
+			}
+			if !mutationAllowed(w, r, config) || !decodeCollectionMutation(w, r, &b) {
+				return
+			}
+			if b.Revision < 1 || b.Title == "" || b.Entries == nil {
+				writeError(w, 400, "revision, title, and entries are required")
+				return
+			}
+			s := collections
+			v, e := s.SaveCollection(r.Context(), r.PathValue("id"), b.Revision, b.Title, b.Entries)
+			if e != nil {
+				writeCollectionError(w, e)
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, 200, v)
+		})
+		mux.HandleFunc("DELETE /api/v1/collections/{id}", func(w http.ResponseWriter, r *http.Request) {
+			if !mutationAllowed(w, r, config) || !emptyBody(w, r) {
+				return
+			}
+			if len(r.URL.Query()["revision"]) != 1 {
+				writeError(w, 400, "one revision is required")
+				return
+			}
+			rev, e := strconv.ParseInt(r.URL.Query().Get("revision"), 10, 64)
+			if e != nil || rev < 1 {
+				writeError(w, 400, "revision required")
+				return
+			}
+			s := collections
+			if e = s.DeleteCollection(r.Context(), r.PathValue("id"), rev); e != nil {
+				writeCollectionError(w, e)
+				return
+			}
+			w.WriteHeader(204)
+		})
 	}
 	if config.originals != nil && (config.management == nil || config.authority == "" || config.openOriginal == nil) {
 		config.originals = nil
@@ -113,7 +231,6 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 			}
 		}
 	}
-	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, indexHTML)
@@ -240,6 +357,7 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 	mux.HandleFunc("GET /api/v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{
 			"management":              config.management != nil,
+			"collection_persistence":  config.management != nil && hasCollections,
 			"open_originals":          config.originals != nil,
 			"desktop":                 config.desktop != nil,
 			"client_api_version":      1,
@@ -581,6 +699,54 @@ func boundedHTTPError(s string) string {
 		s = s[:256]
 	}
 	return s
+}
+
+func decodeCollectionMutation(w http.ResponseWriter, r *http.Request, target any) bool {
+	const maxCollectionWrite = 4 << 20
+	if r.ContentLength > maxCollectionWrite {
+		writeError(w, 413, "collection write too large")
+		return false
+	}
+	b, e := io.ReadAll(io.LimitReader(r.Body, maxCollectionWrite+1))
+	if e != nil || len(b) > maxCollectionWrite {
+		writeError(w, 413, "collection write too large")
+		return false
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.DisallowUnknownFields()
+	if d.Decode(target) != nil {
+		writeError(w, 400, "invalid collection request")
+		return false
+	}
+	var x any
+	if d.Decode(&x) != io.EOF {
+		writeError(w, 400, "invalid collection request")
+		return false
+	}
+	return true
+}
+func collectionReadAllowed(w http.ResponseWriter, r *http.Request, c options) bool {
+	t := r.Header.Get("X-Findrail-Token")
+	origins := r.Header.Values("Origin")
+	if c.management == nil || c.token == "" || len(origins) > 1 || (len(origins) == 1 && origins[0] != "http://"+c.authority) || !requestAuthority(r, c.authority) || crossSite(r) || len(r.Header.Values("X-Findrail-Token")) != 1 || len(t) != len(c.token) || subtle.ConstantTimeCompare([]byte(t), []byte(c.token)) != 1 {
+		writeError(w, 403, "authenticated same local origin required")
+		return false
+	}
+	return true
+}
+func writeCollectionError(w http.ResponseWriter, e error) {
+	switch {
+	case errors.Is(e, sqlite.ErrCollectionNotFound), errors.Is(e, search.ErrNotFound):
+		writeError(w, 404, e.Error())
+	case errors.Is(e, sqlite.ErrCollectionSnapshotChanged):
+		writeError(w, 409, e.Error())
+	case errors.Is(e, sqlite.ErrCollectionConflict):
+		writeError(w, 409, "collection revision conflict")
+	case errors.Is(e, sqlite.ErrCollectionLimit):
+		writeError(w, 413, e.Error())
+	default:
+		writeError(w, 400, boundedHTTPError(e.Error()))
+	}
 }
 
 func localHost(hostPort string) bool {

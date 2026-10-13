@@ -193,7 +193,7 @@ func TestSchemaFiveReportLookupIsReadOnlyAndUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec("DROP TABLE indexing_reports; PRAGMA user_version=5"); err != nil {
+	if _, err = db.Exec("DROP TABLE evidence_collection_entries; DROP TABLE evidence_collections; DROP TABLE indexing_reports; PRAGMA user_version=5"); err != nil {
 		t.Fatal(err)
 	}
 	_ = db.Close()
@@ -247,7 +247,7 @@ func TestSchemaSixMigrationPreservesFrozenArchiveAndPortableFingerprint(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec("DROP TABLE indexing_reports; PRAGMA user_version=5"); err != nil {
+	if _, err = db.Exec("DROP TABLE evidence_collection_entries; DROP TABLE evidence_collections; DROP TABLE indexing_reports; PRAGMA user_version=5"); err != nil {
 		t.Fatal(err)
 	}
 	_ = db.Close()

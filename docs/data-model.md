@@ -1,6 +1,6 @@
 # Data model
 
-## Implemented schema 6
+## Implemented schema 7
 
 | Entity | Identity | Stored fields |
 |---|---|---|
@@ -12,6 +12,8 @@
 | Page FTS | Page row ID | Page tokens, maintained by triggers |
 | Archive source | Source ID | Original provenance JSON, semantic fingerprint, original successful indexing time, local import time |
 | Indexing report | Source ID (one current report) | Bounded committed report JSON, unique report/snapshot IDs and commit time; cascades on source removal |
+| Evidence collection | Random collection ID | UTF-8 name, optimistic revision and timestamps; explicit create/save/delete |
+| Collection entry | Collection + random entry key | Immutable bounded evidence snapshot JSON, source/document binding, passage, note and order; cascades on source Forget/document prune |
 
 Source ownership is currently the OS account running the local application.
 There is no multi-user authorization model in the foundation.
@@ -32,6 +34,10 @@ Schema 4 indexes upgrade transactionally; archive metadata is removed with its
 source. No plaintext token or credential fields are introduced.
 Migration 6 adds the bounded last-successful indexing report. It does not fabricate
 reports for existing sources or change portable snapshot v1.
+Migration 7 adds persistent named collections. Collection writes are bounded to
+4 MiB. Entry rows cascade on source/document deletion and retain historical snapshots across
+same-ID content refresh; revision checks prevent stale tab writes. Source snapshot
+v1 remains source-only and does not export collection data.
 See [upgrade instructions](local-alpha.md#upgrade).
 
 ## Future entities

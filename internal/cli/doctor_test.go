@@ -171,7 +171,7 @@ func TestDoctorOldAndNewerSchemaDoesNotMigrate(t *testing.T) {
 		schema int
 		want   string
 		exit   int
-	}{{5, "schema_upgrade_needed", 0}, {7, "schema_unsupported", 2}} {
+	}{{5, "schema_upgrade_needed", 0}, {8, "schema_unsupported", 2}} {
 		t.Run(tc.want, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "findrail.db")

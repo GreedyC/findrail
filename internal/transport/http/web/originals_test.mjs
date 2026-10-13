@@ -8,19 +8,32 @@ const scripts=[...html.matchAll(/<script type="module">([\s\S]*?)<\/script>/g)].
 const script=scripts.find(x=>x.includes('const native=window.findrailNativeCapability'));
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
-function harness(capability=true){
+function harness(capability=true,delayedBootstrap=false){
   const listeners=new Map(),elements=new Map();let pendingPost,lastBody;
   const element=id=>{if(!elements.has(id))elements.set(id,{id,hidden:true,textContent:'',children:[],handlers:{},addEventListener(type,fn){this.handlers[type]=fn},append(...xs){this.children.push(...xs)},after(){},setAttribute(){}});return elements.get(id)};
   const window={findrailNativeCapability:{enabled:capability,token:capability?'token':''},addEventListener(t,fn){listeners.set(t,fn)},dispatchEvent(e){listeners.get(e.type)?.(e)}};
+  let releaseBootstrap;
+  if(delayedBootstrap){delete window.findrailNativeCapability;window.findrailBootstrap=new Promise(resolve=>{releaseBootstrap=()=>{window.findrailNativeCapability={enabled:capability,token:capability?'token':''};resolve()}})}
   class CustomEvent{constructor(type,opts={}){this.type=type;this.detail=opts.detail}}
   const document={querySelector(){return {after(node){elements.set('preview-status',node)}}},querySelectorAll(){return[]},getElementById:element,createElement(tag){return {tag,hidden:false,textContent:'',handlers:{},children:[],addEventListener(type,fn){this.handlers[type]=fn},append(...nodes){this.children.push(...nodes)},setAttribute(){}}}};
   const context=vm.createContext({window,document,CustomEvent,fetch:async(url,opts)=>{
     lastBody=JSON.parse(opts.body);return new Promise(resolve=>{pendingPost=()=>resolve({ok:true,json:async()=>({message:'attempted'})})});
   }});
-  vm.runInContext(script,context);
-  return{window,element,listeners,get pendingPost(){return pendingPost},get lastBody(){return lastBody}};
+  vm.runInContext(`(async()=>{${script}})()`,context);
+  return{window,element,listeners,releaseBootstrap,get pendingPost(){return pendingPost},get lastBody(){return lastBody}};
 }
 const identity='a'.repeat(64);
+
+test('native actions wait for asynchronous capability and token bootstrap',async()=>{
+  const h=harness(true,true);await flush();
+  h.releaseBootstrap();await flush();
+  const evidence={id:'doc',source_id:'source',source_kind:'filesystem',original_identity:identity,page:0};
+  h.window.dispatchEvent(new CustomEvent('findrail-evidence-preview',{detail:{evidence,generation:1}}));
+  assert.equal(h.element('open-original').hidden,false);
+  h.element('open-original').onclick();await flush();
+  assert.equal(h.lastBody.original_identity,identity);
+  h.pendingPost();await flush();
+});
 
 test('native original actions are capability-gated and stay bound to preview generation',async()=>{
   const h=harness();await flush();

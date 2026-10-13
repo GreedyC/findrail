@@ -147,7 +147,9 @@ def main():
         }
         policies = updated.execute('SELECT max_docx_bytes FROM sources WHERE id=?', (folder_id,)).fetchone()
         updated.close()
-        if schema != 6 or policies != (0,): raise SystemExit('schema-6 migration state mismatch')
+        from package import schema_version
+        expected_schema = schema_version()
+        if schema != expected_schema or policies != (0,): raise SystemExit(f'schema-{expected_schema} migration state mismatch')
         if before_state != after_state: raise SystemExit('migration changed the recorded inventory, content hash, FTS or PDF pages')
         report = json.loads(invoke(binary, ['source-report', '--data-dir', str(data), '--source', folder_id, '--json']).stdout)
         if report.get('available') is not False or report.get('availability') != 'not_yet_available':
@@ -168,7 +170,7 @@ def main():
         restored_db.close()
         if restored_schema != 2 or restored_state != ('legacy-pdf-doc', 'synthetic-hash'):
             raise SystemExit('rollback did not preserve the original schema-2 fixture')
-        print('Packaged alpha.2 schema-2 upgrade passed: source inventory, FTS/PDF page, schema-6 disabled DOCX default, unavailable pre-scan diagnostics, Configure/index/restart, stopped full-directory rollback including sidecars; restored schema remains 2. No reverse migration was attempted.')
+        print(f'Packaged alpha.2 schema-2 upgrade passed: source inventory, FTS/PDF page, schema-{expected_schema} disabled DOCX default, unavailable pre-scan diagnostics, Configure/index/restart, stopped full-directory rollback including sidecars; restored schema remains 2. No reverse migration was attempted.')
 
 
 if __name__ == '__main__': main()

@@ -104,7 +104,7 @@ or source removal.
 ## Storage
 
 SQLite FTS5 and a CGO-free Go driver keep installation simple. WAL and foreign
-keys are enabled. Schema migrations 1–6 are transactional and embedded in the binary.
+keys are enabled. Schema migrations 1–7 are transactional and embedded in the binary.
 Schema 3 stores GitHub selection/snapshot metadata and stale-update revision guards;
 schema 4 stores per-folder DOCX input limits (legacy default disabled) and source
 registration tokens/revisions for guarded configuration and removal. Schema 5
@@ -115,6 +115,10 @@ transaction.
 Schema 6 stores one bounded last-successful indexing report per source. It is
 published with source content and pruning in the same transaction; live attempts
 remain process-local.
+Schema 7 stores named evidence collections and immutable citation snapshots.
+Collection entry foreign keys cascade with committed document pruning and source
+Forget; notes and order use revision-checked atomic collection transactions.
+Collection data is loaded on demand and is not included in portable source export.
 Unknown newer schemas are rejected. A one-connection writer pool serializes
 updates; four query-only read connections use WAL snapshots, preserving search
 availability during extraction. PDF pages and their FTS entries commit in the
