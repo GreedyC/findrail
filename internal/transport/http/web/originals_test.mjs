@@ -5,18 +5,16 @@ import vm from 'node:vm';
 
 const html=readFileSync(new URL('./index.html',import.meta.url),'utf8');
 const scripts=[...html.matchAll(/<script type="module">([\s\S]*?)<\/script>/g)].map(x=>x[1]);
-const script=scripts.find(x=>x.includes('const native={enabled:false,token:'));
+const script=scripts.find(x=>x.includes('const native=window.findrailNativeCapability'));
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
 function harness(capability=true){
   const listeners=new Map(),elements=new Map();let pendingPost,lastBody;
   const element=id=>{if(!elements.has(id))elements.set(id,{id,hidden:true,textContent:'',children:[],handlers:{},addEventListener(type,fn){this.handlers[type]=fn},append(...xs){this.children.push(...xs)},after(){},setAttribute(){}});return elements.get(id)};
-  const window={addEventListener(t,fn){listeners.set(t,fn)},dispatchEvent(e){listeners.get(e.type)?.(e)}};
+  const window={findrailNativeCapability:{enabled:capability,token:capability?'token':''},addEventListener(t,fn){listeners.set(t,fn)},dispatchEvent(e){listeners.get(e.type)?.(e)}};
   class CustomEvent{constructor(type,opts={}){this.type=type;this.detail=opts.detail}}
   const document={querySelector(){return {after(node){elements.set('preview-status',node)}}},querySelectorAll(){return[]},getElementById:element,createElement(tag){return {tag,hidden:false,textContent:'',handlers:{},children:[],addEventListener(type,fn){this.handlers[type]=fn},append(...nodes){this.children.push(...nodes)},setAttribute(){}}}};
   const context=vm.createContext({window,document,CustomEvent,fetch:async(url,opts)=>{
-    if(url.endsWith('/capabilities'))return{json:async()=>({open_originals:capability})};
-    if(url.endsWith('/session'))return{json:async()=>({token:'token'})};
     lastBody=JSON.parse(opts.body);return new Promise(resolve=>{pendingPost=()=>resolve({ok:true,json:async()=>({message:'attempted'})})});
   }});
   vm.runInContext(script,context);
