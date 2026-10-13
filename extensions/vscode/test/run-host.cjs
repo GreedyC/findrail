@@ -1,4 +1,4 @@
-const { runTests, downloadAndUnzipVSCode } = require('@vscode/test-electron');
+const { runTests, downloadAndUnzipVSCode, resolveCliArgsFromVSCodeExecutablePath } = require('@vscode/test-electron');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs/promises');
 const http = require('node:http');
@@ -22,8 +22,16 @@ async function main() {
  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'findrail-vscode-host-'));
  let server;
  try {
-  const binary=path.join(temp,process.platform==='win32'?'findrail.exe':'findrail');
-  execFileSync('go',['build','-o',binary,'./cmd/findrail'],{cwd:repo,stdio:'inherit'});
+  const installedVSIX=process.env.FINDRAIL_TEST_VSIX;
+  const candidateBinary=process.env.FINDRAIL_CANDIDATE_BINARY;
+  if(installedVSIX&&!candidateBinary)throw new Error('installed_vsix_requires_packaged_candidate');
+  const binary=candidateBinary?path.resolve(candidateBinary):path.join(temp,process.platform==='win32'?'findrail.exe':'findrail');
+  if(candidateBinary){
+   const info=JSON.parse(await fs.readFile(path.join(path.dirname(binary),'BUILD-INFO.json'),'utf8'));
+   const sha=process.env.FINDRAIL_CANDIDATE_SHA,version=process.env.FINDRAIL_CANDIDATE_VERSION;
+   if(!/^[a-f0-9]{40}$/.test(sha||'')||info.revision!==sha||info.version!==version||info.dirty!==false||info.target!==`${process.platform}-${process.arch==='x64'?'amd64':process.arch}`)throw new Error('packaged_candidate_identity_mismatch');
+   if(execFileSync(binary,['version'],{encoding:'utf8'}).trim()!==`findrail ${version}`)throw new Error('packaged_candidate_version_mismatch');
+  } else execFileSync('go',['build','-o',binary,'./cmd/findrail'],{cwd:repo,stdio:'inherit'});
   const workspace=path.join(temp,'untrusted-workspace');await fs.mkdir(path.join(workspace,'.vscode'),{recursive:true});await fs.writeFile(path.join(workspace,'.vscode','settings.json'),JSON.stringify({'findrail.endpoint':'http://127.0.0.1:1'}));
   const docs=path.join(temp,'synthetic-docs');await fs.cp(path.join(repo,'examples/demo'),docs,{recursive:true});
   execFileSync(binary,['index','--data-dir',path.join(temp,'index'),docs],{cwd:repo,stdio:'ignore'});
@@ -38,13 +46,29 @@ async function main() {
   const testOptions={extensionDevelopmentPath,extensionTestsPath:path.resolve(__dirname,'host.cjs'),launchArgs:[workspace]};
   if(process.platform==='linux'){
    const executable=await downloadAndUnzipVSCode('1.95.0');const wrapper=path.join(temp,'vscode-test-wrapper.cjs');
+   if(installedVSIX){
+    const extensions=path.join(temp,'installed-extensions'),profile=path.join(temp,'user-data');
+    await fs.mkdir(extensions);await fs.mkdir(profile);
+    const [cli,...cliArgs]=resolveCliArgsFromVSCodeExecutablePath(executable);
+    const isolated=['--user-data-dir',profile,'--extensions-dir',extensions];
+    execFileSync(cli,[...cliArgs,...isolated,'--install-extension',path.resolve(installedVSIX),'--force'],{stdio:'inherit',timeout:90000});
+    const list=execFileSync(cli,[...cliArgs,...isolated,'--list-extensions','--show-versions'],{encoding:'utf8',timeout:30000});
+    if(!list.toLowerCase().split(/\r?\n/).includes('findrail-local.findrail-readonly@0.1.0'))throw new Error('vsix_not_installed');
+    // Only the test bootstrap is a development extension; Findrail loads from the installed VSIX.
+    const bootstrap=path.join(temp,'test-bootstrap');await fs.mkdir(bootstrap);
+    await fs.writeFile(path.join(bootstrap,'package.json'),JSON.stringify({name:'findrail-test-bootstrap',publisher:'findrail-tests',version:'0.0.0',engines:{vscode:'^1.95.0'}}));
+    testOptions.extensionDevelopmentPath=bootstrap;
+    testOptions.launchArgs.push(...isolated);testOptions.reuseMachineInstall=true;
+    process.env.FINDRAIL_TEST_INSTALLED_DIR=extensions;
+   }
    await fs.writeFile(wrapper,`#!/usr/bin/env node\nconst {spawn}=require('node:child_process');const child=spawn(${JSON.stringify(executable)},process.argv.slice(2).filter(arg=>arg!=='--disable-workspace-trust'),{stdio:'inherit',env:{...process.env,FINDRAIL_TEST_RESTRICTED:'1'}});child.on('error',e=>{console.error(e);process.exit(1)});child.on('exit',(code,signal)=>process.exit(code??(signal?1:0)));\n`);
    await fs.chmod(wrapper,0o755);testOptions.vscodeExecutablePath=wrapper;
-  } else testOptions.version='1.95.0';
+  } else {if(installedVSIX)throw new Error('installed_vsix_host_requires_linux');testOptions.version='1.95.0'}
   await runTests(testOptions);
  } finally {
   delete process.env.FINDRAIL_TEST_ENDPOINT;
   delete process.env.FINDRAIL_TEST_BINARY;delete process.env.FINDRAIL_TEST_INDEX;
+  delete process.env.FINDRAIL_TEST_INSTALLED_DIR;
   if(server&&server.exitCode===null&&server.signalCode===null){const exited=once(server,'exit');server.kill();await Promise.race([exited,new Promise(r=>setTimeout(r,3000))])}
   await fs.rm(temp,{recursive:true,force:true});
  }

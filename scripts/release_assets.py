@@ -86,6 +86,9 @@ def verify(directory, version, revision, extension_version='0.1.0'):
         extension = json.loads(zf.read(manifests[0]))
         if extension.get('version') != extension_version:
             raise ValueError('VSIX extension version does not match its package contract')
+        if (extension.get('name') != 'findrail-readonly' or extension.get('publisher') != 'findrail-local' or
+                extension.get('main') != './dist/extension.js' or extension.get('extensionKind') != ['ui']):
+            raise ValueError('VSIX identity or entry point does not match the Findrail client contract')
         if manifests[0] != 'extension/package.json':
             raise ValueError('VSIX extension manifest is at an unexpected path')
         required = {'[Content_Types].xml', 'extension.vsixmanifest', 'extension/package.json',

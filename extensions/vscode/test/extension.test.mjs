@@ -1,10 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const Module = require('node:module');
+
+test('extension does not persist queries, inventory, results, or evidence', () => {
+ const implementation=fs.readFileSync(new URL('../src/extension.ts',import.meta.url),'utf8');
+ assert.doesNotMatch(implementation,/globalState|workspaceState/);
+});
 
 function loadExtension(endpoint) {
  const commands = new Map();

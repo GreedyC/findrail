@@ -153,6 +153,15 @@ def github_release_decision(repository, version, current_sha, token):
             asset = by_name[item['basename']]
             if item.get('size') != len(asset['data']) or item.get('sha256') != hashlib.sha256(asset['data']).hexdigest():
                 raise ValueError('existing release manifest digest/size mismatch: ' + item['basename'])
+        # Matching manifest/checksum bytes alone cannot establish the embedded source identity.
+        import pathlib
+        import tempfile
+        import release_assets
+        with tempfile.TemporaryDirectory(prefix='findrail-existing-release-') as temporary:
+            directory = pathlib.Path(temporary)
+            for asset in assets:
+                (directory / asset['name']).write_bytes(asset['data'])
+            release_assets.verify(directory, version, tag_sha)
     return decision
 
 

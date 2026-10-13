@@ -33,7 +33,8 @@ class ReleaseAssetTests(unittest.TestCase):
                         info = tarfile.TarInfo(f'{stem}/{item}'); info.size = len(contents); info.mode = 0o755 if item == 'findrail' else 0o644
                         tf.addfile(info, io.BytesIO(contents))
         with zipfile.ZipFile(source / release.VSIX, 'w') as zf:
-            zf.writestr('extension/package.json', '{"version":"0.1.0"}')
+            zf.writestr('extension/package.json', json.dumps({'version':'0.1.0', 'name':'findrail-readonly',
+                'publisher':'findrail-local', 'main':'./dist/extension.js', 'extensionKind':['ui']}))
             for name in ('[Content_Types].xml', 'extension.vsixmanifest', 'extension/LICENSE.txt',
                          'extension/readme.md', 'extension/changelog.md', 'extension/dist/extension.js'):
                 zf.writestr(name, 'fixture')
@@ -89,6 +90,20 @@ class ReleaseAssetTests(unittest.TestCase):
             line = (output / 'SHA256SUMS.txt').read_text().splitlines()[0]
             (output / 'SHA256SUMS.txt').write_text(line + '\n' + line + '\n')
             with self.assertRaises(ValueError): release.verify(output, '0.1.0-alpha.3', revision)
+
+    def test_another_extension_with_the_same_version_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp); source, revision = self.candidate(root)
+            archive = source / release.VSIX
+            with zipfile.ZipFile(archive) as zf:
+                members = {name: zf.read(name) for name in zf.namelist()}
+            metadata = json.loads(members['extension/package.json'])
+            metadata['publisher'] = 'another-publisher'
+            members['extension/package.json'] = json.dumps(metadata).encode()
+            with zipfile.ZipFile(archive, 'w') as zf:
+                for name, content in members.items(): zf.writestr(name, content)
+            with self.assertRaisesRegex(ValueError, 'VSIX identity'):
+                release.assemble(source, root / 'out', '0.1.0-alpha.3', revision)
 
 
 if __name__ == '__main__':

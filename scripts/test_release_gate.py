@@ -1,9 +1,14 @@
 import pathlib
 import sys
 import unittest
+import io
+import json
+from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import release_gate
+import release_assets
+import test_release_assets
 
 
 class ReleaseGateTests(unittest.TestCase):
@@ -44,6 +49,35 @@ class ReleaseGateTests(unittest.TestCase):
         release_gate.verify_remote_checksums([{'name': 'a.zip', 'data': content}, {'name': 'SHA256SUMS.txt'}], f'{good}  a.zip\n')
         with self.assertRaises(ValueError): release_gate.verify_remote_checksums([{'name': 'a.zip', 'data': b'bad'}, {'name': 'SHA256SUMS.txt'}], f'{good}  a.zip\n')
         with self.assertRaises(ValueError): release_gate.verify_remote_checksums([{'name': 'a.zip', 'data': content}, {'name': 'SHA256SUMS.txt'}], f'{good}  a.zip\n{good}  a.zip\n')
+
+    def test_existing_release_checks_the_embedded_revision_before_noop(self):
+        import tempfile
+        version, sha = '0.1.0-alpha.3', 'a' * 40
+        for embedded_sha in (sha, 'b' * 40):
+            with self.subTest(embedded_sha=embedded_sha), tempfile.TemporaryDirectory() as temp:
+                root = pathlib.Path(temp)
+                source, _ = test_release_assets.ReleaseAssetTests().candidate(root, embedded_sha)
+                output = root / 'out'
+                release_assets.assemble(source, output, version, embedded_sha)
+                manifest_path = output / 'release-manifest.json'
+                manifest = json.loads(manifest_path.read_text())
+                manifest['source_revision'] = sha
+                manifest_path.write_text(json.dumps(manifest))
+                sums = output / 'SHA256SUMS.txt'
+                sums.write_text(''.join(f'{release_assets.digest(p)}  {p.name}\n' for p in sorted(output.iterdir()) if p != sums))
+                base = 'https://api.github.com/repos/Lephiziel/findrail'
+                responses = {
+                    base + '/releases/tags/v' + version: json.dumps({'assets': [
+                        {'name': p.name, 'browser_download_url': 'https://release.invalid/' + p.name}
+                        for p in output.iterdir()]}).encode(),
+                    base + '/git/ref/tags/v' + version: json.dumps({'object': {'type':'commit', 'sha':sha}}).encode(),
+                    **{'https://release.invalid/' + p.name: p.read_bytes() for p in output.iterdir()}}
+                with patch.object(release_gate.urllib.request, 'urlopen', side_effect=lambda req, **kw: io.BytesIO(responses[req.full_url])):
+                    if embedded_sha == sha:
+                        self.assertEqual(release_gate.github_release_decision('Lephiziel/findrail', version, 'c' * 40, 'test'), 'noop')
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'provenance'):
+                            release_gate.github_release_decision('Lephiziel/findrail', version, 'c' * 40, 'test')
 
 
 if __name__ == '__main__':

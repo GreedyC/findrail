@@ -1,5 +1,7 @@
 name: Alpha release candidate
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -33,25 +35,27 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.sha }}
           persist-credentials: false
       - id: source
         env:
-          INPUT_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.sha }}
+          INPUT_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.sha }}
           INPUT_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_version || '' }}
           REQUEST_PUBLISH: ${{ github.event_name == 'workflow_dispatch' && inputs.publish || false }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$INPUT_SHA"
-          test "$INPUT_SHA" = "$GITHUB_SHA"
-          if [[ "$GITHUB_EVENT_NAME" != push && "$GITHUB_EVENT_NAME" != workflow_dispatch ]]; then
+          [[ "$INPUT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then test "$INPUT_SHA" = "$GITHUB_SHA"; fi
+          if [[ "$GITHUB_EVENT_NAME" != push && "$GITHUB_EVENT_NAME" != workflow_dispatch && "$GITHUB_EVENT_NAME" != pull_request ]]; then
             echo "Unsupported release upstream event: $GITHUB_EVENT_NAME" >&2; exit 1
           fi
-          if [[ "$GITHUB_REPOSITORY" != 'Lephiziel/findrail' || "$GITHUB_REF" != 'refs/heads/main' ]]; then
-            echo 'Only the canonical repository main branch is eligible.' >&2; exit 1
+          if [[ "$GITHUB_EVENT_NAME" != pull_request && ( "$GITHUB_REPOSITORY" != 'Lephiziel/findrail' || "$GITHUB_REF" != 'refs/heads/main' ) ]]; then
+            echo 'Publication/dispatch requires the canonical repository main branch.' >&2; exit 1
           fi
           RELEASE_VERSION=$(cat build/package/VERSION)
           VERSION="$RELEASE_VERSION"
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then VERSION=0.1.0-alpha.3; fi
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then VERSION="$INPUT_VERSION"; fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]
           PUBLISH=false
@@ -66,30 +70,9 @@ jobs:
           } >> "$GITHUB_OUTPUT"
   source-checks:
     needs: validate-source
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.validate-source.outputs.candidate_sha }}
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31d06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.x'
-          cache: true
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22.x'
-      - name: Formatting, Go tests, vet, and module integrity
-        run: |
-          test -z "$(gofmt -l $(git ls-files '*.go'))"
-          go test ./...
-          go vet ./...
-          go mod verify
-      - name: Browser UI regressions and packaging safety
-        run: |
-          node --test internal/transport/http/web/*_test.mjs
-          python3 scripts/test_package.py
-          python3 -m unittest scripts/test_release_assets.py scripts/test_release_gate.py
+    uses: ./.github/workflows/ci.yml
+    with:
+      candidate_sha: ${{ needs.validate-source.outputs.candidate_sha }}
   native-packages:
     needs: validate-source
     strategy:
@@ -112,7 +95,7 @@ jobs:
         with:
           ref: ${{ needs.validate-source.outputs.candidate_sha }}
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31d06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.x'
           cache: true
@@ -183,7 +166,7 @@ jobs:
           overwrite: true
           retention-days: 30
   installed-vsix:
-    needs: validate-source
+    needs: [validate-source, native-packages]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -195,7 +178,7 @@ jobs:
           node-version: '22.x'
           cache: npm
           cache-dependency-path: extensions/vscode/package-lock.json
-      - uses: actions/setup-go@b7ad1dad31d06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.x'
           cache: true
@@ -208,30 +191,36 @@ jobs:
       - working-directory: extensions/vscode
         run: npm run test:integration
       - run: go test ./internal/transport/http/...
-      - name: Package and install VSIX in an isolated VS Code profile
-        working-directory: extensions/vscode
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-package-${{ needs.validate-source.outputs.candidate_sha }}-linux-amd64
+          path: ${{ runner.temp }}/native-client
+      - name: Safely extract the exact native candidate
+        env:
+          VERSION: ${{ needs.validate-source.outputs.version }}
         run: |
-          npm run package
-          node - <<'JS'
-          const {downloadAndUnzipVSCode}=require('@vscode/test-electron');
-          const {spawnSync}=require('node:child_process');
-          const fs=require('node:fs');
-          (async()=>{
-            const executable=await downloadAndUnzipVSCode('1.95.0');
-            const dir=process.env.RUNNER_TEMP+'/installed-vsix-extensions';
-            fs.mkdirSync(dir,{recursive:true});
-            const install=spawnSync('xvfb-run',['-a',executable,'--disable-updates','--extensions-dir',dir,'--install-extension','findrail-readonly-0.1.0.vsix','--force'],{stdio:'inherit',cwd:process.cwd(),timeout:90000});
-            if(install.error) throw install.error;
-            if(install.status!==0) throw new Error(`VSIX installation failed: ${install.status}`);
-            const list=spawnSync('xvfb-run',['-a',executable,'--disable-updates','--extensions-dir',dir,'--list-extensions'],{encoding:'utf8',timeout:30000});
-            if(list.error) throw list.error;
-            if(list.status!==0) throw new Error(`VSIX listing failed: ${list.status}`);
-            const installed=list.stdout;
-            if(!installed.toLowerCase().includes('findrail-local.findrail-readonly')) throw new Error('VSIX was not installed');
-          })().catch(e=>{console.error(e);process.exit(1)});
-          JS
-      - working-directory: extensions/vscode
-        run: xvfb-run -a npm run test:host
+          python3 - <<'PY'
+          import os, pathlib, sys
+          sys.path.insert(0, 'scripts')
+          import package
+          source = pathlib.Path(os.environ['RUNNER_TEMP']) / 'native-client'
+          version = os.environ['VERSION']
+          archive = source / f'findrail_{version}_linux-amd64.tar.gz'
+          package.verify_archive(archive, 'linux-amd64', version)
+          root = package.extract_verified(archive, pathlib.Path(os.environ['RUNNER_TEMP']) / 'installed client 📦')
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as out:
+              out.write(f'FINDRAIL_CANDIDATE_BINARY={root / "findrail"}\n')
+          PY
+      - name: Package the VSIX
+        working-directory: extensions/vscode
+        run: npm run package
+      - name: Test installed VSIX against the extracted candidate in an isolated profile
+        working-directory: extensions/vscode
+        env:
+          FINDRAIL_TEST_VSIX: ${{ github.workspace }}/extensions/vscode/findrail-readonly-0.1.0.vsix
+          FINDRAIL_CANDIDATE_SHA: ${{ needs.validate-source.outputs.candidate_sha }}
+          FINDRAIL_CANDIDATE_VERSION: ${{ needs.validate-source.outputs.version }}
+        run: xvfb-run -a node test/run-host.cjs
       - name: Assert VSIX contract and save
         run: |
           set -euo pipefail
@@ -246,8 +235,59 @@ jobs:
           if-no-files-found: error
           overwrite: true
           retention-days: 30
+  packaged-browser-journey:
+    needs: [validate-source, native-packages]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      CANDIDATE_SHA: ${{ needs.validate-source.outputs.candidate_sha }}
+      CANDIDATE_VERSION: ${{ needs.validate-source.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-package-${{ env.CANDIDATE_SHA }}-linux-amd64
+          path: ${{ runner.temp }}/native-browser
+      - name: Safely extract the previously built Linux candidate
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, sys
+          sys.path.insert(0, 'scripts')
+          import package
+          source = pathlib.Path(os.environ['RUNNER_TEMP']) / 'native-browser'
+          version = os.environ['CANDIDATE_VERSION']
+          archive = source / f'findrail_{version}_linux-amd64.tar.gz'
+          package.verify_archive(archive, 'linux-amd64', version)
+          root = package.extract_verified(archive, pathlib.Path(os.environ['RUNNER_TEMP']) / 'browser install 📦')
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as out:
+              out.write(f'CANDIDATE_DIR={root}\n')
+          PY
+      - name: Install pinned matched Chromium and driver
+        run: |
+          python3 -m pip install --disable-pip-version-check 'selenium==4.35.0'
+          npm install --global --ignore-scripts '@puppeteer/browsers@2.10.6'
+          npx --yes @puppeteer/browsers@2.10.6 install chrome@139.0.7258.66 --path "$RUNNER_TEMP/chrome-for-testing"
+          npx --yes @puppeteer/browsers@2.10.6 install chromedriver@139.0.7258.66 --path "$RUNNER_TEMP/chrome-for-testing"
+      - name: Fresh start, UI folder, evidence export, restart, and upgrade on the candidate
+        env:
+          FINDRAIL_CHROME: ${{ runner.temp }}/chrome-for-testing/chrome/linux-139.0.7258.66/chrome-linux64/chrome
+          FINDRAIL_CHROMEDRIVER: ${{ runner.temp }}/chrome-for-testing/chromedriver/linux-139.0.7258.66/chromedriver-linux64/chromedriver
+        run: python3 scripts/packaged_journey.py "$CANDIDATE_DIR/findrail" --candidate-sha "$CANDIDATE_SHA" --candidate-version "$CANDIDATE_VERSION" --report "$RUNNER_TEMP/packaged-journey-report.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-browser-journey-${{ env.CANDIDATE_SHA }}
+          path: ${{ runner.temp }}/packaged-journey-report.json
+          if-no-files-found: error
+          retention-days: 30
   aggregate-and-verify:
-    needs: [validate-source, source-checks, native-packages, installed-vsix]
+    needs: [validate-source, source-checks, native-packages, installed-vsix, packaged-browser-journey]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -321,7 +361,7 @@ jobs:
           result=$(python3 scripts/release_gate.py --repository "$GITHUB_REPOSITORY" --version "$VERSION" --current-sha "$CANDIDATE_SHA")
           echo "decision=$result" >> "$GITHUB_OUTPUT"
   publish:
-    needs: [validate-source, source-checks, native-packages, installed-vsix, aggregate-and-verify, reusable-final-verification, release-state]
+    needs: [validate-source, source-checks, native-packages, installed-vsix, packaged-browser-journey, aggregate-and-verify, reusable-final-verification, release-state]
     if: needs.validate-source.outputs.publish == 'true' && needs.release-state.outputs.decision == 'publish'
     runs-on: ubuntu-latest
     permissions:

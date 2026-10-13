@@ -2,10 +2,13 @@
 
 The alpha release workflow is a preparation pipeline until the repository owner
 intentionally changes `build/package/VERSION` on `main`. A push to `main` runs
-five native package jobs, installed VSIX checks, exact-set aggregation, reusable
-verification, and a read-only published-release state check. Only after every
-gate succeeds can the final job create a release. It never runs for a pull
-request, fork, or non-canonical repository.
+the full reusable CI, five native package jobs, a real packaged browser journey,
+installed VSIX checks, exact-set aggregation, reusable verification, and a
+read-only published-release state check. Only after every
+gate succeeds can the final job create a release. Pull requests rehearse the
+same gates with publication disabled and app version alpha.3. Publication is
+restricted to the canonical repository's main push or explicit main dispatch;
+PR and fork previews have read-only permissions.
 
 ## Preview rehearsal (agent 05 handoff)
 
@@ -85,17 +88,25 @@ The generated manifest includes the five platform archives and the one VSIX.
 Archive bytes are not compared across operating systems/toolchains. Native
 verification checks BUILD-INFO revision/version/target/cleanliness and invokes
 the executable version command; Linux additionally runs upgrade and browser/API
-smokes. The installed client job runs extension tests, compiled-server
-integration and a real VS Code extension host before aggregation.
+smokes. The Linux browser job consumes that exact native archive, starts an
+empty index, adds a folder in the UI, checks selected text/PDF-page citations
+and Markdown download, and checks reload/restart. The installed client job runs
+extension tests and compiled-server integration, then installs the actual VSIX
+in isolated user-data/extensions directories and exercises it against the
+extracted native candidate. Only the test bootstrap is loaded as a development
+extension; Findrail must load from the installed extension directory.
 
 ## Gates and immutable-release behavior
 
-Publication requires the exact same workflow run's five native package jobs,
+Publication requires the exact same workflow run's full CI (including three-OS
+Go checks, race and UI tests), five native package jobs, packaged browser journey,
 installed VSIX checks, aggregate verification, and reusable final verification.
 The generic CI workflow is additional evidence, not a substitute for these
 required jobs. `release-state` has read-only contents permission and rejects API
 errors, a tag without a release, an incomplete asset set, or a mismatched
-tag/manifest revision. A complete historical alpha.2 release is a no-op when
+tag/manifest revision. For the new contract, existing archives' embedded
+BUILD-INFO and the VSIX identity are also verified before accepting a no-op.
+A complete historical alpha.2 release is a no-op when
 main advances with VERSION unchanged; its established contract is five archives
 plus `SHA256SUMS.txt`, without a VSIX or manifest. The publisher has write
 permission only in the final job, rechecks that the tag does not already exist,
