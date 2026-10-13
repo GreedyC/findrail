@@ -13,10 +13,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Lephiziel/findrail/internal/originals"
 	"github.com/Lephiziel/findrail/internal/search"
 	"github.com/Lephiziel/findrail/internal/sourceapp"
 	"github.com/Lephiziel/findrail/internal/store/sqlite"
@@ -39,14 +41,20 @@ type Backend interface {
 }
 
 type options struct {
-	syncEnabled bool
-	syncStatus  func() []syncer.Status
-	ready       func(string) error
-	management  *sourceapp.App
-	authority   string
-	token       string
+	syncEnabled  bool
+	syncStatus   func() []syncer.Status
+	ready        func(string) error
+	management   *sourceapp.App
+	originals    OriginalResolver
+	openOriginal func(originals.Action, string) error
+	authority    string
+	token        string
 }
 type Option func(*options)
+
+type OriginalResolver interface {
+	ResolveOriginal(context.Context, string, string) (sqlite.OriginalTarget, error)
+}
 
 func WithSyncStatus(enabled bool, status func() []syncer.Status) Option {
 	return func(o *options) { o.syncEnabled = enabled; o.syncStatus = status }
@@ -62,6 +70,9 @@ func WithReady(ready func(string) error) Option {
 // WithManagement opts one server composition into local source mutations. It is
 // deliberately used only by `start`; `serve` and `demo` remain read-only.
 func WithManagement(app *sourceapp.App) Option { return func(o *options) { o.management = app } }
+func WithOriginals(resolver OriginalResolver, open func(originals.Action, string) error) Option {
+	return func(o *options) { o.originals, o.openOriginal = resolver, open }
+}
 
 func Handler(backend Backend, opts ...Option) http.Handler {
 	var config options
@@ -75,11 +86,15 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 	if config.management != nil && config.authority == "" {
 		config.management = nil
 	}
-	if config.management != nil {
+	if config.originals != nil && (config.management == nil || config.authority == "" || config.openOriginal == nil) {
+		config.originals = nil
+	}
+	if config.management != nil || config.originals != nil {
 		if config.token == "" {
 			var token [32]byte
 			if _, err := rand.Read(token[:]); err != nil {
 				config.management = nil
+				config.originals = nil
 			} else {
 				config.token = fmt.Sprintf("%x", token[:])
 			}
@@ -212,13 +227,87 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 	mux.HandleFunc("GET /api/v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{
 			"management":              config.management != nil,
+			"open_originals":          config.originals != nil,
 			"client_api_version":      1,
 			"search_modes":            []string{"literal", "advanced"},
 			"search_filters":          []string{"source", "format", "path_prefix", "title_contains"},
 			"pdf_title_only_evidence": true,
 		})
 	})
-	if config.management != nil {
+	if config.originals != nil {
+		mux.HandleFunc("POST /api/v1/originals/open", func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				DocumentID string           `json:"document_id"`
+				Identity   string           `json:"original_identity"`
+				Action     originals.Action `json:"action"`
+				Page       int              `json:"page,omitempty"`
+			}
+			if !originalMutationAllowed(w, r, config) || !decodeMutation(w, r, &body) {
+				return
+			}
+			if body.DocumentID == "" || body.Identity == "" || body.Page < 0 || body.Page > 100000 {
+				writeError(w, 400, "document, snapshot identity, and valid page are required")
+				return
+			}
+			if body.Action != originals.OpenFile && body.Action != originals.OpenFolder {
+				writeError(w, 400, "action must be file or folder")
+				return
+			}
+			if body.Action == originals.OpenFolder && body.Page != 0 {
+				writeError(w, 400, "folder action does not accept a page")
+				return
+			}
+			t, err := config.originals.ResolveOriginal(r.Context(), body.DocumentID, body.Identity)
+			if err != nil {
+				writeOriginalError(w, err)
+				return
+			}
+			if body.Page > 0 {
+				if t.MediaType != "application/pdf" {
+					writeError(w, 400, "only PDF evidence has pages")
+					return
+				}
+				if _, err = backend.Evidence(r.Context(), body.DocumentID, body.Page); err != nil {
+					writeError(w, 400, "page is not present in the indexed snapshot")
+					return
+				}
+			}
+			path, err := originals.Resolve(t.Root, t.RelativePath)
+			if err != nil {
+				writeError(w, 409, "original is missing or no longer safely reachable")
+				return
+			}
+			if body.Action == originals.OpenFile && !originals.AllowedDocument(path) {
+				writeError(w, 409, "document type cannot be opened")
+				return
+			}
+			if body.Action == originals.OpenFolder {
+				path = filepath.Dir(path)
+			}
+			// Recheck the registration and filesystem immediately before spawn.
+			// This narrows, but cannot eliminate, replacement races with the OS.
+			latest, checkErr := config.originals.ResolveOriginal(r.Context(), body.DocumentID, body.Identity)
+			if checkErr != nil || latest != t {
+				writeError(w, 409, "source registration or snapshot changed before opening")
+				return
+			}
+			currentPath, checkErr := originals.Resolve(t.Root, t.RelativePath)
+			if checkErr != nil || (body.Action == originals.OpenFile && currentPath != path) || (body.Action == originals.OpenFolder && filepath.Dir(currentPath) != path) {
+				writeError(w, 409, "original changed before opening")
+				return
+			}
+			if err = config.openOriginal(body.Action, path); err != nil {
+				writeError(w, 503, "native opener unavailable; open the location manually")
+				return
+			}
+			message := "Opening the current file; preview and saved citation refer to the indexed snapshot."
+			if body.Page > 0 {
+				message = "Opening the current PDF; the viewer may open at its default page. Preview refers to the indexed snapshot."
+			}
+			writeJSON(w, 202, map[string]string{"status": "attempted", "message": message})
+		})
+	}
+	if config.management != nil || config.originals != nil {
 		mux.HandleFunc("GET /api/v1/session", func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Values("Origin")
 			if config.token == "" || crossSite(r) || !requestAuthority(r, config.authority) || len(origin) > 1 || (len(origin) == 1 && origin[0] != "http://"+config.authority) {
@@ -228,6 +317,8 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 			w.Header().Set("Cache-Control", "no-store")
 			writeJSON(w, 200, map[string]string{"token": config.token})
 		})
+	}
+	if config.management != nil {
 		mux.HandleFunc("POST /api/v1/sources", func(w http.ResponseWriter, r *http.Request) {
 			var body struct {
 				Type         string `json:"type"`
@@ -353,24 +444,44 @@ func mutationAllowed(w http.ResponseWriter, r *http.Request, c options) bool {
 		writeError(w, 404, "management unavailable")
 		return false
 	}
+	return mutationAuthAllowed(w, r, c)
+}
+
+func originalMutationAllowed(w http.ResponseWriter, r *http.Request, c options) bool {
+	if c.originals == nil {
+		writeError(w, 404, "native opener unavailable")
+		return false
+	}
+	return mutationAuthAllowed(w, r, c)
+}
+
+func mutationAuthAllowed(w http.ResponseWriter, r *http.Request, c options) bool {
 	if len(r.Header.Values("Origin")) != 1 || !requestAuthority(r, c.authority) || crossSite(r) || r.Header.Get("Origin") != "http://"+c.authority {
 		writeError(w, 403, "same local origin required")
 		return false
 	}
 	token := r.Header.Get("X-Findrail-Token")
 	if len(r.Header.Values("X-Findrail-Token")) != 1 || c.token == "" || len(token) != len(c.token) || subtle.ConstantTimeCompare([]byte(token), []byte(c.token)) != 1 {
-		writeError(w, 403, "management token required")
+		writeError(w, 403, "session token required")
 		return false
 	}
-	if len(r.Header.Values("Content-Type")) != 1 {
-		writeError(w, 400, "application/json required")
-		return false
-	}
-	if media := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0])); media != "application/json" {
+	if len(r.Header.Values("Content-Type")) != 1 || strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0])) != "application/json" {
 		writeError(w, 400, "application/json required")
 		return false
 	}
 	return true
+}
+
+func writeOriginalError(w http.ResponseWriter, err error) {
+	if errors.Is(err, search.ErrNotFound) {
+		writeError(w, 404, "indexed document not found")
+		return
+	}
+	if errors.Is(err, originals.ErrSnapshotChanged) || errors.Is(err, originals.ErrNotFilesystem) {
+		writeError(w, 409, "indexed source or snapshot changed; refresh search and select the current result")
+		return
+	}
+	writeError(w, 500, "current source provenance is unavailable")
 }
 func decodeMutation(w http.ResponseWriter, r *http.Request, target any) bool {
 	if r.ContentLength > 16<<10 {
@@ -480,7 +591,7 @@ func Serve(ctx context.Context, addr string, backend Backend, opts ...Option) er
 	for _, option := range opts {
 		option(&config)
 	}
-	if config.management != nil {
+	if config.management != nil || config.originals != nil {
 		config.authority = listener.Addr().String()
 		var b [32]byte
 		if _, err := rand.Read(b[:]); err != nil {

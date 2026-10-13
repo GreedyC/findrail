@@ -84,9 +84,14 @@ absolute folder path on the computer running Findrail. Existing indexes resume
 their registered sources; use a fresh `--data-dir` for an isolated empty start.
 
 Search a remembered word in a note, code file, text PDF or DOCX document. Open
-**Preview** to inspect the indexed text and use PDF page controls when present.
-**Copy location** copies the original URI, including `#page=N` for PDF evidence;
-browsers may restrict `file:` navigation. DOCX has no page-number claim.
+**Preview** to inspect indexed text and use PDF page controls when present.
+Search results and Preview can show **Открыть оригинал** and **Открыть папку**
+when native opening is explicitly enabled with `start --enable-originals`.
+`serve` and `demo` remain read-only and never launch applications. **Copy
+location** remains a fallback. PDF page selection is validated against indexed
+evidence, but the opener does not request page navigation from an unknown viewer;
+the current file may open at its default page. DOCX has no page-number claim.
+The opened file is current; preview and saved citations remain the indexed snapshot.
 
 Select two exact passages in Preview, add them to the evidence collection, add a
 note, and download the Markdown citations. The collection is in-tab memory and
