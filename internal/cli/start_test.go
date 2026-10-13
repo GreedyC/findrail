@@ -351,6 +351,47 @@ func TestReadOnlyStartStartupFailureIsDrained(t *testing.T) {
 	}
 }
 
+type startupHoldWriter struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (w startupHoldWriter) Write(p []byte) (int, error) {
+	select {
+	case w.entered <- struct{}{}:
+	default:
+	}
+	<-w.release
+	return len(p), nil
+}
+
+func TestReadOnlyStartCanceledDuringDelayedReadyIsDrained(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	data := t.TempDir()
+	writer := startupHoldWriter{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() {
+		done <- runStartReadOnly(ctx, []string{"--data-dir", data, "--addr", "127.0.0.1:0", "--no-open"}, writer, io.Discard, func(string) error { return nil })
+	}()
+	select {
+	case <-writer.entered:
+	case <-time.After(5 * time.Second):
+		close(writer.release)
+		t.Fatal("startup did not reach the deliberately delayed ready callback")
+	}
+	cancel()
+	close(writer.release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("delayed startup shutdown: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("delayed read-only startup did not drain after cancellation")
+	}
+}
+
 func TestStartDoesNotOpenBrowserWhenPortIsBusy(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
