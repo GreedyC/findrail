@@ -76,7 +76,7 @@ def verify(directory, version, revision, extension_version='0.1.0'):
             info = json.loads((extracted / 'BUILD-INFO.json').read_text(encoding='utf-8'))
             if (info.get('revision') != revision or info.get('dirty') is not False or
                     info.get('version') != version or info.get('target') != target or
-                    info.get('schema_version') != manifest['schema_version']):
+                    package.build_info_schema(info) != manifest['schema_version']):
                 raise ValueError('archive has unknown, dirty, or wrong-revision provenance: ' + name)
     import zipfile
     with zipfile.ZipFile(root / VSIX) as zf:

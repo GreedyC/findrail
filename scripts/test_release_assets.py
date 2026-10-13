@@ -13,7 +13,7 @@ import release_assets as release
 
 
 class ReleaseAssetTests(unittest.TestCase):
-    def candidate(self, root, revision='a' * 40, dirty=False, version='0.1.0-alpha.4', schema=None):
+    def candidate(self, root, revision='a' * 40, dirty=False, version='0.1.0-alpha.4', schema=None, include_schema=True):
         source = root / 'input'
         source.mkdir()
         schema = release.contract_schema(version) if schema is None else schema
@@ -21,6 +21,8 @@ class ReleaseAssetTests(unittest.TestCase):
             stem = pathlib.Path(name).name.removesuffix('.tar.gz').removesuffix('.zip')
             info = {'version': version, 'revision': revision, 'dirty': dirty,
                     'target': target, 'schema_version': schema}
+            if not include_schema:
+                del info['schema_version']
             members = {'BUILD-INFO.json': json.dumps(info).encode(),
                        'INSTALL.txt': b'x', 'LICENSE': b'x', 'NOTICE': b'x',
                        'licenses/DEPENDENCIES.txt': b'x', 'licenses/Go-LICENSE.txt': b'x'}
@@ -51,7 +53,7 @@ class ReleaseAssetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp); source, revision = self.candidate(root); output = root / 'release'
             manifest = release.assemble(source, output, '0.1.0-alpha.4', revision)
-            self.assertEqual(manifest['schema_version'], 6)
+            self.assertEqual(manifest['schema_version'], release.package.schema_version())
             self.assertEqual(len(manifest['assets']), 6)
             self.assertEqual(release.verify(output, '0.1.0-alpha.4', revision), manifest)
 
@@ -85,13 +87,79 @@ class ReleaseAssetTests(unittest.TestCase):
             with self.assertRaises(ValueError): release.verify(output, '0.1.0-alpha.4', revision)
 
     def test_fake_schema_dirty_and_wrong_revision_are_rejected(self):
-        for revision, dirty, schema in (('b' * 40, False, 6), ('a' * 40, True, 6), ('a' * 40, False, 7)):
+        current = release.package.schema_version()
+        for revision, dirty, schema in (('b' * 40, False, current), ('a' * 40, True, current), ('a' * 40, False, current + 1), ('unknown', False, current)):
             with self.subTest(revision=revision, dirty=dirty, schema=schema), tempfile.TemporaryDirectory() as temp:
                 root = pathlib.Path(temp); source, _ = self.candidate(root, revision, dirty, schema=schema)
                 with self.assertRaises(ValueError): release.assemble(source, root / 'out', '0.1.0-alpha.4', 'a' * 40)
 
     def test_fake_extension_and_unknown_version_are_rejected(self):
         with self.assertRaises(ValueError): release.contract_schema('0.1.0-alpha.9')
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp); source, revision = self.candidate(root)
+            vsix = source / release.VSIX
+            with zipfile.ZipFile(vsix) as zf:
+                members = {name: zf.read(name) for name in zf.namelist()}
+            metadata = json.loads(members['extension/package.json'])
+            metadata['publisher'] = 'another-publisher'
+            members['extension/package.json'] = json.dumps(metadata).encode()
+            with zipfile.ZipFile(vsix, 'w') as zf:
+                for name, content in members.items(): zf.writestr(name, content)
+            with self.assertRaisesRegex(ValueError, 'VSIX identity'):
+                release.assemble(source, root / 'out', '0.1.0-alpha.4', revision)
+
+    def test_original_published_alpha3_without_schema_field_is_verifiable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            source, revision = self.candidate(root, revision=release.ALPHA3_REVISION,
+                version='0.1.0-alpha.3', schema=6, include_schema=False)
+            with patch.object(release.package, 'schema_version', return_value=7):
+                for name, target in release.expected_archives('0.1.0-alpha.3').items():
+                    release.package.verify_archive(source / name, target, '0.1.0-alpha.3')
+                release.assemble(source, root / 'out', '0.1.0-alpha.3', revision)
+                self.assertEqual(release.verify(root / 'out', '0.1.0-alpha.3', revision)['schema_version'], 6)
+
+    def test_missing_schema_is_rejected_outside_original_published_build(self):
+        cases = [('0.1.0-alpha.3', 'a' * 40, False),
+                 ('0.1.0-alpha.3', release.ALPHA3_REVISION, True),
+                 ('0.1.0-alpha.4', release.ALPHA3_REVISION, False)]
+        for version, revision, dirty in cases:
+            with self.subTest(version=version, revision=revision, dirty=dirty), tempfile.TemporaryDirectory() as temp:
+                root = pathlib.Path(temp)
+                source, _ = self.candidate(root, revision=revision, dirty=dirty,
+                    version=version, include_schema=False)
+                with self.assertRaises(ValueError):
+                    release.assemble(source, root / 'out', version, revision)
+
+    def test_missing_target_and_vsix_fail_closed(self):
+        for name in (release.VSIX, 'findrail_0.1.0-alpha.4_linux-arm64.tar.gz'):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temp:
+                root = pathlib.Path(temp); source, revision = self.candidate(root)
+                (source / name).unlink()
+                with self.assertRaises(ValueError):
+                    release.assemble(source, root / 'out', '0.1.0-alpha.4', revision)
+
+    def test_checksum_mismatch_is_rejected_independently(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp); source, revision = self.candidate(root); output = root / 'out'
+            release.assemble(source, output, '0.1.0-alpha.4', revision)
+            sums = output / 'SHA256SUMS.txt'
+            text = sums.read_text()
+            sums.write_text('0' * 64 + text[64:])
+            with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+                release.verify(output, '0.1.0-alpha.4', revision)
+
+    def test_manifest_duplicates_unsafe_names_and_wrong_revision_are_rejected(self):
+        for mutation in ('duplicate', 'unsafe', 'revision'):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temp:
+                root = pathlib.Path(temp); source, revision = self.candidate(root); output = root / 'out'
+                release.assemble(source, output, '0.1.0-alpha.4', revision)
+                path = output / 'release-manifest.json'; manifest = json.loads(path.read_text())
+                if mutation == 'duplicate': manifest['assets'].append(manifest['assets'][0])
+                elif mutation == 'unsafe': manifest['assets'][0]['basename'] = '../escape'
+                else: manifest['source_revision'] = 'b' * 40
+                path.write_text(json.dumps(manifest))
+                with self.assertRaises(ValueError): release.verify(output, '0.1.0-alpha.4', revision)
 
 
 if __name__ == '__main__':
