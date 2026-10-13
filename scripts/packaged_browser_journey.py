@@ -118,9 +118,9 @@ def main():
             """)
             assert selected == "idempotencymarker fa", selected
             browser.find_element(By.ID, "add-evidence").click()
-            wait.until(lambda d: "added" in d.find_element(By.ID, "collection-status").text.lower())
+            wait.until(lambda d: "added" in d.find_element(By.ID, "collection-status").get_property("textContent").lower())
             browser.find_element(By.ID, "add-evidence").click()
-            assert "Duplicate" in browser.find_element(By.ID, "collection-status").text
+            assert "Duplicate" in browser.find_element(By.ID, "collection-status").get_property("textContent")
             browser.find_element(By.ID, "close-preview").click()
             search("page2journey", "pdf")
             browser.find_element(By.XPATH, "//button[.='Preview']").click()
