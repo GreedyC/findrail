@@ -1,125 +1,121 @@
-# alpha.3 release-candidate rehearsal (not a release)
+# alpha.3 release-candidate acceptance (not a release)
 
-This records reviewed preparation evidence on 2026-10-13. Published downloads
-remain alpha.2. Alpha.3 is not published, signed or certified for every user or
-platform. No release was created by this documentation work.
+Acceptance evidence recorded 2026-10-13. This is a technical **conditional GO**
+for the current alpha.3 candidate, not permission to publish. The owner’s short
+human smoke and approval of release notes/target remain before-release actions.
+The published release remains alpha.2; no alpha.3 tag or release exists.
 
 ## Candidate identity
 
-Candidate app version is `0.1.0-alpha.3`, supplied as an explicit packaging
-override; `build/package/VERSION` remains alpha.2. Current schema is 6 with
-migrations 1–6. Published alpha.2 uses schema 2; its legacy folders keep DOCX
-disabled until explicitly enabled. Other existing source policies are preserved.
+| Field | Verified value |
+|---|---|
+| Candidate `main` SHA | `0254e3063182695b2742f6c6d166024123c9d0f7` |
+| Candidate tree SHA | `4033433f7d9bfd6cb7b8328689c24ba9ab3d435f` |
+| Clean checkout | Yes; detached checkout at the SHA, no tracked changes or untracked payload |
+| App candidate version | `0.1.0-alpha.3` (explicit no-publish workflow override) |
+| Repository `build/package/VERSION` | `0.1.0-alpha.2` (unchanged; not the candidate override) |
+| Extension version | `0.1.0` |
+| Client API / schema | `1` / `6` |
+| Release state | Only alpha.1 and alpha.2 published; alpha.3 tag/release absent |
 
-The reviewed packaged-journey PR #31 head is
-`150956a572b1070a893babe8a2522579dc0c853f`. It passed full
-[CI](https://github.com/Lephiziel/findrail/actions/runs/38333847081),
-[five native packaged targets](https://github.com/Lephiziel/findrail/actions/runs/38333847086),
-and the real [packaged browser journey](https://github.com/Lephiziel/findrail/actions/runs/38333847047).
-It was merged as `6bce0eb9bad5655047b134ded03041179b3349fd`.
-These results establish the named PR head, not a rebuilt package at its merge
-commit, this documentation commit, or a future release commit.
+PRs #30, #31 and #32 are merged. The candidate was rebuilt from the exact
+post-integration `main` SHA by the [no-publish workflow dispatch](https://github.com/Lephiziel/findrail/actions/runs/38342270683)
+with `candidate_version=0.1.0-alpha.3` and `publish=false`. All required jobs
+passed; `release-state` and `publish` were skipped. The earlier automatic `main`
+push rehearsal used the unchanged VERSION (`0.1.0-alpha.2`); it is not used as
+alpha.3 evidence.
 
-## Reviewed platform evidence
+## Verified assets
 
-The table describes the complete PR #30 candidate at
-`d572444e0b7216f3972591b08bde8e1e2eda6b2f`, verified in the
-[full candidate gate](https://github.com/Lephiziel/findrail/actions/runs/38335973540).
+The [aggregate release artifact](https://github.com/Lephiziel/findrail/actions/runs/38342270683/artifacts/11787422558)
+contains the exact eight-file set below. The downloaded local copy was verified
+with `scripts/release_assets.py verify --version 0.1.0-alpha.3 --revision
+0254e3063182695b2742f6c6d166024123c9d0f7` and `sha256sum -c SHA256SUMS.txt`.
+All checks passed. Artifacts are unsigned; no notarization or signing is claimed.
 
-| Target | Native archive/checksum/provenance and CLI checks | Actual packaged Chromium journey | Installed VSIX | Manual desktop checks |
-|---|---|---|---|---|
-| linux-amd64 | Passed in the complete gate | Passed: empty start, UI Add folder, selected text, PDF page 2, DOCX, Markdown bytes, reload/restart | Passed in VS Code 1.95, isolated installed VSIX + extracted candidate | One-person smoke not recorded |
-| linux-arm64 | Passed in the complete gate on Linux ARM | Not run | Not run | Not run |
-| darwin-amd64 | Passed in the complete gate on macOS Intel | Not run | Not run | Finder/Gatekeeper not run |
-| darwin-arm64 | Passed in the complete gate on macOS ARM | Not run | Not run | Finder/Gatekeeper not run |
-| windows-amd64 | Passed in the complete gate on Windows | Not run | Not run | One-person smoke not recorded |
+| Asset basename | Target | Size (bytes) | SHA-256 | Source revision | Native/verification job |
+|---|---|---:|---|---|---|
+| `findrail_0.1.0-alpha.3_linux-amd64.tar.gz` | Linux amd64 | 6,271,322 | `f805444cfbc68cd03e104b7b5d6c947609c3f96022a5dfc25f94cce5b5b361b8` | `0254e3063182695b2742f6c6d166024123c9d0f7` | [Linux amd64](https://github.com/Lephiziel/findrail/actions/runs/38342270683/job/115115725051) |
+| `findrail_0.1.0-alpha.3_linux-arm64.tar.gz` | Linux ARM64 | 5,794,204 | `280d77039685c92e552a5386c3b4b084680b2b7b9b1d3726c828c1209176d819` | `0254e3063182695b2742f6c6d166024123c9d0f7` | [Linux ARM64](https://github.com/Lephiziel/findrail/actions/runs/38342270683/job/115115725023) |
+| `findrail_0.1.0-alpha.3_darwin-amd64.tar.gz` | macOS Intel | 6,284,764 | `40eed86d175e5a36e597b90f0089a958e55b9353a7db59da27b9d0d694544bd7` | `0254e3063182695b2742f6c6d166024123c9d0f7` | [macOS Intel](https://github.com/Lephiziel/findrail/actions/runs/38342270683/job/115115725077) |
+| `findrail_0.1.0-alpha.3_darwin-arm64.tar.gz` | macOS ARM64 | 5,928,012 | `6219afb4f6cb076e5d34931f6866712afa37bbd86c5f15bfe80907ec1d4dd3a2` | `0254e3063182695b2742f6c6d166024123c9d0f7` | [macOS ARM64](https://github.com/Lephiziel/findrail/actions/runs/38342270683/job/115115725035) |
+| `findrail_0.1.0-alpha.3_windows-amd64.zip` | Windows amd64 | 15,526,399 | `f6c7f9d35f658b6110737c69adf7fcd0e7d937c8d30f6bd32fd4b54afe23312e` | `0254e3063182695b2742f6c6d166024123c9d0f7` | [Windows](https://github.com/Lephiziel/findrail/actions/runs/38342270683/job/115115725140) |
+| `findrail-readonly-0.1.0.vsix` | VS Code UI extension | 18,033 | `5845c1cb52197676065c40b3e8e7830241b9b9d1f10e10e18edaf5eaec117094` | `0254e3063182695b2742f6c6d166024123c9d0f7` | [Installed VSIX + candidate server](https://github.com/Lephiziel/findrail/actions/runs/38342270683/job/115116096046) |
+| `release-manifest.json` | Manifest v1 | 1,612 | `20824288ed11ee08531e10a7f3f7989d77f0f6b906b391ec51dbaad087c8066f` | `0254e3063182695b2742f6c6d166024123c9d0f7` | [Aggregate verification](https://github.com/Lephiziel/findrail/actions/runs/38342270683/job/115116390924) |
+| `SHA256SUMS.txt` | Shared checksums | 724 | `cd1a0a0301b63fd4ded3cd6b06faa46179ae0e1066ff987bb2257ca2c816ad14` | `0254e3063182695b2742f6c6d166024123c9d0f7` | [Aggregate verification](https://github.com/Lephiziel/findrail/actions/runs/38342270683/job/115116390924) |
 
-The packaged harness checks exact executable version and clean BUILD-INFO
-SHA/version/native target. It exercises the ten-case synthetic Literal evaluation
-corpus, complete negative JSON report and nonzero status, missing-index
-noncreation, legacy-index read-only rejection, and incomplete results above 100.
-It also runs search, MCP, portable snapshot, ignore-policy, diagnostics and
-upgrade checks. Synthetic evaluation verifies result sets, not real-user recall,
-ranking quality, OCR or semantic search.
+Manifest metadata: `manifest_version=1`, app `0.1.0-alpha.3`, extension `0.1.0`,
+API 1, schema 6, source revision above. The manifest covers six installable
+files; `SHA256SUMS.txt` covers those six plus the manifest, and does not hash
+itself. No asset in this table is a public release URL. Download the aggregate
+artifact from the workflow link above; it is a temporary CI artifact, not a
+published release.
 
-Cross-compilation is not acceptance evidence for native execution. Browser
-interaction above uses the extracted Linux archive, not a fresh Go build or a
-pre-indexed `serve` substitute. Other platforms' native CLI/API checks do not
-certify browser, editor or desktop behavior. Development extension-host checks
-are distinct from an installed VSIX against an extracted candidate.
+## Checks and platform boundaries
 
-## Release pipeline review
+| Case / OS | Status | Evidence |
+|---|---|---|
+| Go formatting, full tests, vet, CGO-free build, module verification; Linux/macOS/Windows | passed | [Candidate workflow](https://github.com/Lephiziel/findrail/actions/runs/38342270683); source-check matrix jobs |
+| UI Node tests, packaging safety, release-asset contract tests | passed | `source-checks / ui` in candidate workflow |
+| Race tests | passed | `source-checks / race` in candidate workflow |
+| Native package extraction, BUILD-INFO exact SHA/clean/version/target, CLI/search/MCP/portable/diagnostics; all five targets | passed | Five native jobs in the asset table; target results are not transferred across OSes |
+| Evaluation, ignore policy, source report/failed-scan retention and schema-2 → 6 backup/rollback on extracted Linux amd64 candidate | passed | [Packaged browser journey report](https://github.com/Lephiziel/findrail/actions/runs/38342270683/job/115116096070), plus Linux native job |
+| Empty start, browser Add folder, evidence selection, Markdown bytes, restart | passed | [Real Chromium journey on extracted Linux archive](https://github.com/Lephiziel/findrail/actions/runs/38342270683/job/115116096070) |
+| Installed VSIX against extracted candidate server, API v1 | passed | [Isolated installed-VSIX job](https://github.com/Lephiziel/findrail/actions/runs/38342270683/job/115116096046) |
+| VSIX package/unit checks on Linux, Windows, macOS | passed | Installed candidate VSIX host test on Linux in this run; [PR #30 editor matrix](https://github.com/Lephiziel/findrail/actions/runs/38336454628) passed on all three OSes. Its `extensions/vscode` tree SHA (`9297d64f1aec5fecfdaa22acf905cbb95b6c72a4`) is unchanged at this candidate SHA; platform GUI installation is not inferred |
+| Finder/Gatekeeper behavior on macOS; Windows manual UI | not run | Not a release gate and not implied by native package CI |
+| Owner-run human smoke on one computer | pending | [10–15 minute smoke sheet](release-smoke-alpha3.md) |
+| Publication/tag/public URLs | not run | Explicitly outside this acceptance task |
 
-The reviewed PR #30 head `d572444e0b7216f3972591b08bde8e1e2eda6b2f` passed
-the [complete candidate gate](https://github.com/Lephiziel/findrail/actions/runs/38335973540):
-full reusable CI, all five native packages,
-[installed VSIX host](https://github.com/Lephiziel/findrail/actions/runs/38335973540/job/115096836097),
-[packaged browser](https://github.com/Lephiziel/findrail/actions/runs/38335973540/job/115096836098),
-exact eight-file aggregation and reusable final verification. The same head also
-passed [ordinary CI](https://github.com/Lephiziel/findrail/actions/runs/38335973527)
-and [package rehearsal](https://github.com/Lephiziel/findrail/actions/runs/38335973519).
-PR #30 was merged as `d4c1569a242249ae74392438499842b2e51eae7c`.
+Candidate journey assertions include the synthetic 10/10 evaluation path set,
+negative mismatch behavior, missing-index noncreation, legacy-index read-only
+rejection, >100-match incomplete result, search/MCP/portable/diagnostics/ignore,
+source removal and failed-scan report retention, frozen archive, PDF page 0 and
+positive pages, DOCX without page claims, and schema 2 → 6 with stopped-directory
+backup/restore. Evaluation remains a path-set check, not a ranking/relevance
+score. Browser checks were Linux only. Windows/macOS native jobs do not certify
+browser behavior or OS security prompts.
 
-The gate's `release-assets-d572444e0b7216f3972591b08bde8e1e2eda6b2f` artifact
-contains five native archives, `findrail-readonly-0.1.0.vsix`,
-`release-manifest.json` and `SHA256SUMS.txt`. Manifest hashes/sizes, exact source
-revision, clean BUILD-INFO, target/version and VSIX identity were checked before
-and after artifact download. The VSIX version is independently `0.1.0`. Preview
-publication/state jobs were skipped; this passing rehearsal created no release.
-See [pipeline contract](release-pipeline.md). Its archives remain tied to this PR
-head, not this later documentation commit or a future release SHA.
+## Documentation and release boundary review
 
-Earlier review runs exposed a fresh-extraction directory conflict
-([run 38334077194](https://github.com/Lephiziel/findrail/actions/runs/38334077194))
-and a macOS diagnostics smoke race
-([run 38334368434](https://github.com/Lephiziel/findrail/actions/runs/38334368434)).
-Both were fixed in the reviewed branch: the safe extractor creates its own
-fresh destination; Configure diagnostics bind to the completed job while the
-source endpoint may already expose a later successful watcher refresh. The
-persisted DOCX policy and actual search exclusion remain asserted. The installed
-VSIX runner was also moved under the installed extension directory so its UI
-stubs share that extension's API; the first detached runner hung and its
-[superseded run](https://github.com/Lephiziel/findrail/actions/runs/38334992543)
-was canceled. Findrail still loads the installed bundle,
-while only the bootstrap is a development extension. Host tests have a bounded
-timeout, and superseded PR previews cancel without canceling main publication.
-PR #31's first browser review run also exposed hidden-dialog status text
-([run 38333229559](https://github.com/Lephiziel/findrail/actions/runs/38333229559));
-its corrected head passed the browser run linked above. The earlier Windows
-[run 38242262198](https://github.com/Lephiziel/findrail/actions/runs/38242262198)
-failed with a connection reset in an HTTP smoke; the reviewed head's Windows
-checks subsequently passed. These failed runs remain dated evidence, not current
-passing results.
+Reviewed the Linux candidate archive’s packaged `INSTALL.txt`, repository README installation examples, editor
+setup (`docs/vscode.md`), schema/upgrade/rollback guidance, [prepared publisher
+notes](release-notes-alpha3.md), and [promotion checklist](release-alpha3-promotion.md).
+The docs distinguish alpha.2 downloads from the alpha.3 candidate, state schema 6
+and forward-only migration/whole-directory rollback, identify the separate
+server-dependent API v1 VSIX, and make unsigned/no-notarization limits explicit.
+No future release download links are asserted. The first-time path is archive →
+checksum → extract → empty start → Add folder → preview/citations → Markdown →
+restart; no source build, MCP, GitHub or VS Code setup is required.
 
-## Upgrade and remaining manual work
+## Pending human smoke and decision
 
-Published alpha.2 tag `v0.1.0-alpha.2` resolves to
-`7573802a45962702a66eeecc8fb79a4ac2d680db`; it contains migrations 001–002.
-The synthetic legacy fixture is generated from those historical SQL migrations,
-not by opening a new database with the current writable store. The packaged
-journey verifies schema 2 → 6, retained source/PDF-page evidence, legacy DOCX
-disabled until configured, and backup/restore of the stopped whole data directory
-including any WAL/SHM files. The separately restored copy is checked to remain
-schema 2. It does not run an old binary against schema 6 or attempt a reverse
-migration. Never point an older binary at the upgraded index.
+**Conditional GO for technical readiness; not publication authorization.** The
+owner has not supplied results for a personal smoke, and none are fabricated. Run
+`docs/release-smoke-alpha3.md` once on one accessible computer (10–15 minutes):
+verify the candidate checksum, start with a dedicated empty data directory, Add
+folder, inspect a text/PDF citation, export two passages with a note, restart and
+confirm source persistence/collection reset. Do not send private content, paths
+or logs. No five-OS smoke is requested. Before 06, also approve the prepared
+release notes and target `0.1.0-alpha.3`.
 
-Storage migration-failure tests, packaged upgrade/restore, automated Chromium,
-installed editor, manual Finder/Gatekeeper and real-user retrieval are distinct
-checks. A [10–15 minute human smoke](release-smoke-alpha3.md) on one accessible
-computer remains unrecorded; it does not require a five-OS certification matrix.
-Optional new demo media is not a release blocker. A final release commit must
-rebuild and verify every asset at that exact SHA after an authorized VERSION
-change; candidate archives cannot be relabeled as the final release.
+## Promotion plan for task 06
 
-## Historical schema-4 evidence
+- Current `VERSION`: `0.1.0-alpha.2`.
+- Proposed target/tag: `0.1.0-alpha.3` / `v0.1.0-alpha.3` (proposal, not set).
+- Notes to review/approve: [`docs/release-notes-alpha3.md`](release-notes-alpha3.md).
+- Expected release asset set: the exact eight basenames in the table above.
+- Final VERSION-commit checks: confirm no alpha.3 tag/release already exists; make
+  the authorized minimal VERSION/notes commit; record its new full SHA/tree; rerun
+  all native, source, packaged browser/upgrade, installed VSIX and aggregate gates
+  on that exact SHA; verify all eight assets and exact provenance; run the
+  publisher only after gates and owner authorization.
+- Candidate assets above belong to SHA `0254e306…`; they must not be relabeled as
+  assets for the later VERSION commit.
+- After publication: fetch the actual release record and tag target; download all
+  eight assets from the release, verify `SHA256SUMS.txt`, manifest metadata and
+  hashes; record real release/download URLs and prerelease/unsigned metadata; only
+  then apply the source-to-released documentation promotion checklist.
 
-The earlier rehearsal recorded on 2026-10-12 for source
-`6f32727fb8eed1d804e0ed48049ca8ef577376e1` tested schema 4 / migrations 1–4.
-It is historical only and does not establish schema-6 readiness or the current
-candidate. The initial preparation main was
-`ed249148d8b01a17480b3acfeaf077bc7dc4395c`; independent initial PR heads were
-#30 `38e9a044e8c186d8ced2659444cf746804e48c91` and
-#31 `8d6f629ac3824a86d77cf9f61b681923c20321fc`.
-
-Use the separate [promotion checklist](release-alpha3-promotion.md) only after
-an authorized release and its real asset URLs have been verified.
+Earlier PR #30/#31 rehearsals are history only; this acceptance evidence is from
+post-integration `main` SHA `0254e3063182695b2742f6c6d166024123c9d0f7`.
