@@ -29,6 +29,7 @@ Usage:
   findrail index-github [--data-dir DIR] [--ref REF] [--path PATH] [--max-bytes N] [--timeout 2m] [--report] [--show-paths] [--json] OWNER/REPO
   findrail refresh-github [--data-dir DIR] [--timeout 2m] [--report] [--show-paths] [--json] SOURCE_ID
   findrail start [--data-dir DIR] [--addr 127.0.0.1:7766] [--no-open] [--enable-originals] [DIRECTORY]
+  findrail desktop [--data-dir DIR] [DIRECTORY]
   findrail demo [--addr 127.0.0.1:7766] [--no-open]
   findrail search [--data-dir DIR] [--limit N] [--source ID] [--mode MODE] [--format FORMAT] [--path-prefix PATH] [--title-contains TEXT] [--json] QUERY
   findrail evaluate --queries FILE --source ID [--data-dir DIR] [--json]
@@ -80,6 +81,9 @@ func Run(ctx context.Context, args []string, out, stderr io.Writer, version stri
 	}
 	if args[0] == "start" {
 		return runStart(ctx, args[1:], out, stderr, openBrowser)
+	}
+	if args[0] == "desktop" {
+		return runDesktop(ctx, args[1:], out, stderr, openBrowser)
 	}
 	if args[0] == "mcp" {
 		return runMCP(ctx, args[1:], out, stderr, version)

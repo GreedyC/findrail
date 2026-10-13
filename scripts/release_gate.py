@@ -12,6 +12,7 @@ ALPHA2_ASSETS = {
     f'findrail_0.1.0-alpha.2_{target}' + ('.zip' if target.startswith('windows-') else '.tar.gz')
     for target in ('linux-amd64', 'linux-arm64', 'darwin-amd64', 'darwin-arm64', 'windows-amd64')
 } | {'SHA256SUMS.txt'}
+ALPHA3_REVISION = 'd5dc1bec50efcb3c26d09e9b24b14cf3c0b2f4cb'
 
 
 def validate_upstream(repository, event, branch, source_sha, expected_repository, expected_branch='main'):
@@ -37,6 +38,10 @@ def existing_release_decision(version, current_sha, tag_sha, release, assets, ap
         raise ValueError('existing release contains duplicate assets')
     expected = ALPHA2_ASSETS if version == '0.1.0-alpha.2' else None
     if expected is None:
+        if version != '0.1.0-alpha.3':
+            raise ValueError('unknown published release contract')
+        if tag_sha != ALPHA3_REVISION:
+            raise ValueError('published alpha.3 tag does not match its historical revision')
         manifest = release.get('manifest')
         if (not manifest or manifest.get('manifest_version') != 1 or
                 manifest.get('source_revision') != tag_sha or manifest.get('app_version') != version or

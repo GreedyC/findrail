@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Lephiziel/findrail/internal/desktop"
 	"github.com/Lephiziel/findrail/internal/originals"
 	"github.com/Lephiziel/findrail/internal/search"
 	"github.com/Lephiziel/findrail/internal/sourceapp"
@@ -49,7 +50,15 @@ type options struct {
 	openOriginal func(originals.Action, string) error
 	authority    string
 	token        string
+	desktop      *desktop.Record
+	quit         func()
 }
+
+// WithDesktop enables identity verification and explicit application shutdown.
+func WithDesktop(record *desktop.Record, quit func()) Option {
+	return func(o *options) { o.desktop, o.quit = record, quit }
+}
+
 type Option func(*options)
 
 type OriginalResolver interface {
@@ -89,12 +98,16 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 	if config.originals != nil && (config.management == nil || config.authority == "" || config.openOriginal == nil) {
 		config.originals = nil
 	}
+	if config.desktop != nil && (config.management == nil || config.authority == "" || config.quit == nil) {
+		config.desktop = nil
+	}
 	if config.management != nil || config.originals != nil {
 		if config.token == "" {
 			var token [32]byte
 			if _, err := rand.Read(token[:]); err != nil {
 				config.management = nil
 				config.originals = nil
+				config.desktop = nil
 			} else {
 				config.token = fmt.Sprintf("%x", token[:])
 			}
@@ -228,6 +241,7 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 		writeJSON(w, 200, map[string]any{
 			"management":              config.management != nil,
 			"open_originals":          config.originals != nil,
+			"desktop":                 config.desktop != nil,
 			"client_api_version":      1,
 			"search_modes":            []string{"literal", "advanced"},
 			"search_filters":          []string{"source", "format", "path_prefix", "title_contains"},
@@ -305,6 +319,26 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 				message = "Opening the current PDF; the viewer may open at its default page. Preview refers to the indexed snapshot."
 			}
 			writeJSON(w, 202, map[string]string{"status": "attempted", "message": message})
+		})
+	}
+	if config.desktop != nil && config.management != nil && config.token != "" && config.quit != nil {
+		mux.HandleFunc("GET /api/v1/desktop/identity", func(w http.ResponseWriter, r *http.Request) {
+			nonces := r.Header.Values("X-Findrail-Desktop-Nonce")
+			if !requestAuthority(r, config.authority) || crossSite(r) || len(nonces) != 1 || len(nonces[0]) != len(config.desktop.Nonce) || config.desktop.Nonce == "" || subtle.ConstantTimeCompare([]byte(nonces[0]), []byte(config.desktop.Nonce)) != 1 {
+				writeError(w, 403, "private desktop identity required")
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, 200, map[string]string{"product": "Findrail", "data_dir": config.desktop.DataDir, "nonce": config.desktop.Nonce})
+		})
+		mux.HandleFunc("POST /api/v1/desktop/quit", func(w http.ResponseWriter, r *http.Request) {
+			if !mutationAllowed(w, r, config) || !decodeMutation(w, r, &struct{}{}) {
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+			if config.quit != nil {
+				time.AfterFunc(100*time.Millisecond, config.quit)
+			}
 		})
 	}
 	if config.management != nil || config.originals != nil {

@@ -13,7 +13,9 @@ Connected services and optional semantic retrieval are the next product stages.
 This is testing software, not a stable release. See the
 [version matrix](docs/launch/press-kit.md#version-boundaries) and
 [verified release checks](docs/release-alpha3-verification.md). Private GitHub,
-OCR, semantic search and desktop launching remain on the roadmap.
+OCR, and semantic search remain on the roadmap. A separate
+source-build desktop launcher is implemented for integration; archive-native
+entrypoints and GUI acceptance remain pending packaging and platform testing.
 
 [Releases](https://github.com/Lephiziel/findrail/releases) ·
 [Product](docs/product.md) · [Architecture](docs/architecture.md) ·
