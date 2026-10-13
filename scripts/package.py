@@ -16,6 +16,33 @@ import zipfile
 
 TARGETS = ['linux-amd64', 'linux-arm64', 'darwin-amd64', 'darwin-arm64', 'windows-amd64']
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+ALPHA3_REVISION = 'd5dc1bec50efcb3c26d09e9b24b14cf3c0b2f4cb'
+
+
+def build_info_schema(meta):
+    """Accept the missing field only for the immutable, clean alpha.3 build."""
+    if 'schema_version' in meta:
+        value = meta['schema_version']
+        if type(value) is not int or value < 1:
+            raise ValueError('invalid build schema metadata')
+        return value
+    if (meta.get('version') == '0.1.0-alpha.3' and
+            meta.get('revision') == ALPHA3_REVISION and meta.get('dirty') is False):
+        return 6
+    raise ValueError('candidate is missing schema metadata')
+
+
+def schema_version():
+    """Read the authoritative SQLite schema constant from the source tree."""
+    source = (ROOT / 'internal/store/sqlite/sqlite.go').read_text(encoding='utf-8')
+    match = re.search(r'(?m)^const currentSchemaVersion = ([1-9][0-9]*)$', source)
+    if not match:
+        raise ValueError('could not determine SQLite schema version from source')
+    version = int(match[1])
+    migrations = sorted((ROOT / 'internal/store/sqlite/migrations').glob('[0-9][0-9][0-9]_*.sql'))
+    if len(migrations) != version or [int(path.name[:3]) for path in migrations] != list(range(1, version + 1)):
+        raise ValueError('SQLite schema constant does not match migration inventory')
+    return version
 GO_LICENSE_FALLBACK = '''Copyright 2009 The Go Authors.
 
 Redistribution and use in source and binary forms, with or without
@@ -111,7 +138,7 @@ def extract_verified(archive, destination):
     return destination / root
 
 
-def verify_archive(archive, target, version):
+def verify_archive(archive, target, version, expected_schema=None):
     archive = pathlib.Path(archive)
     stem = f'findrail_{version}_{target}'
     expected_suffix = '.zip' if target.startswith('windows-') else '.tar.gz'
@@ -125,6 +152,11 @@ def verify_archive(archive, target, version):
         revision = meta.get('revision', '')
         if meta.get('version') != version or meta.get('target') != target or not (revision == 'unknown' or re.fullmatch(r'[0-9a-f]{40}', revision)):
             raise ValueError('candidate metadata mismatch')
+        required_schema = expected_schema
+        if required_schema is None:
+            required_schema = 6 if (version == '0.1.0-alpha.3' and revision == ALPHA3_REVISION) else schema_version()
+        if build_info_schema(meta) != required_schema:
+            raise ValueError('candidate schema metadata mismatch')
         binary = root / ('findrail.exe' if target.startswith('windows-') else 'findrail')
         if not binary.is_file(): raise ValueError('package executable missing')
         if not target.startswith('windows-') and not binary.stat().st_mode & 0o111:
@@ -207,7 +239,7 @@ def main():
             os_name, arch = target.split('-'); stem = f'findrail_{args.version}_{target}'
             folder = staging / stem; shutil.copytree(common, folder)
             meta = {'version': args.version, 'revision': revision, 'dirty': dirty, 'target': target,
-                    'go_version': run([go, 'version']), 'source_date_epoch': epoch}
+                    'schema_version': schema_version(), 'go_version': run([go, 'version']), 'source_date_epoch': epoch}
             (folder / 'BUILD-INFO.json').write_text(json.dumps(meta, sort_keys=True, indent=2) + '\n', encoding='utf-8', newline='\n')
             binary = folder / ('findrail.exe' if os_name == 'windows' else 'findrail')
             env = {**os.environ, 'GOOS': os_name, 'GOARCH': arch, 'CGO_ENABLED': '0'}

@@ -12,6 +12,17 @@ import package
 
 TARGETS = ('linux-amd64', 'linux-arm64', 'darwin-amd64', 'darwin-arm64', 'windows-amd64')
 VSIX = 'findrail-readonly-0.1.0.vsix'
+ALPHA3_REVISION = 'd5dc1bec50efcb3c26d09e9b24b14cf3c0b2f4cb'
+
+
+def contract_schema(version):
+    # Published contracts are immutable. Candidate schema comes from the
+    # migration constant and inventory in the checked-out source tree.
+    if version == '0.1.0-alpha.3':
+        return 6
+    if version == '0.1.0-alpha.4':
+        return package.schema_version()
+    raise ValueError('unsupported release/candidate version contract')
 
 
 def digest(path):
@@ -19,6 +30,7 @@ def digest(path):
 
 
 def expected_archives(version):
+    contract_schema(version)
     if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?', version):
         raise ValueError('invalid application version')
     return {f'findrail_{version}_{target}' + ('.zip' if target.startswith('windows-') else '.tar.gz'): target
@@ -58,11 +70,13 @@ def verify(directory, version, revision, extension_version='0.1.0'):
     if set(sum_names) != set(expected) - {'SHA256SUMS.txt'}:
         raise ValueError('checksum list is incomplete')
     for name, target in expected_archives(version).items():
-        package.verify_archive(root / name, target, version)
+        package.verify_archive(root / name, target, version, manifest['schema_version'])
         with __import__('tempfile').TemporaryDirectory(prefix='findrail-release-verify-') as temp:
             extracted = package.extract_verified(root / name, pathlib.Path(temp) / 'unpacked')
             info = json.loads((extracted / 'BUILD-INFO.json').read_text(encoding='utf-8'))
-            if info.get('revision') != revision or info.get('dirty') is not False or info.get('version') != version or info.get('target') != target:
+            if (info.get('revision') != revision or info.get('dirty') is not False or
+                    info.get('version') != version or info.get('target') != target or
+                    package.build_info_schema(info) != manifest['schema_version']):
                 raise ValueError('archive has unknown, dirty, or wrong-revision provenance: ' + name)
     import zipfile
     with zipfile.ZipFile(root / VSIX) as zf:
@@ -100,6 +114,7 @@ def verify(directory, version, revision, extension_version='0.1.0'):
 
 
 def build_manifest(root, version, revision, extension_version='0.1.0'):
+    schema = contract_schema(version)
     entries = []
     for name, target in sorted({**expected_archives(version), VSIX: None}.items()):
         path = pathlib.Path(root) / name
@@ -108,7 +123,7 @@ def build_manifest(root, version, revision, extension_version='0.1.0'):
         entries.append({'basename': name, 'kind': 'archive' if target else 'vsix',
                         **({'target': target} if target else {}), 'size': path.stat().st_size, 'sha256': digest(path)})
     return {'manifest_version': 1, 'app_version': version, 'source_revision': revision,
-            'schema_version': 6, 'client_api_version': 1, 'extension_version': extension_version,
+            'schema_version': schema, 'client_api_version': 1, 'extension_version': extension_version,
             'assets': entries}
 
 
