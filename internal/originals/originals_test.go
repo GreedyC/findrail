@@ -44,6 +44,10 @@ func TestIdentityBindsRegistrationSnapshotSourceAndDocument(t *testing.T) {
 
 func TestResolveConfinement(t *testing.T) {
 	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Mkdir(filepath.Join(root, "sub"), 0700); err != nil {
 		t.Fatal(err)
 	}

@@ -317,6 +317,10 @@ func TestNativeOriginalRequiresTokenAndResolvesRegisteredDocument(t *testing.T) 
 	}
 	defer store.Close()
 	root := t.TempDir()
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	file := filepath.Join(root, "notes.txt")
 	if err = os.WriteFile(file, []byte("safe original content"), 0600); err != nil {
 		t.Fatal(err)
