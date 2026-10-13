@@ -3,6 +3,7 @@
 import json
 import os
 import pathlib
+import re
 import shutil
 import socket
 import subprocess
@@ -165,7 +166,9 @@ def main():
             driver.execute_script("Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw Error('synthetic clipboard denial')}}})")
             driver.find_element(By.ID, "collection-copy").click()
             wait.until(lambda d: not d.find_element(By.ID, "collection-fallback").get_attribute("hidden"))
-            assert driver.find_element(By.ID, "collection-output").get_attribute("value") == export
+            fallback = driver.find_element(By.ID, "collection-output").get_attribute("value")
+            comparable = lambda value: re.sub(r"(?m)^Exported \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", "Exported <time>", value, count=1)
+            assert comparable(fallback) == comparable(export), (fallback, export)
             (notes / "first.md").unlink()
             wait.until(lambda d: len(api(d, "/api/v1/collections/" + first_id).get("data", {}).get("entries", [])) == 1)
             driver.find_element(By.ID, "collection-copy").click()

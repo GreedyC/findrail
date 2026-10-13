@@ -13,7 +13,7 @@ on:
       candidate_version:
         description: Preview package version (ignored for main push; must match VERSION to publish)
         required: true
-        default: 0.1.0-alpha.3
+        default: 0.1.0-alpha.4
         type: string
       publish:
         description: Publish only if every gate passes (normally leave false for preparation)
