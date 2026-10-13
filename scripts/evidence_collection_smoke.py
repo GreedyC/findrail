@@ -215,11 +215,12 @@ def main():
                 # Match the request's semantic caller, never an arbitrary Nth poll.
                 # prepare() is the export/status flow; refresh() is its periodic
                 # inventory poll and must remain free to run independently.
-                browser.execute_script("""window.__realFetch=window.fetch.bind(window);window.__gateReady=false;
+                browser.execute_script("""window.__realFetch=window.fetch.bind(window);window.__gateReady=false;window.__gateMatched=false;
                     window.__releaseGate=null;window.fetch=(input,init)=>{const u=String(input.url||input);
                     const stack=(new Error()).stack||'';const match=u.includes(arguments[0])&&
                     (!arguments[1]||stack.includes(arguments[1]+' ('));
-                    return window.__realFetch(input,init).then(r=>match?
+                    const hold=match&&!window.__gateMatched;if(hold)window.__gateMatched=true;
+                    return window.__realFetch(input,init).then(r=>hold?
                     new Promise(resolve=>{window.__gateReady=true;window.__releaseGate=()=>resolve(r)}):r)};""", fragment, flow)
             def gate_first_response(fragment):
                 gate_response(fragment)

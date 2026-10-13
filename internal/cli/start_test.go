@@ -310,12 +310,12 @@ func TestReadOnlyStartCanceledBeforeStartupExits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	data := filepath.Join(t.TempDir(), "index")
+	// Cancellation precedes scheduling the worker, so this is a deterministic
+	// pre-start cancellation rather than a race against fast initialization.
+	cancel()
 	go func() {
 		done <- runStartReadOnly(ctx, []string{"--data-dir", data, "--addr", "127.0.0.1:0", "--no-open"}, io.Discard, io.Discard, func(string) error { return nil })
 	}()
-	// Cancel immediately to deterministically exercise startup cancellation without
-	// sleeping; the buffered result channel cannot strand the worker on send.
-	cancel()
 	select {
 	case err := <-done:
 		if !errors.Is(err, context.Canceled) {
