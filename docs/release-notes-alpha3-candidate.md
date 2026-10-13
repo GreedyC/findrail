@@ -1,9 +1,9 @@
 # Findrail 0.1.0-alpha.3 — candidate notes (not published)
 
-**Preparation only.** The latest published release remains alpha.2. Do not use
-this file as a download announcement. Candidate packages and their final URLs
-must be checked on the real release page before promoting the separate publisher
-text in [release-notes-alpha3.md](release-notes-alpha3.md).
+**Historical preparation record.** This file describes the pre-release candidate.
+Alpha.3 was subsequently [published](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.3); use the
+[actual release notes](release-notes-alpha3.md) and
+[release verification](release-alpha3-verification.md) for its final assets and SHA.
 
 ## Candidate additions
 

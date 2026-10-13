@@ -72,31 +72,29 @@ asset download counts are not unique installations or active users.
 
 ## Version boundaries
 
-The latest published version remains alpha.2. Main/candidate alpha.3 includes
-DOCX body text, web source management, Advanced lexical queries and filters,
-offline diagnostics, MCP and public GitHub file snapshots. PR #16 prepared
-alpha.3 packages; PRs #30–31 add release-pipeline and packaged-journey checks.
-None of these preparations published alpha.3. See the
-[12 October update](update-2026-10-12.md) and
-[facts sheet](press-kit.md#version-boundaries).
+The latest published version is [0.1.0-alpha.3](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.3). The standalone
+archives include DOCX body text, browser folder management, Advanced lexical
+queries and filters, offline diagnostics, MCP and public GitHub file snapshots,
+portable indexed-text exports/imports, committed indexing reports, root-only
+ignore rules, in-tab evidence collections with Markdown export and Literal
+result-path evaluation. The connector kit remains experimental.
 
-PRs #22–28 also add portable indexed-text exports/imports, committed indexing
-reports, an experimental connector conformance kit, a separately packaged
-read-only VS Code client, folder ignore rules, in-tab evidence collections with
-explicit Markdown export, and a read-only literal `evaluate` command. These
-are in main/candidate alpha.3, not in published alpha.2. A VSIX requires a
-compatible server/client API v1 and is a separate local install; a VSIX built in
-CI is not a Marketplace/Open VSX publication or a release asset.
+The [separate release VSIX](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail-readonly-0.1.0.vsix) requires a running compatible API-v1
+Findrail server. It is an installable local client, not a Marketplace/Open VSX
+listing. The previous alpha.2 archives do not include these additions. The dated
+[12 October update](update-2026-10-12.md) remains a historical preparation record;
+use the current [facts sheet](press-kit.md#version-boundaries) and
+[release verification](../release-alpha3-verification.md) for shipped scope.
 
-The first-user path after verified publication is a standalone archive, checksum
-verification, extraction, empty start, Add folder, search a technical document,
-Preview/PDF page, two exact passages with a note, Markdown download, then restart.
-It does not require MCP, GitHub, VS Code or a source build. Until actual release,
-keep alpha.2 downloads distinct from candidate features. Collection state lasts
-only for the open tab. MCP clients may forward retrieved text to their own model
-providers. Ask for one 10–15 minute human smoke run, not a five-OS matrix; do not
-request private documents, paths or logs. See the [smoke sheet](../release-smoke-alpha3.md)
-and [promotion checklist](../release-alpha3-promotion.md).
+The first-user path is archive → checksum → extract → empty start → Add folder →
+search → Preview/PDF page → two exact passages with a note → Markdown → restart.
+It does not require MCP, GitHub, VS Code or a source build. Collection state lasts
+only for the open tab. MCP clients may forward evidence to their model providers.
+The owner reported a successful local Word/repository smoke; final automated
+Chromium and installed-VSIX checks are linked in the release report. Manual
+Finder/Gatekeeper and Windows GUI checks were not inferred from native CI.
+Ask volunteers for one short smoke run without private content, paths or logs.
+See the [smoke sheet](../release-smoke-alpha3.md).
 
 ## Platform constraints checked on 2026-10-02
 

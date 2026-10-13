@@ -3,16 +3,17 @@
 **You remember a word. Find the original.**
 
 Findrail is an open-source, local-first search app built in Go. Choose folders
-of notes, code and text PDFs; search remembered words, preview the matching
-source and copy its original location. Changes in those folders refresh the
+of notes, code, text PDFs and Word DOCX documents; search remembered words,
+preview the matching source and copy its original location. Changes in those folders refresh the
 index while the app runs. Keyword search needs no AI account and uploads no
-documents. Source builds also provide a scoped, read-only stdio MCP server.
+documents. Alpha.3 also provides a scoped, read-only stdio MCP server.
 Connected services and optional semantic retrieval are the next product stages.
 
-**Status: local alpha.** The latest published release is `0.1.0-alpha.2`.
-Alpha.3 is in preparation and is not yet available to download. This is testing
-software, not a stable release. See the [version matrix](docs/launch/press-kit.md#version-boundaries).
-Private GitHub, OCR, semantic search and desktop launching remain on the roadmap.
+**Status: local alpha.** The latest published release is [0.1.0-alpha.3](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.3).
+This is testing software, not a stable release. See the
+[version matrix](docs/launch/press-kit.md#version-boundaries) and
+[verified release checks](docs/release-alpha3-verification.md). Private GitHub,
+OCR, semantic search and desktop launching remain on the roadmap.
 
 [Releases](https://github.com/Lephiziel/findrail/releases) ·
 [Product](docs/product.md) · [Architecture](docs/architecture.md) ·
@@ -37,70 +38,67 @@ Recorded from the running web interface using the fictional demo documents.
 The video shows search, PDF page 2 and an automatic refresh after a note edit.
 The GIF is a short preview; use the MP4 for the full recording and larger text.
 
-## Install and try — published alpha.2
+## Install and try — published alpha.3
 
 Download the archive for Linux, macOS or Windows from
 [Releases](https://github.com/Lephiziel/findrail/releases), compare it against
-`SHA256SUMS.txt`, and extract it. Go and an external database are not required.
+`SHA256SUMS.txt`, and extract it. Go, Python and an external database are not required.
 These alpha binaries are unsigned; macOS may require a per-app allowance in
 Privacy & Security. Do not disable system-wide security protections. Each archive
 contains installation instructions and license notices.
 
-Direct downloads for **`0.1.0-alpha.2`**:
+Direct downloads for **`0.1.0-alpha.3`**:
 
 | Platform | Archive |
 |---|---|
-| Linux, x86-64 | [Linux amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.2/findrail_0.1.0-alpha.2_linux-amd64.tar.gz) |
-| Linux, ARM64 | [Linux arm64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.2/findrail_0.1.0-alpha.2_linux-arm64.tar.gz) |
-| macOS, Intel | [macOS amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.2/findrail_0.1.0-alpha.2_darwin-amd64.tar.gz) |
-| macOS, Apple Silicon | [macOS arm64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.2/findrail_0.1.0-alpha.2_darwin-arm64.tar.gz) |
-| Windows, x86-64 | [Windows amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.2/findrail_0.1.0-alpha.2_windows-amd64.zip) |
+| Linux, x86-64 | [Linux amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_linux-amd64.tar.gz) |
+| Linux, ARM64 | [Linux arm64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_linux-arm64.tar.gz) |
+| macOS, Intel | [macOS amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_darwin-amd64.tar.gz) |
+| macOS, Apple Silicon | [macOS arm64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_darwin-arm64.tar.gz) |
+| Windows, x86-64 | [Windows amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_windows-amd64.zip) |
 
-[Checksums for these archives](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.2/SHA256SUMS.txt).
-These archives cover the alpha.2 workflow only; the [version table](docs/launch/press-kit.md#version-boundaries)
-separates published alpha.2, current main/candidate alpha.3 and unpublished
-Marketplace/Open VSX distribution.
+[Checksums](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/SHA256SUMS.txt) · [Release manifest](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/release-manifest.json) ·
+[Optional VS Code VSIX](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail-readonly-0.1.0.vsix)
+
+The VSIX is a separate client and needs a running Findrail server (API v1); it is
+not required for the web workflow and is not published on Marketplace/Open VSX.
+The previous [alpha.2 release](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.2)
+remains available for a compatible pre-upgrade index. Before upgrading, stop
+Findrail and back up the whole data directory; see
+[upgrade and rollback](build/package/INSTALL.txt).
 
 ```bash
 # Linux / macOS, inside the extracted directory:
-./findrail demo
-# After the demo, stop with Ctrl+C and choose your own folder:
-./findrail start /path/to/your/notes
+./findrail start
 ```
 
 ```powershell
 # Windows, inside the extracted directory:
-.\findrail.exe demo
-# After the demo, stop with Ctrl+C and choose your own folder:
-.\findrail.exe start "C:\Users\YOU\Documents\Notes"
+.\findrail.exe start
 ```
 
-Findrail attempts to open the browser after the local listener is ready. If it
-does not, open the
-URL printed in the terminal (normally **http://127.0.0.1:7766**). In the demo,
-search **idempotency** to find three fictional documents. The PDF match is on
-page 2. [Try a live edit](docs/demo.md#watch-an-edit-appear) without sharing your
-own files. The temporary demo workspace is removed on a normal stop; your
-normal index is separate. A forced process kill can leave temporary files.
+Findrail opens the browser after the local listener is ready. If it does not,
+open the URL printed in the terminal (normally **http://127.0.0.1:7766**).
+A new index starts empty. In **Sources**, choose **Add folder** and enter the
+absolute folder path on the computer running Findrail. Existing indexes resume
+their registered sources; use a fresh `--data-dir` for an isolated empty start.
 
-Search, select **Preview**, and use the page
-controls for a PDF. **Copy location** gives the original file URI, including
-`#page=N` for PDF matches. Browsers restrict `file:` navigation; the web client
-provides location copying rather than a desktop file opener.
+Search a remembered word in a note, code file, text PDF or DOCX document. Open
+**Preview** to inspect the indexed text and use PDF page controls when present.
+**Copy location** copies the original URI, including `#page=N` for PDF evidence;
+browsers may restrict `file:` navigation. DOCX has no page-number claim.
 
-Keep `start` running for automatic refresh. Later, `./findrail start` resumes
-your registered folders. Ctrl+C stops it. No background daemon
-is installed. You can register another folder using `index` while the server
-runs; it will appear automatically.
+Select two exact passages in Preview, add them to the evidence collection, add a
+note, and download the Markdown citations. The collection is in-tab memory and
+clears on reload; the downloaded file is separate. Keep `start` running for
+folder refresh. Ctrl+C stops it; later `./findrail start` resumes the same index.
+If you set `--data-dir`, use that same directory each time.
 
-Alpha.2 archives do not include the newer first-run source manager. Alpha.3
-preparation documents are not download links. When alpha.3 is actually released,
-the intended first path is: download a standalone archive, verify its checksum,
-extract it, start with an empty index, choose **Add folder**, find a technical
-document, inspect **Preview** (including its PDF page), add two exact passages
-with a note, download the Markdown citations, then restart and confirm startup.
-No initial MCP, GitHub, VS Code, or source-build setup is required. See the
-[install/upgrade guide](build/package/INSTALL.txt) and [manual smoke sheet](docs/release-smoke-alpha3.md).
+For the optional synthetic demo, stop Findrail and run `./findrail demo`
+(Windows: `.\findrail.exe demo`), then search **idempotency**. The PDF match is
+on page 2. The demo uses its own temporary workspace, removed on normal stop;
+a forced kill can leave temporary files. See [demo instructions](docs/demo.md)
+and the [manual smoke sheet](docs/release-smoke-alpha3.md).
 
 ### Build from source
 
@@ -120,7 +118,7 @@ value for start, index, search and serve. `demo` always uses its own temporary
 index and does not accept `--data-dir`.
 
 The older `0.1.0-alpha.1` archives do not include `start` or `demo`. Download
-`0.1.0-alpha.2` for the commands above, or use `index` followed by `serve` on the
+`0.1.0-alpha.3` for the commands above, or use `index` followed by `serve` on the
 older release.
 
 ### Start options
@@ -145,32 +143,30 @@ chosen document-size limits to that folder, just like `index`; omitting DIRECTOR
 resumes stored sources with their existing limits. Initial extraction errors
 stop startup and preserve the prior committed inventory.
 
-## Current main behavior (alpha.3 candidate; alpha.2 archives differ)
+## Published alpha.3 behavior
 
-The features below are present in the current source tree. The published alpha.2
-archives do not contain all of them; alpha.3 is not yet a download. See the
-[version matrix](docs/launch/press-kit.md#version-boundaries).
+The features below are included in the alpha.3 app archives, with the VS Code
+client distributed as a separate VSIX. Older alpha.2 archives have a narrower
+scope; see the [version matrix](docs/launch/press-kit.md#version-boundaries).
 
 - A built-in three-document demo and one-command startup for your own folders.
 - Explicit local folders containing UTF-8 text, Markdown and common source files.
 - Text PDFs with original page numbers; a bounded extraction child process.
-- Bounded offline DOCX plain-text body snapshots in source builds (no page numbers).
+- Bounded offline DOCX plain-text body snapshots (no page numbers).
 - Durable SQLite FTS5 search, BM25 ranking, Unicode terms and source filters.
-- Opt-in Advanced queries and server-side format, indexed-path and title filters in source builds.
+- Opt-in Advanced queries and server-side format, indexed-path and title filters.
 - Matching passages and plain-text previews of the indexed snapshot.
 - Automatic refresh using directory notifications, debouncing and periodic scans.
 - Source health: current refresh state, last success, errors and watcher fallback.
 - Atomic full-source scans: failures preserve the previous inventory.
 - Search reads the last committed snapshot while an update is in progress.
-- CLI / JSON output, loopback web UI, read-only HTTP API and source-built
-  read-only stdio MCP (`findrail mcp`).
+- CLI / JSON output, loopback web UI, read-only HTTP API and read-only stdio MCP (`findrail mcp`).
 - Logical source removal, leaving original files untouched.
-- Bounded committed indexing reports and process-local manual job progress in source builds.
-- Optional read-only VS Code client for compatible source builds; see [setup](docs/vscode.md).
+- Bounded committed indexing reports and process-local manual job progress.
+- Optional read-only VS Code client for the alpha.3 server; see [setup](docs/vscode.md).
 - Manual, commit-pinned public GitHub text snapshots with offline preview.
-- Portable plaintext export and isolated frozen archive-source import in source builds.
-- Empty-index onboarding and web source management in source builds (`start`);
-  release archives do not yet include these changes.
+- Portable plaintext export and isolated frozen archive-source import.
+- Empty-index onboarding and web source management (`start`).
 
 See [alpha behaviour and limits](docs/local-alpha.md) and the
 [validation report](docs/validation.md).
@@ -237,11 +233,11 @@ Linux; `~/Library/Application Support/Findrail` on macOS;
 
 | Capability | Local alpha | Next stages |
 |---|---|---|
-| Documents | Text / Markdown / code / PDF text / bounded DOCX body text in source builds | optional OCR |
+| Documents | Text / Markdown / code / PDF text / bounded DOCX body text | optional OCR |
 | Sources | Local folders; public GitHub snapshots and frozen portable archive imports | Private GitHub, bookmarks, work tools |
 | Freshness | File watching and full reconciliation | Resumable remote sync |
 | Retrieval | Literal search, opt-in Advanced queries, source/format/path/title filters, PDF evidence, read-only result-set evaluation | Optional semantics |
-| Clients | CLI, local web UI, HTTP, read-only stdio MCP and VS Code source-build client (server/client API v1) | Desktop launcher, broader editor support |
+| Clients | CLI, local web UI, HTTP, read-only stdio MCP and separately installed VS Code client (server/client API v1) | Desktop launcher, broader editor support |
 | Extensions | Experimental connector kit; independent adoption not established | Stable SDK and conformance harness |
 
 The advantage to validate is easy installation, useful retrieval, inspectable

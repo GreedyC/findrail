@@ -1,5 +1,9 @@
 # alpha.3 release-candidate acceptance (not a release)
 
+This retains the dated candidate evidence. Alpha.3 is now published; see
+[public release verification](release-alpha3-verification.md) for its final SHA,
+downloads and checks.
+
 Candidate acceptance evidence recorded 2026-10-13. This was a technical
 **conditional GO** for the alpha.3 candidate, not permission to publish. At that
 checkpoint the owner's short human smoke and approval of release notes/target

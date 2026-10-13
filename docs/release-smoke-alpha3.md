@@ -1,4 +1,4 @@
-# Human smoke sheet: alpha.3 candidate (10–15 minutes)
+# Human smoke sheet: alpha.3 (10–15 minutes)
 
 Run once on one computer you have access to; this is not a five-OS certification
 matrix. Use only a document you are comfortable indexing locally, or create a
@@ -49,3 +49,6 @@ not certify other platforms, browsers, editors, Gatekeeper, or the release.
 The older [demo recording](assets/demo.mp4) shows the narrower alpha.2 demo
 workflow; it is not evidence for this smoke path. Optional media work tracked
 separately is not a release blocker.
+
+The owner's 2026-10-13 local smoke and the separate automated release checks
+are recorded in [release verification](release-alpha3-verification.md).

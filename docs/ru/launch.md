@@ -13,38 +13,31 @@ X используется как публичная витрина; у суще
 с Markdown-заметками, локальными репозиториями и техническими PDF. Это гипотеза
 аудитории, а не доказанное преимущество над существующими поисковиками.
 
-Опубликованный alpha.2 умеет локальный поиск, предпросмотр, страницы PDF,
-автообновление, `demo` и `start`. В main/candidate alpha.3 дополнительно есть
-управление источниками, DOCX body text, Advanced lexical queries, offline doctor,
-MCP, публичные GitHub snapshots, portable snapshots, отчёты, `.findrailignore`,
-коллекции, `evaluate`, connector kit и VSIX-клиент. Эти дополнения пока не
-скачиваются как alpha.3. См. [матрицу версий](../launch/press-kit.md#version-boundaries).
+Опубликованный [alpha.3](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.3) включает локальный поиск, Preview,
+страницы PDF, автообновление, `demo`, `start`, управление папками, DOCX body text,
+Advanced-запросы и фильтры, offline doctor, MCP, публичные GitHub-снимки,
+переносимые снимки, отчёты, `.findrailignore`, коллекции цитат, `evaluate` и
+экспериментальный connector kit. Отдельный [VSIX](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail-readonly-0.1.0.vsix) требует запущенный
+Findrail server/client API v1; Marketplace/Open VSX не опубликованы.
+См. [матрицу версий](../launch/press-kit.md#version-boundaries).
 
-Первый путь пользователя после реальной публикации: standalone archive → checksum
-→ распаковка → пустой запуск → Add folder → поиск технического документа →
-Preview/PDF page → две точные цитаты с заметкой → Markdown download → restart.
-Не требовать сначала MCP, GitHub, VS Code или сборку из исходников. Коллекция
-хранится только в открытой вкладке и очищается при reload. Advanced-запросы
-лексические, не semantic. Подготовленный текст релиза и список promotion
-отдельны: применять их можно только после проверки реальных архива, checksum и
-URL. См. [лист ручного smoke](../release-smoke-alpha3.md).
+Первый путь пользователя: архив → checksum → распаковка → пустой запуск →
+Add folder → поиск документа → Preview/PDF page → две цитаты с заметкой →
+Markdown → restart. Он не требует MCP, GitHub, VS Code или сборки из исходников.
+Коллекция очищается при reload. Поиск лексический, OCR и семантики нет.
 
-`evaluate` — read-only Literal path-set comparison: 1–100 cases и до 100
-результатов на кейс; incomplete — ошибка, mismatch возвращает nonzero после
-полного отчёта. Portable snapshot несёт indexed plaintext и provenance, не
-оригиналы и не frozen database; импортированный источник сам frozen. Report —
-последний committed success, не история ошибок. Ignore действует только в корне;
-при failed policy scan предыдущий индекс/report сохраняется. VSIX требует
-server/client API v1; Marketplace/Open VSX не опубликованы. Connector kit
-экспериментальный, независимое adoption не доказано.
+`evaluate` сравнивает Literal-наборы путей: 1–100 кейсов, до 100 результатов на
+кейс; неполный результат — ошибка, несовпадение даёт ненулевой код после полного
+отчёта. Переносимый снимок содержит индексированный текст и происхождение, не
+оригиналы или копию БД; импорт заморожен. Отчёт хранит последнюю успешную
+индексацию; ошибка сканирования сохраняет предыдущий индекс и отчёт.
 
-PR #30 и #31 содержат green native packaged checks для пяти targets; у PR #31
-есть также отдельный failed Windows run и более поздний passing run. Это не
-заменяет actual browser, installed editor/VSIX или ручную Gatekeeper проверку.
-До публикации alpha.2 остаётся единственным доступным выпуском. От человека
-нужен один собственный smoke около 10–15 минут, не матрица из пяти ОС; не просить
-публиковать private text, paths или logs. См. [candidate report](../release-candidate-alpha3.md)
-и [post-release checklist](../release-alpha3-promotion.md).
+[Проверка опубликованного релиза](../release-alpha3-verification.md) подтверждает
+восемь скачанных файлов, нативные проверки пяти платформ, сценарий Chromium и
+установленный VSIX. Владелец сообщил об успешной работе с Word-документами и
+репозиторием. Ручные проверки Finder/Gatekeeper и Windows GUI не заявлены.
+От добровольного тестировщика нужен один короткий smoke, без приватного текста,
+путей и журналов. См. [лист проверки](../release-smoke-alpha3.md).
 
 ## Порядок на первые 30 дней
 
@@ -70,7 +63,7 @@ PR #30 и #31 содержат green native packaged checks для пяти targ
 4. Завершить двумя командами запуска и ссылкой на готовые архивы.
 
 Сканированные PDF требуют OCR, которого пока нет; поиск использует буквальные
-слова. GitHub-сценарий показывать отдельным source build: только файлы публичного
+слова. GitHub-сценарий показывать отдельно на alpha.3: только файлы публичного
 репозитория, не issues, PR или приватные репозитории. После явной индексации
 поиск работает по сохранённому снимку; обновление GitHub запускается вручную.
 
