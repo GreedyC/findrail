@@ -1,9 +1,10 @@
 Findrail local alpha — https://github.com/Lephiziel/findrail
 
 RELEASE STATUS
-The latest published release is 0.1.0-alpha.2. Alpha.3 candidate instructions
-are preparation material; do not assume alpha.3 archives or checksums exist until
-the release page actually lists them. Do not invent or use a version-specific URL.
+This package contains Findrail 0.1.0-alpha.3. BUILD-INFO.json records its exact
+version, source revision and target. Download public archives and checksums only
+from the actual GitHub release page. Older alpha.2 archives use schema 2 and
+remain suitable for a restored pre-upgrade index, not an upgraded schema-6 index.
 
 INSTALL A PUBLISHED STANDALONE ARCHIVE
 1. From the GitHub Releases page, download the archive for your OS/CPU and the
@@ -24,9 +25,9 @@ Published alpha.2 lacks the new Sources panel and evidence collections. With
 that archive, use ./findrail demo (Windows: .\findrail.exe demo), or start an
 explicit folder: ./findrail start "/absolute/path/to/notes" (Windows:
 .\findrail.exe start "C:\Users\YOU\Documents\Notes"). The following steps
-describe the current alpha.3 candidate, not an alpha.2 download.
+describe this alpha.3 package, not the older alpha.2 download.
 
-ALPHA.3 CANDIDATE FIRST RUN (AFTER VERIFYING A PROVIDED CANDIDATE)
+ALPHA.3 FIRST RUN (AFTER VERIFYING THIS ARCHIVE)
 4. Start Findrail with no source selected yet, then add only the folder you choose.
    Without --data-dir it uses the default location below and resumes an existing
    index there. For an isolated fresh start, use a new --data-dir (spaces are OK):
@@ -63,8 +64,8 @@ If you configured --data-dir, use that exact directory for backup and restore.
 The index is separate from the extracted application directory.
 
 UPGRADE / BACKUP / ROLLBACK
-The published alpha.2 binary uses legacy schema 2. Current alpha.3 candidate
-source uses schema 6, with forward migrations 1–6 (001_init, 002_local_alpha,
+The older alpha.2 binary uses legacy schema 2. This alpha.3 package uses schema 6,
+with forward migrations 1–6 (001_init, 002_local_alpha,
 003_github_snapshots, 004_docx_policy, 005_archive_sources,
 006_indexing_reports). Migrations run forward on the new binary's first write;
 there are no reverse migrations. Legacy schema-2 sources keep DOCX disabled by
@@ -106,6 +107,7 @@ only the app-specific option offered by macOS Privacy & Security if you choose t
 allow this binary. Do not disable Gatekeeper or other system-wide protections.
 This does not claim notarization, Gatekeeper approval, or Finder certification.
 Scanned/image-only PDFs have no OCR. Search is lexical, not semantic. Public
-GitHub refresh is manual. The VS Code VSIX is a separate candidate artifact; release/Marketplace/Open VSX
-publication must be verified independently. It requires a compatible Findrail server/client API v1; it is not needed for the
-first-run web workflow.
+GitHub refresh is manual. The optional VS Code VSIX is distributed separately
+from the application archive; use the asset listed on the release page.
+Marketplace/Open VSX publication is not included. The VSIX requires a compatible
+Findrail server/client API v1; it is not needed for the first-run web workflow.

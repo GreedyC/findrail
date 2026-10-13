@@ -1,27 +1,62 @@
-Findrail 0.1.0-alpha.2 makes the first local search easier to try.
+# Findrail 0.1.0-alpha.3
 
-- `findrail demo` includes three fictional documents: Markdown, Go code and a
-  two-page text PDF. No repository download or personal folder is needed.
-- Each demo has its own temporary documents and index. Normal shutdown removes
-  them; your regular index is separate. A forced kill can leave temporary files.
-- `findrail start DIRECTORY` indexes a selected folder, runs live refresh and
-  attempts to open the browser. Later, `findrail start` resumes stored folders.
-- Search guidance explains literal words and multiple-word matching. Matching
-  words are highlighted in result snippets as well as previews.
-- Failed browser-opener startup prints a manual URL and leaves search available.
+Findrail is a local-first search app for notes, code and technical documents.
+Alpha.3 adds empty-index startup and folder selection in the browser, with
+indexed-text Preview and PDF-page evidence. Choose a folder, find a technical
+document, inspect its source, save two passages with a note, and download the
+Markdown citations. Go, Python and an external database are not required at
+runtime.
 
-Extract your platform archive and run `./findrail demo` (Linux / macOS) or
-`.\findrail.exe demo` (PowerShell). Search for `idempotency` and preview the PDF
-match on page 2. Stop with Ctrl+C; use `start DIRECTORY` for your own notes.
-Go is not required. See `INSTALL.txt` inside the archive.
+## Highlights
 
-This remains an alpha for feedback. Archives support Linux amd64/arm64, macOS
-amd64/arm64 and Windows amd64. Binaries are unsigned; macOS may need an explicit
-security allowance. PDFs have input, page, text and time budgets. Scanned PDFs
-need OCR, which is not included. The index stores plaintext and original paths.
+- Bounded offline DOCX body-text extraction, opt-in Advanced queries and
+  source/format/path/title filters. DOCX previews have no page-number claims.
+- Manual commit-pinned public GitHub text snapshots and a scoped, read-only
+  stdio MCP server. Private GitHub and remote serving are not included.
+- Portable source snapshots preserve indexed plaintext and provenance. They do
+  not contain original files or a frozen database; imported sources are
+  independent and frozen.
+- Source reports show the last committed successful indexing run, not a history
+  of failed attempts. Root-only `.findrailignore` rules are supported; a failed
+  policy scan retains the previous committed content/report.
+- Evidence collections are in-tab memory and disappear on reload. Explicit
+  Markdown download is separate and can contain private text/paths.
+- The read-only `evaluate` command checks Literal result path sets for 1–100
+  cases, with up to 100 results per case. Incomplete cases are errors; mismatches
+  return nonzero after the complete report.
+- Five standalone archives, shared `SHA256SUMS.txt`, `release-manifest.json`, and
+  a separate read-only VS Code VSIX. Extension version is `0.1.0`; it requires a
+  running Findrail server/client API v1 and is not a Marketplace/Open VSX release.
+- Connector conformance tooling remains experimental; independent adoption is
+  not established.
 
-Keyword search, page attribution, indexed-text previews, source health and a
-read-only loopback API remain available. Failed source scans preserve prior
-results. There are no runtime analytics or document uploads. The database schema
-is unchanged from alpha.1. Cloud sources, DOCX, OCR, semantic search, a desktop
-file opener and MCP are not included.
+## Install and upgrade
+
+Download the archive for your OS/CPU and `SHA256SUMS.txt` from this release,
+verify the matching checksum, and extract it. Run `./findrail start` on
+Linux/macOS or `.\findrail.exe start` in Windows PowerShell, then open the
+printed loopback URL and choose **Add folder**. Read the bundled `INSTALL.txt`.
+
+Alpha.2 uses schema 2; alpha.3 uses schema 6 with forward migrations 1–6. Stop
+all Findrail processes and back up the entire data directory, including SQLite
+WAL/SHM when present, before upgrading. Legacy sources keep DOCX disabled until
+explicitly enabled. Reverse migrations do not exist. Never open schema 6 with an
+older binary: rollback restores the whole stopped backup to a separate location
+and uses a compatible binary. To uninstall, stop all processes and remove the
+extracted app directory; remove the data directory separately only if its
+plaintext indexed copy is no longer needed. Original files are untouched.
+
+## Validation and limitations
+
+The release pipeline rebuilds and checks all five native packages at the release
+commit, exercises the extracted Linux archive in Chromium, checks schema-2 → 6
+upgrade/rollback and runs the installed VSIX against that archive. The owner
+also reported successful local indexing/search/Preview with Word documents and
+repository files. That report does not certify every platform or interaction.
+
+Findrail stores indexed text and provenance as local plaintext. OCR, semantic
+retrieval, private GitHub, automatic updates, code signing and notarization are
+not included. Archives are unsigned; macOS may require an app-specific security
+allowance. Public GitHub refresh remains manual. The VSIX needs a separate
+running server. Native package checks do not certify every browser/editor/OS
+security prompt.
