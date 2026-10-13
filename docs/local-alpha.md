@@ -28,7 +28,7 @@ in `/api/v1/sync` and the UI. The periodic full scan still reads and hashes ever
 eligible file. Large collections therefore need performance measurements before
 assuming low resource use.
 
-Source-build filesystem folders may use root-level `.findrailignore` rules;
+Alpha.3 filesystem folders may use root-level `.findrailignore` rules;
 failed policy reads preserve the last successful snapshot and successful scans
 apply pruning atomically. See [folder ignore rules](folder-ignore.md). This is
 not a published alpha.2 capability.
@@ -57,7 +57,7 @@ Existing sources remain disabled after migration until explicitly re-indexed.
 See [DOCX policy and limits](docx.md).
 
 Literal search matches all query terms anywhere in a document, including its title.
-Source builds also provide opt-in Advanced query syntax and server-side filters;
+Alpha.3 also provides opt-in Advanced query syntax and server-side filters;
 see [search query semantics](search-query.md).
 For PDFs the returned page is the best matching page for one or more query
 terms. When terms span pages, a single excerpt may not contain every term.

@@ -1,8 +1,9 @@
 # Findrail: project facts and media
 
-Checked on 2026-10-12. Findrail is an Apache-2.0 open-source project built in Go.
-The current published local alpha is `0.1.0-alpha.2`.
-The merged alpha.3 preparation work has not published a new release.
+Checked on 2026-10-13. Findrail is an Apache-2.0 open-source project built in Go.
+The current published local alpha is [0.1.0-alpha.3](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.3). Five native
+archives, a separate VSIX, a release manifest and shared checksums were downloaded
+and verified against the release commit. See [release evidence](../release-alpha3-verification.md).
 
 ## Short description
 
@@ -21,36 +22,29 @@ account, document upload or external database.
 
 ## Try the released workflow
 
-1. Download and extract an [alpha.2 archive](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.2).
-   Compare it against the release's `SHA256SUMS.txt`.
-2. In the extracted directory, run `./findrail demo` on Linux / macOS, or
-   `.\findrail.exe demo` on Windows. Open the printed local URL if the browser
-   does not appear.
-3. Search `idempotency`. The three fictional matches are a Markdown note,
-   Go code and a two-page text PDF.
-4. Preview `webhook-runbook.pdf`, inspect page 2 and use **Copy location**.
-   The location includes `#page=2`; it does not launch a desktop PDF viewer.
-5. Stop with Ctrl+C. To try your own folder, run `./findrail start /path/to/notes`
-   or `.\findrail.exe start "C:\Users\YOU\Documents\Notes"`.
+1. Download the matching archive and [checksums](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/SHA256SUMS.txt) from
+   [alpha.3](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.3), verify the hash, and extract it.
+2. Run `./findrail start` on Linux/macOS or `.\findrail.exe start` on Windows.
+   Open the printed loopback URL if the browser does not appear. A new index
+   starts empty; existing indexes resume registered sources.
+3. Choose **Add folder**, then search a remembered term in a technical document.
+4. Open **Preview**, inspect the indexed passage and PDF page when applicable.
+   Add two exact passages and a note to the collection, then download Markdown.
+5. Stop with Ctrl+C and restart using the same data directory. The index persists;
+   the in-tab collection clears on reload. Keep the downloaded Markdown separately.
 
-No Go installation is needed for these archives. They are unsigned alpha
-binaries; macOS may require an explicit allowance in Privacy & Security.
-The [demo guide](../demo.md) includes a synthetic live-refresh test.
-
-## Candidate first path — not a download offer
-
-After the archive is actually released: download the standalone archive, verify
-its checksum against the manifest from that release, extract, start into an empty
-index, choose **Add folder**, find a technical document, inspect Preview and the
-PDF page, save two exact passages with a note, download Markdown, then restart.
-No initial MCP, GitHub, VS Code or source build is needed. Until publication,
-use alpha.2 for the released workflow above; candidate notes are not asset links.
-See [install/upgrade](../../build/package/INSTALL.txt), [candidate notes](../release-notes-alpha3-candidate.md),
-and the [manual smoke sheet](../release-smoke-alpha3.md).
+Go, Python and an external database are not needed at runtime. Binaries are
+unsigned; macOS may require an app-specific allowance in Privacy & Security.
+Back up a stopped data directory before upgrading schema 2 to 6; see
+[install/upgrade](../../build/package/INSTALL.txt). The optional
+[VSIX](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail-readonly-0.1.0.vsix) needs a separate API-v1 server. The
+[demo guide](../demo.md) describes the older synthetic three-document workflow.
+See [release notes](../release-notes-alpha3.md) and the
+[manual smoke sheet](../release-smoke-alpha3.md).
 
 ## Version boundaries
 
-| Capability | Published alpha.2 archives | Main / alpha.3 candidate (not yet released) | Separate distribution |
+| Capability | Published alpha.2 archives | Published alpha.3 archives | Separate distribution |
 |---|---|---|---|
 | Local text, Markdown and common code files | Included | Included | — |
 | Text PDFs, page attribution, snapshot preview, Copy location | Included | Included | — |
@@ -67,7 +61,7 @@ and the [manual smoke sheet](../release-smoke-alpha3.md).
 | `.findrailignore` | Not included | Root-only rules; failed policy scan retains prior committed content/report; [syntax](../folder-ignore.md) | — |
 | Evidence collection | Not included | In-tab only; reload clears it; explicit Markdown download; [scope](../evidence-collections.md) | — |
 | `evaluate` | Not included | Read-only Literal path sets, 1–100 cases, at most 100 results/case; incomplete is error; mismatch nonzero after full report; [details](../search-evaluation.md) | — |
-| VS Code read-only client | Not included | Requires compatible server/client API v1; [setup](../vscode.md) | VSIX installable locally; not published on Marketplace/Open VSX |
+| VS Code read-only client | Not included | Requires compatible server/client API v1; [setup](../vscode.md) | [Separate release VSIX](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail-readonly-0.1.0.vsix); not on Marketplace/Open VSX |
 | Connector kit | Not included | Experimental; independent adoption not established; [guide](../connectors.md) | — |
 | Marketplace / Open VSX listings | Not published | Not published | Not published |
 | OCR, semantic retrieval, private GitHub | Not included | Not implemented | — |
@@ -94,7 +88,8 @@ not evidence for candidate/release UI checks; use the manual smoke sheet for tha
 ## Links and feedback
 
 - [Source](https://github.com/Lephiziel/findrail)
-- [Alpha.2 release](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.2)
+- [Alpha.3 release](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.3)
+- [Previous alpha.2 release](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.2)
 - [Alpha feedback](https://github.com/Lephiziel/findrail/issues/3)
 - [Architecture](../architecture.md)
 - [License](../../LICENSE)

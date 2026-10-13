@@ -1,4 +1,4 @@
-# DOCX extraction (source builds)
+# DOCX extraction (alpha.3)
 
 Findrail indexes a bounded **plain-text snapshot** from ordinary ZIP-based
 `.docx` files. It reads the main WordprocessingML body only: paragraphs, runs,

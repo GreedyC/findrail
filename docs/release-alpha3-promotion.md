@@ -1,26 +1,27 @@
 # alpha.3 post-release promotion checklist (for task 06)
 
-This is a source-only → released promotion plan. Do not apply it before an
-authorized release exists. It has no future asset URLs: populate them only by
-copying and verifying URLs from the real published release page.
+Completed on 2026-10-13 after the authorized [alpha.3 release](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.3)
+was published and all eight public files were downloaded and checked. The tag
+points to `d5dc1bec50efcb3c26d09e9b24b14cf3c0b2f4cb`. See [asset hashes, URLs and checks](release-alpha3-verification.md).
 
 ## Verify first
 
-- [ ] Confirm the actual `v0.1.0-alpha.3` release exists and is the expected
+- [x] Confirm the actual `v0.1.0-alpha.3` release exists and is the expected
   prerelease; verify tag, full source SHA, release notes and publication time.
-- [ ] Download each listed Linux amd64/arm64, macOS amd64/arm64, and Windows
+- [x] Download each listed Linux amd64/arm64, macOS amd64/arm64, and Windows
   amd64 archive from that release. Verify exact basenames against that same
   release's `SHA256SUMS.txt`; inspect embedded INSTALL, BUILD-INFO and notices.
-- [ ] Verify the separate VSIX and `release-manifest.json` from that same release;
+- [x] Verify the separate VSIX and `release-manifest.json` from that same release;
   compare the exact eight-file inventory, all asset hashes/sizes, manifest source
   revision and the tag's dereferenced full commit SHA.
-- [ ] Record native packaged execution separately from cross-compilation. Check
+- [x] Record native packaged execution separately from cross-compilation. Check
   actual browser smoke, installed editor/VSIX, and manual macOS
   Finder/Gatekeeper independently; leave any unrun result marked unrun.
-- [ ] Verify the VSIX API v1 requirements and the real absence/presence of
-  Marketplace and Open VSX listings. Never infer publication from a local VSIX.
+- [x] Verify the VSIX API v1 requirements and the actual release asset URL.
+  This release distributes the VSIX directly; its publisher does not publish
+  Marketplace or Open VSX listings. No listing is inferred from the local VSIX.
 
-## Only after verification: promotion patch
+## Completed documentation promotion
 
 1. In `README.md`, change the current-release label and clearly name alpha.3 as
    published. Add version-specific archive and checksum links only by copying
@@ -43,5 +44,7 @@ copying and verifying URLs from the real published release page.
    create a link for a missing architecture, checksum, Marketplace, or Open VSX
    listing. Update the checklist with the verified SHA, URLs, and evidence.
 
-This file is guidance for the separately authorized release task, not permission
-to change VERSION, create a tag, publish, or send external messages now.
+This records the completed task-06 promotion. VERSION stays at alpha.3; the
+follow-up documentation does not replace release assets or move its tag. Manual
+Finder/Gatekeeper and Windows GUI checks remain not run. No external messages
+or submissions were sent.
