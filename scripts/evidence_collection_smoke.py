@@ -211,11 +211,19 @@ def main():
             excerpts = browser.execute_script("return [...document.querySelectorAll('.collection-row pre')].map(x=>x.textContent)")
             assert excerpts[0].startswith("Synthetic evidence alpha passage") and excerpts[1].startswith("Synthetic")
 
+            def gate_response(fragment, flow=None):
+                # Match the request's semantic caller, never an arbitrary Nth poll.
+                # prepare() is the export/status flow; refresh() is its periodic
+                # inventory poll and must remain free to run independently.
+                browser.execute_script("""window.__realFetch=window.fetch.bind(window);window.__gateReady=false;window.__gateMatched=false;
+                    window.__releaseGate=null;window.fetch=(input,init)=>{const u=String(input.url||input);
+                    const stack=(new Error()).stack||'';const match=u.includes(arguments[0])&&
+                    (!arguments[1]||stack.includes(arguments[1]+' ('));
+                    const hold=match&&!window.__gateMatched;if(hold)window.__gateMatched=true;
+                    return window.__realFetch(input,init).then(r=>hold?
+                    new Promise(resolve=>{window.__gateReady=true;window.__releaseGate=()=>resolve(r)}):r)};""", fragment, flow)
             def gate_first_response(fragment):
-                browser.execute_script("""window.__realFetch=window.fetch.bind(window);window.__gateReady=false;
-                    window.__gateHits=0;window.__releaseGate=null;window.fetch=(input,init)=>{const u=String(input.url||input);
-                    return window.__realFetch(input,init).then(r=>u.includes(arguments[0])&&window.__gateHits++===0?
-                    new Promise(resolve=>{window.__gateReady=true;window.__releaseGate=()=>resolve(r)}):r)};""", fragment)
+                gate_response(fragment)
             def release_gate():
                 browser.execute_script("window.__releaseGate?.();window.fetch=window.__realFetch")
 
@@ -263,7 +271,7 @@ def main():
 
             # An export's successful inventory body is stale if a note changes
             # before the promise completes. No surprising output is retained.
-            gate_first_response("/api/v1/sources")
+            gate_response("/api/v1/sources", "prepare")
             browser.find_element(By.ID, "collection-copy").click()
             wait.until(lambda d: d.execute_script("return window.__gateReady"))
             edit_first_note(" edited during export")
@@ -363,15 +371,18 @@ def main():
             close_preview()
             browser.find_element(By.ID, "collection-open").click()
             wait.until(lambda d: d.find_element(By.ID, "collection-count").text == "3")
-            gate_first_response("/api/v1/sources")
+            gate_response("/api/v1/sources", "prepare")
             browser.find_element(By.ID, "collection-copy").click()
-            wait.until(lambda d: d.execute_script("return window.__gateReady"))
-            subprocess.run([str(binary), "forget", "--data-dir", str(index), source_id], check=True,
-                           timeout=20, capture_output=True, text=True)
-            # Let the already-existing two-second source refresh poll observe
-            # external CLI removal while export preparation is suspended.
-            wait.until(lambda d: d.find_element(By.ID, "collection-count").text == "2")
-            release_gate()
+            try:
+                wait.until(lambda d: d.execute_script("return window.__gateReady"))
+                subprocess.run([str(binary), "forget", "--data-dir", str(index), source_id], check=True,
+                               timeout=20, capture_output=True, text=True)
+                # Explicitly trigger the inventory refresh while export is held;
+                # this proves the background poll can arrive before release.
+                browser.execute_script("window.dispatchEvent(new Event('sources-changed'))")
+                wait.until(lambda d: d.find_element(By.ID, "collection-count").text == "2")
+            finally:
+                release_gate()
             wait.until(lambda d: "Collection changed" in d.execute_script("return document.getElementById('collection-status').textContent"))
             assert browser.find_element(By.ID, "collection-output").get_attribute("value") == ""
             browser.find_element(By.ID, "collection-clear").click()
