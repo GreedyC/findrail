@@ -22,6 +22,19 @@ import zipfile
 urllib.request.install_opener(urllib.request.build_opener(urllib.request.ProxyHandler({})))
 
 
+def rejected_request(request, timeout):
+    """Retry Windows resets only for calls that are already expected to fail."""
+    for attempt in range(5):
+        try:
+            return urllib.request.urlopen(request, timeout=timeout)
+        except ConnectionResetError:
+            if sys.platform != 'win32' or attempt == 4:
+                raise
+            # Still require a real HTTP response/error and the caller's status
+            # assertion. A reset is never accepted as a successful rejection.
+            time.sleep(0.05)
+
+
 def pdf_fixture(pages):
     objects = [b'<< /Type /Catalog /Pages 2 0 R >>', b'',
                b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>']
@@ -135,7 +148,7 @@ def demo_smoke(binary):
             try:
                 request = urllib.request.Request(base + '/api/v1/sources', data=b'{}', method='POST',
                                                  headers={'Origin': base, 'Content-Type': 'application/json'})
-                urllib.request.urlopen(request, timeout=3)
+                rejected_request(request, timeout=3)
                 raise AssertionError('demo unexpectedly enabled source mutations')
             except urllib.error.HTTPError as error:
                 try:
@@ -145,7 +158,7 @@ def demo_smoke(binary):
             try:
                 request = urllib.request.Request(base + '/api/v1/sources/example/configure', data=b'{"max_docx_bytes":0}', method='POST',
                                                  headers={'Origin': base, 'Content-Type': 'application/json'})
-                urllib.request.urlopen(request, timeout=3)
+                rejected_request(request, timeout=3)
                 raise AssertionError('demo unexpectedly exposed Configure')
             except urllib.error.HTTPError as error:
                 try:
@@ -203,14 +216,15 @@ def source_management_smoke(binary):
             with urllib.request.urlopen(base + path, timeout=3) as response:
                 return json.load(response)
 
-        def mutate(path, method, body=None, origin=base, token=None):
+        def mutate(path, method, body=None, origin=base, token=None, expected_rejection=False):
             headers = {'Origin': origin, 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin'}
             if token:
                 headers['X-Findrail-Token'] = token
             data = None if body is None else json.dumps(body).encode()
             request = urllib.request.Request(base + path, data=data, method=method, headers=headers)
             try:
-                with urllib.request.urlopen(request, timeout=4) as response:
+                opener = rejected_request if expected_rejection else urllib.request.urlopen
+                with opener(request, timeout=4) as response:
                     return response.status, json.load(response) if response.status != 204 else None
             except urllib.error.HTTPError as error:
                 try:
@@ -242,12 +256,13 @@ def source_management_smoke(binary):
             token = session['token']
             assert token and len(token) >= 32
             assert mutate('/api/v1/sources', 'POST', {'type': 'folder', 'path': str(notes)},
-                          origin='http://attacker.invalid', token=token)[0] == 403
+                          origin='http://attacker.invalid', token=token, expected_rejection=True)[0] == 403
             assert mutate('/api/v1/sources/not-a-source/configure', 'POST', {'max_docx_bytes': 0},
-                          origin='http://attacker.invalid', token=token)[0] == 403
+                          origin='http://attacker.invalid', token=token, expected_rejection=True)[0] == 403
             assert mutate('/api/v1/sources/not-a-source/configure', 'POST', {'max_docx_bytes': 0, 'extra': 1},
-                          token=token)[0] == 400
-            assert mutate('/api/v1/sources/not-a-source/configure', 'POST', {}, token=token)[0] == 400
+                          token=token, expected_rejection=True)[0] == 400
+            assert mutate('/api/v1/sources/not-a-source/configure', 'POST', {},
+                          token=token, expected_rejection=True)[0] == 400
             assert get('/api/v1/jobs')['jobs'] == []
             status, accepted = mutate('/api/v1/sources', 'POST', {'type': 'folder', 'path': str(notes), 'max_docx_bytes': 1 << 20}, token=token)
             assert status == 202, (status, accepted)
