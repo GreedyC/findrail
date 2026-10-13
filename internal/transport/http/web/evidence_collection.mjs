@@ -19,6 +19,16 @@ export class EvidenceCollection {
   get generation() { return this.#generation; }
   get title() { return this.#title; }
   get entries() { return jsonCopy(this.#entries); }
+  restore(title, entries) {
+    if (!Array.isArray(entries) || entries.length > LIMITS.entries || typeof title !== 'string' || !title.trim() || bytes(title) > LIMITS.title) throw new TypeError('Invalid saved collection.');
+    let text=0, metadata=0;
+    for (const x of entries) {
+      if (!x || typeof x.key !== 'string' || typeof x.text !== 'string' || typeof x.excerpt !== 'string' || typeof x.note !== 'string' || bytes(x.text)>LIMITS.preview || bytes(x.note)>LIMITS.note || !x.text.includes(x.excerpt)) throw new TypeError('Invalid saved collection entry.');
+      text+=bytes(x.text)+bytes(x.excerpt);metadata+=bytes(JSON.stringify({...x,text:'',excerpt:'',note:''}));
+    }
+    if(text>LIMITS.text||metadata>LIMITS.entries*LIMITS.metadata)throw new RangeError('Saved collection exceeds limits.');
+    this.#title=title;this.#entries=jsonCopy(entries);this.#generation++;
+  }
   setTitle(title) {
     if (typeof title !== 'string' || !title.trim() || bytes(title) > LIMITS.title) throw new RangeError('Collection title must be non-empty and at most 256 UTF-8 bytes.');
     this.#title = title; this.#generation++;

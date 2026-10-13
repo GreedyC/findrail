@@ -5,6 +5,11 @@ PDF/DOCX files and not a Findrail database backup. PDF page text and source
 provenance are included; omitted extraction features (including OCR) cannot be
 restored. Import must not reconnect to the origin or read its URI.
 
+A source snapshot remains scoped to that source and does not carry named evidence
+collections or unrelated notes. To preserve collections, make a complete stopped
+backup of the whole data directory, including the SQLite database and any WAL/SHM
+files; a source export is not a full-index backup.
+
 ## Format v1
 
 The ZIP has no prefix/comment/trailing payload and contains exactly these three

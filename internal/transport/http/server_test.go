@@ -470,6 +470,16 @@ func TestCapabilitiesAdvertiseReadOnlyClientContract(t *testing.T) {
 	if got["management"] != false {
 		t.Fatalf("management=%v", got["management"])
 	}
+	if got["collection_persistence"] != false {
+		t.Fatalf("collection persistence=%v", got["collection_persistence"])
+	}
+	collection := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7766/api/v1/collections", nil)
+	request.Host = "127.0.0.1:7766"
+	transport.Handler(s).ServeHTTP(collection, request)
+	if collection.Code != http.StatusNotFound {
+		t.Fatalf("read-only collection route status=%d", collection.Code)
+	}
 	for key, want := range map[string][]string{"search_modes": {"literal", "advanced"}, "search_filters": {"source", "format", "path_prefix", "title_contains"}} {
 		values, ok := got[key].([]any)
 		if !ok || len(values) != len(want) {

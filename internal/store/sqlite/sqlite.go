@@ -46,6 +46,9 @@ var archiveSchema string
 //go:embed migrations/006_indexing_reports.sql
 var reportSchema string
 
+//go:embed migrations/007_evidence_collections.sql
+var collectionsSchema string
+
 type Store struct {
 	db, readers   *sql.DB
 	schemaVersion int
@@ -53,7 +56,7 @@ type Store struct {
 
 var ErrArchiveFrozen = errors.New("archive_snapshot_frozen: imported archive sources cannot be scanned or refreshed")
 
-const currentSchemaVersion = 6
+const currentSchemaVersion = 7
 
 func Open(ctx context.Context, dataDir string) (*Store, error) {
 	dataDir, err := filepath.Abs(dataDir)
@@ -217,7 +220,12 @@ func (s *Store) initialize(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx, reportSchema); err != nil {
 			return fmt.Errorf("migrate indexing reports: %w", err)
 		}
+		fallthrough
 	case 6:
+		if _, err := tx.ExecContext(ctx, collectionsSchema); err != nil {
+			return fmt.Errorf("migrate evidence collections: %w", err)
+		}
+	case 7:
 	default:
 		return fmt.Errorf("unsupported index schema %d; use a compatible Findrail version", version)
 	}
