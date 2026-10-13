@@ -3,6 +3,7 @@
 package desktop
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,8 +12,9 @@ import (
 )
 
 type Lock struct {
-	file    *os.File
-	DataDir string
+	file        *os.File
+	DataDir     string
+	recordNonce string
 }
 
 func Acquire(dataDir string) (*Lock, error) {
@@ -36,7 +38,10 @@ func Acquire(dataDir string) (*Lock, error) {
 	err = windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &overlapped)
 	if err != nil {
 		f.Close()
-		return nil, ErrOwned
+		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+			return nil, ErrOwned
+		}
+		return nil, fmt.Errorf("acquire desktop ownership: %w", err)
 	}
 	return &Lock{file: f, DataDir: abs}, nil
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -35,12 +36,15 @@ func NewRecord(dir, endpoint string) (Record, error) {
 	return Record{Version: 1, DataDir: dir, URL: endpoint, Nonce: hex.EncodeToString(b[:])}, nil
 }
 func (l *Lock) Publish(r Record) error {
-	if l == nil || r.DataDir != l.DataDir || !validEndpoint(r.URL) || len(r.Nonce) != 64 {
+	if l == nil || l.file == nil || r.DataDir != l.DataDir || !validEndpoint(r.URL) || !validNonce(r.Nonce) {
 		return errors.New("invalid desktop instance record")
 	}
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err
+	}
+	if len(b) > 4096 {
+		return errors.New("desktop instance record is oversized")
 	}
 	f, err := os.CreateTemp(l.DataDir, ".desktop-record-*")
 	if err != nil {
@@ -60,18 +64,24 @@ func (l *Lock) Publish(r Record) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(name, filepath.Join(l.DataDir, recordName))
+	if err = os.Rename(name, filepath.Join(l.DataDir, recordName)); err != nil {
+		return err
+	}
+	l.recordNonce = r.Nonce
+	return nil
 }
 func (l *Lock) RemoveRecord() error {
-	b, err := os.ReadFile(filepath.Join(l.DataDir, recordName))
+	if l == nil || l.file == nil || l.recordNonce == "" {
+		return nil
+	}
+	current, err := ReadRecord(l.DataDir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	var current Record
-	if json.Unmarshal(b, &current) == nil && current.DataDir == l.DataDir {
+	if current.Nonce == l.recordNonce {
 		return os.Remove(filepath.Join(l.DataDir, recordName))
 	}
 	return nil
@@ -85,7 +95,12 @@ func ReadRecord(dir string) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	b, err := os.ReadFile(filepath.Join(abs, recordName))
+	f, err := os.Open(filepath.Join(abs, recordName))
+	if err != nil {
+		return Record{}, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, 4097))
 	if err != nil {
 		return Record{}, err
 	}
@@ -96,10 +111,14 @@ func ReadRecord(dir string) (Record, error) {
 	if err = json.Unmarshal(b, &r); err != nil {
 		return Record{}, fmt.Errorf("invalid desktop instance record: %w", err)
 	}
-	if r.Version != 1 || r.DataDir != abs || !validEndpoint(r.URL) || len(r.Nonce) != 64 {
+	if r.Version != 1 || r.DataDir != abs || !validEndpoint(r.URL) || !validNonce(r.Nonce) {
 		return Record{}, errors.New("invalid desktop instance record")
 	}
 	return r, nil
+}
+func validNonce(value string) bool {
+	b, err := hex.DecodeString(value)
+	return err == nil && len(b) == 32
 }
 func validEndpoint(raw string) bool {
 	u, err := url.Parse(raw)
@@ -114,8 +133,18 @@ func validEndpoint(raw string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 func Verify(r Record) bool {
-	client := http.Client{Timeout: 1500 * time.Millisecond, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := client.Get(r.URL + "/api/v1/desktop/identity")
+	if r.Version != 1 || !validEndpoint(r.URL) || !validNonce(r.Nonce) {
+		return false
+	}
+	// A probe owns one short-lived loopback connection; it must not leave a
+	// speculative/idle connection in the global transport during desktop Quit.
+	client := http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 1500 * time.Millisecond, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, err := http.NewRequest(http.MethodGet, strings.TrimSuffix(r.URL, "/")+"/api/v1/desktop/identity", nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("X-Findrail-Desktop-Nonce", r.Nonce)
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}

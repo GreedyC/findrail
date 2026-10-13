@@ -50,34 +50,24 @@ class ReleaseGateTests(unittest.TestCase):
         with self.assertRaises(ValueError): release_gate.verify_remote_checksums([{'name': 'a.zip', 'data': b'bad'}, {'name': 'SHA256SUMS.txt'}], f'{good}  a.zip\n')
         with self.assertRaises(ValueError): release_gate.verify_remote_checksums([{'name': 'a.zip', 'data': content}, {'name': 'SHA256SUMS.txt'}], f'{good}  a.zip\n{good}  a.zip\n')
 
-    def test_existing_release_checks_the_embedded_revision_before_noop(self):
-        import tempfile
-        version, sha = '0.1.0-alpha.3', 'a' * 40
-        for embedded_sha in (sha, 'b' * 40):
-            with self.subTest(embedded_sha=embedded_sha), tempfile.TemporaryDirectory() as temp:
-                root = pathlib.Path(temp)
-                source, _ = test_release_assets.ReleaseAssetTests().candidate(root, embedded_sha)
-                output = root / 'out'
-                release_assets.assemble(source, output, version, embedded_sha)
-                manifest_path = output / 'release-manifest.json'
-                manifest = json.loads(manifest_path.read_text())
-                manifest['source_revision'] = sha
-                manifest_path.write_text(json.dumps(manifest))
-                sums = output / 'SHA256SUMS.txt'
-                sums.write_text(''.join(f'{release_assets.digest(p)}  {p.name}\n' for p in sorted(output.iterdir()) if p != sums))
-                base = 'https://api.github.com/repos/Lephiziel/findrail'
-                responses = {
-                    base + '/releases/tags/v' + version: json.dumps({'assets': [
-                        {'name': p.name, 'browser_download_url': 'https://release.invalid/' + p.name}
-                        for p in output.iterdir()]}).encode(),
-                    base + '/git/ref/tags/v' + version: json.dumps({'object': {'type':'commit', 'sha':sha}}).encode(),
-                    **{'https://release.invalid/' + p.name: p.read_bytes() for p in output.iterdir()}}
-                with patch.object(release_gate.urllib.request, 'urlopen', side_effect=lambda req, **kw: io.BytesIO(responses[req.full_url])):
-                    if embedded_sha == sha:
-                        self.assertEqual(release_gate.github_release_decision('Lephiziel/findrail', version, 'c' * 40, 'test'), 'noop')
-                    else:
-                        with self.assertRaisesRegex(ValueError, 'provenance'):
-                            release_gate.github_release_decision('Lephiziel/findrail', version, 'c' * 40, 'test')
+    def test_alpha3_published_sha_is_immutable_and_unknown_contract_fails_closed(self):
+        sha = release_gate.ALPHA3_REVISION
+        names = {f'findrail_0.1.0-alpha.3_{target}' + ('.zip' if target.startswith('windows-') else '.tar.gz')
+                 for target in ('linux-amd64', 'linux-arm64', 'darwin-amd64', 'darwin-arm64', 'windows-amd64')}
+        names.add('findrail-readonly-0.1.0.vsix')
+        manifest = {'manifest_version': 1, 'source_revision': sha, 'app_version': '0.1.0-alpha.3',
+                    'schema_version': 6, 'client_api_version': 1, 'extension_version': '0.1.0',
+                    'assets': [{'basename': name} for name in names]}
+        release = {'tag_sha': sha, 'manifest': manifest}
+        names |= {'release-manifest.json', 'SHA256SUMS.txt'}
+        self.assertEqual(release_gate.existing_release_decision('0.1.0-alpha.3', '1' * 40, sha, release,
+                         [{'name': name} for name in names]), 'noop')
+        with self.assertRaisesRegex(ValueError, 'historical revision'):
+            release_gate.existing_release_decision('0.1.0-alpha.3', '1' * 40, 'a' * 40,
+                {'tag_sha': 'a' * 40, 'manifest': {**manifest, 'source_revision': 'a' * 40}},
+                [{'name': name} for name in names])
+        with self.assertRaisesRegex(ValueError, 'unknown published'):
+            release_gate.existing_release_decision('0.1.0-alpha.4', '1' * 40, sha, release, [])
 
 
 if __name__ == '__main__':

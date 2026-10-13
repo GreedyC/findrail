@@ -3,6 +3,7 @@
 package desktop
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,8 +13,9 @@ import (
 
 // Lock serializes desktop owners before any database is opened.
 type Lock struct {
-	file    *os.File
-	DataDir string
+	file        *os.File
+	DataDir     string
+	recordNonce string
 }
 
 func Acquire(dataDir string) (*Lock, error) {
@@ -35,7 +37,10 @@ func Acquire(dataDir string) (*Lock, error) {
 	}
 	if err = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		f.Close()
-		return nil, ErrOwned
+		if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
+			return nil, ErrOwned
+		}
+		return nil, fmt.Errorf("acquire desktop ownership: %w", err)
 	}
 	return &Lock{file: f, DataDir: abs}, nil
 }

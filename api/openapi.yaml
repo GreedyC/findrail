@@ -169,10 +169,10 @@ paths:
             application/json:
               schema:
                 type: object
-                 required: [management, desktop, client_api_version, search_modes, search_filters, pdf_title_only_evidence]
-                 properties:
-                   management: {type: boolean}
-                   desktop: {type: boolean, description: Explicit desktop quit is available only in the desktop composition}
+                required: [management, desktop, client_api_version, search_modes, search_filters, pdf_title_only_evidence]
+                properties:
+                  management: {type: boolean}
+                  desktop: {type: boolean, description: Explicit desktop quit is available only in the desktop composition}
                   client_api_version: {type: integer, const: 1}
                   search_modes:
                     type: array
@@ -181,29 +181,34 @@ paths:
                     type: array
                     items: {type: string, enum: [source, format, path_prefix, title_contains]}
                   pdf_title_only_evidence: {type: boolean, const: true}
-   /api/v1/session:
+  /api/v1/session:
     get:
       operationId: getManagementSession
       summary: Get the process-scoped in-memory mutation capability (start only)
       responses:
         '200': {description: No-store session token}
-         '403': {$ref: '#/components/responses/Forbidden'}
-   /api/v1/desktop/identity:
-     get:
-       operationId: getDesktopInstanceIdentity
-       summary: Verify a desktop endpoint against its private instance record
-       responses:
-         '200': {description: Private instance identity; not enabled by serve or demo}
-   /api/v1/desktop/quit:
-     post:
-       operationId: quitDesktop
-       summary: Gracefully stop the desktop instance
-       description: Uses the same exact-origin, exact-host, Fetch Metadata, and process-scoped token checks as management mutations. Send an empty JSON body.
-       parameters:
-       - {$ref: '#/components/parameters/ManagementToken'}
-       responses:
-         '202': {description: Shutdown accepted; active jobs are drained before storage closes}
-         '403': {$ref: '#/components/responses/Forbidden'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /api/v1/desktop/identity:
+    get:
+      operationId: getDesktopInstanceIdentity
+      summary: Verify a desktop endpoint against its private instance record
+      parameters:
+      - name: X-Findrail-Desktop-Nonce
+        in: header
+        required: true
+        schema: {type: string, pattern: "^[0-9a-f]{64}$"}
+      responses:
+        '200': {description: Private instance identity; not enabled by serve or demo}
+  /api/v1/desktop/quit:
+    post:
+      operationId: quitDesktop
+      summary: Gracefully stop the desktop instance
+      description: Uses the same exact-origin, exact-host, Fetch Metadata, and process-scoped token checks as management mutations. Send an empty JSON body.
+      parameters:
+      - {$ref: '#/components/parameters/ManagementToken'}
+      responses:
+        '202': {description: Shutdown accepted; active jobs are drained before storage closes}
+        '403': {$ref: '#/components/responses/Forbidden'}
   /api/v1/sources/{id}/refresh:
     post:
       operationId: refreshSource
