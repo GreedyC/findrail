@@ -18,12 +18,21 @@ INSTALL A PUBLISHED STANDALONE ARCHIVE
 3. Extract the archive into a directory owned by your account. Paths may contain
    spaces; quote them in commands. Go, Python, a database server and an installed
    service are not required at runtime.
- 4. Start Findrail with no source selected yet, then add only the folder you choose.
-    Without --data-dir it uses the default location below and resumes an existing
-    index there. For an isolated fresh start, use a new --data-dir (spaces are OK):
-    Linux/macOS, from the extracted folder:
+
+ALPHA.2 FIRST RUN
+Published alpha.2 lacks the new Sources panel and evidence collections. With
+that archive, use ./findrail demo (Windows: .\findrail.exe demo), or start an
+explicit folder: ./findrail start "/absolute/path/to/notes" (Windows:
+.\findrail.exe start "C:\Users\YOU\Documents\Notes"). The following steps
+describe the current alpha.3 candidate, not an alpha.2 download.
+
+ALPHA.3 CANDIDATE FIRST RUN (AFTER VERIFYING A PROVIDED CANDIDATE)
+4. Start Findrail with no source selected yet, then add only the folder you choose.
+   Without --data-dir it uses the default location below and resumes an existing
+   index there. For an isolated fresh start, use a new --data-dir (spaces are OK):
+   Linux/macOS, from the extracted folder:
       ./findrail start --data-dir "$HOME/Findrail alpha3 test data" --no-open
-    Windows PowerShell, from the extracted folder:
+   Windows PowerShell, from the extracted folder:
       .\findrail.exe start --data-dir "$env:USERPROFILE\Findrail alpha3 test data" --no-open
    Open the loopback URL printed in the terminal (normally
    http://127.0.0.1:7766). In Sources choose Add folder and enter the absolute
@@ -97,6 +106,6 @@ only the app-specific option offered by macOS Privacy & Security if you choose t
 allow this binary. Do not disable Gatekeeper or other system-wide protections.
 This does not claim notarization, Gatekeeper approval, or Finder certification.
 Scanned/image-only PDFs have no OCR. Search is lexical, not semantic. Public
-GitHub refresh is manual. The VS Code VSIX is a separate, unpublished download
-and requires a compatible Findrail server/client API v1; it is not needed for the
+GitHub refresh is manual. The VS Code VSIX is a separate candidate artifact; release/Marketplace/Open VSX
+publication must be verified independently. It requires a compatible Findrail server/client API v1; it is not needed for the
 first-run web workflow.

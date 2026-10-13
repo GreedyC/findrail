@@ -1,7 +1,13 @@
 name: Package rehearsal (no release)
 on:
   pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact commit SHA to rehearse
+        required: true
+        type: string
 permissions:
   contents: read
 jobs:
@@ -23,16 +29,22 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.candidate_sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.x'
           cache: true
       - name: Build candidate archive through production packager
         shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.candidate_sha || github.sha }}
         run: |
           PYTHON=python3
           if [[ '${{ runner.os }}' == Windows ]]; then PYTHON=python; fi
-          "$PYTHON" scripts/package.py --version 0.1.0-alpha.3 --target '${{ matrix.target }}' --output "$RUNNER_TEMP/findrail-candidate"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          "$PYTHON" scripts/package.py --version 0.1.0-alpha.3 --require-clean --target '${{ matrix.target }}' --output "$RUNNER_TEMP/findrail-candidate"
       - name: Verify candidate checksum manifest
         shell: bash
         run: |
@@ -56,19 +68,50 @@ jobs:
           root = package.extract_verified(archive, target)
           import json
           info = json.loads((root / 'BUILD-INFO.json').read_text())
-          if info['version'] != '0.1.0-alpha.3' or info['target'] != '${{ matrix.target }}' or not info['revision']:
+          if info['version'] != '0.1.0-alpha.3' or info['target'] != '${{ matrix.target }}' or info['revision'] != '${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.candidate_sha || github.sha }}' or info['dirty'] is not False:
               raise SystemExit('candidate metadata mismatch')
           binary = root / ('findrail.exe' if 'windows' in archive.name else 'findrail')
           if not binary.is_file(): raise SystemExit('extracted executable missing')
           PY
           if [[ '${{ matrix.target }}' == windows-* ]]; then
             "$PYTHON" scripts/smoke.py --expected-version 0.1.0-alpha.3 "$RUNNER_TEMP/install 📦/findrail_0.1.0-alpha.3_${{ matrix.target }}/findrail.exe"
+            "$PYTHON" scripts/search_smoke.py "$RUNNER_TEMP/install 📦/findrail_0.1.0-alpha.3_${{ matrix.target }}/findrail.exe"
             "$PYTHON" scripts/mcp_smoke.py "$RUNNER_TEMP/install 📦/findrail_0.1.0-alpha.3_${{ matrix.target }}/findrail.exe"
+            "$PYTHON" scripts/portable_smoke.py "$RUNNER_TEMP/install 📦/findrail_0.1.0-alpha.3_${{ matrix.target }}/findrail.exe"
+            "$PYTHON" scripts/diagnostics_smoke.py "$RUNNER_TEMP/install 📦/findrail_0.1.0-alpha.3_${{ matrix.target }}/findrail.exe"
           else
             "$PYTHON" scripts/smoke.py --expected-version 0.1.0-alpha.3 "$RUNNER_TEMP/install 📦/findrail_0.1.0-alpha.3_${{ matrix.target }}/findrail"
+            "$PYTHON" scripts/search_smoke.py "$RUNNER_TEMP/install 📦/findrail_0.1.0-alpha.3_${{ matrix.target }}/findrail"
             "$PYTHON" scripts/mcp_smoke.py "$RUNNER_TEMP/install 📦/findrail_0.1.0-alpha.3_${{ matrix.target }}/findrail"
+            "$PYTHON" scripts/portable_smoke.py "$RUNNER_TEMP/install 📦/findrail_0.1.0-alpha.3_${{ matrix.target }}/findrail"
+            "$PYTHON" scripts/diagnostics_smoke.py "$RUNNER_TEMP/install 📦/findrail_0.1.0-alpha.3_${{ matrix.target }}/findrail"
           fi
       - name: Rehearse alpha.2 schema-2 upgrade and stopped-directory rollback
         if: matrix.target == 'linux-amd64'
         shell: bash
         run: python3 scripts/upgrade_smoke.py "$RUNNER_TEMP/install 📦/findrail_0.1.0-alpha.3_linux-amd64/findrail"
+      - name: Save candidate archive and verification report
+        if: always()
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.candidate_sha || github.sha }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-evidence"
+          if [[ -d "$RUNNER_TEMP/findrail-candidate" ]]; then cp "$RUNNER_TEMP/findrail-candidate"/* "$RUNNER_TEMP/release-evidence/" 2>/dev/null || true; fi
+          PYTHON=python3; if [[ '${{ runner.os }}' == Windows ]]; then PYTHON=python; fi
+          "$PYTHON" - <<'PY'
+          import json, os, pathlib
+          p=pathlib.Path(os.environ['RUNNER_TEMP'])/'release-evidence'/'verification.json'
+          checks=['archive_checksum','archive_contents','exact_build_info','executable_version','cli','search','browser_api','mcp','portable_snapshot','diagnostics']
+          if '${{ matrix.target }}' == 'linux-amd64': checks.append('upgrade_and_rollback')
+          p.write_text(json.dumps({'candidate_sha': os.environ['CANDIDATE_SHA'], 'candidate_version':'0.1.0-alpha.3', 'target':'${{ matrix.target }}', 'status':os.environ['JOB_STATUS'],'checks':checks if os.environ['JOB_STATUS']=='success' else []}, sort_keys=True, indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: candidate-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.candidate_sha || github.sha }}-${{ matrix.target }}
+          path: ${{ runner.temp }}/release-evidence/
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 14

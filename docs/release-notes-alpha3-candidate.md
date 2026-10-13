@@ -41,8 +41,8 @@ VS Code, or a source build as a prerequisite.
 
 Published alpha.2 uses schema 2; alpha.3 candidate code uses schema 6 with
 migrations 1–6. Stop every process and back up the whole data directory including
-WAL/SHM before upgrading. Existing sources retain DOCX disabled. Reverse
-migrations do not exist; rollback restores the whole backup to a separate
+WAL/SHM before upgrading. Legacy alpha.2 folders retain DOCX disabled until
+explicitly enabled; other existing source policies are preserved. Reverse migrations do not exist; rollback restores the whole backup to a separate
 location and uses a binary compatible with its schema. An alpha.2 binary must
 never open schema 6. Index content and provenance are plaintext. Scanned PDFs have
 no OCR; retrieval is lexical, not semantic. See the

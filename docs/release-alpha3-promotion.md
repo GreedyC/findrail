@@ -11,6 +11,9 @@ copying and verifying URLs from the real published release page.
 - [ ] Download each listed Linux amd64/arm64, macOS amd64/arm64, and Windows
   amd64 archive from that release. Verify exact basenames against that same
   release's `SHA256SUMS.txt`; inspect embedded INSTALL, BUILD-INFO and notices.
+- [ ] Verify the separate VSIX and `release-manifest.json` from that same release;
+  compare the exact eight-file inventory, all asset hashes/sizes, manifest source
+  revision and the tag's dereferenced full commit SHA.
 - [ ] Record native packaged execution separately from cross-compilation. Check
   actual browser smoke, installed editor/VSIX, and manual macOS
   Finder/Gatekeeper independently; leave any unrun result marked unrun.
@@ -31,7 +34,9 @@ copying and verifying URLs from the real published release page.
    replace source-only wording with released wording only for the features in
    the verified package. Keep limitations, schema-6 rollback guidance and
    platform/manual-test caveats.
-4. Promote `docs/release-notes-alpha3.md` to the actual release notes after
+4. Update the embedded `build/package/INSTALL.txt` status before building the
+   final release archives; they must describe the version in their BUILD-INFO.
+   Promote `docs/release-notes-alpha3.md` to the actual release notes after
    comparing it with shipped contents and correcting any differences. Keep
    candidate rehearsal evidence dated and distinct from release certification.
 5. Check every changed link and asset URL against the public release. Do not

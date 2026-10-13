@@ -240,7 +240,7 @@ Linux; `~/Library/Application Support/Findrail` on macOS;
 | Documents | Text / Markdown / code / PDF text / bounded DOCX body text in source builds | optional OCR |
 | Sources | Local folders; public GitHub snapshots and frozen portable archive imports | Private GitHub, bookmarks, work tools |
 | Freshness | File watching and full reconciliation | Resumable remote sync |
-| Retrieval | Literal search, opt-in Advanced queries, source/format/path/title filters, PDF evidence | Query evaluation, optional semantics |
+| Retrieval | Literal search, opt-in Advanced queries, source/format/path/title filters, PDF evidence, read-only result-set evaluation | Optional semantics |
 | Clients | CLI, local web UI, HTTP, read-only stdio MCP and VS Code source-build client (server/client API v1) | Desktop launcher, broader editor support |
 | Extensions | Experimental connector kit; independent adoption not established | Stable SDK and conformance harness |
 
