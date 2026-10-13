@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import platform
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -37,6 +38,25 @@ def db_fingerprint(path):
         return hashlib.sha256(json.dumps(state, sort_keys=True, default=str).encode()).hexdigest()
     finally:
         connection.close()
+
+
+def validate_candidate(binary, revision, version):
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("candidate SHA must be a full commit SHA")
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+", version):
+        raise ValueError("candidate version must be an exact alpha version")
+    build_info = binary.parent / "BUILD-INFO.json"
+    metadata = json.loads(build_info.read_text(encoding="utf-8"))
+    system = {"Linux": "linux", "Darwin": "darwin", "Windows": "windows"}.get(platform.system())
+    machine = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine().lower())
+    target = f"{system}-{machine}"
+    if (not system or not machine or metadata.get("dirty") is not False or
+            (metadata.get("revision"), metadata.get("version"), metadata.get("target")) != (revision, version, target)):
+        raise ValueError("BUILD-INFO.json must match candidate SHA/version, be clean, and target this runner")
+    actual = command([str(binary), "version"]).stdout.strip()
+    if actual != f"findrail {version}":
+        raise ValueError(f"candidate executable version mismatch: {actual!r}")
+    return metadata
 
 
 def evaluate(binary, scratch):
@@ -117,15 +137,7 @@ def main():
     binary = args.binary.resolve(strict=True)
     if not os.access(binary, os.X_OK):
         raise SystemExit("candidate binary is not executable")
-    version = command([str(binary), "version"]).stdout.strip()
-    if args.candidate_version not in version:
-        raise SystemExit(f"candidate version mismatch: expected {args.candidate_version!r}, got {version!r}")
-    build_info = binary.parent / "BUILD-INFO.json"
-    if not build_info.is_file():
-        raise SystemExit("BUILD-INFO.json must accompany the extracted candidate")
-    metadata = json.loads(build_info.read_text(encoding="utf-8"))
-    if metadata.get("revision") != args.candidate_sha or metadata.get("version") != args.candidate_version:
-        raise SystemExit("BUILD-INFO.json revision/version does not match supplied candidate identity")
+    metadata = validate_candidate(binary, args.candidate_sha, args.candidate_version)
     cases = []
     with tempfile.TemporaryDirectory(prefix="findrail packaged journey ") as directory:
         scratch = pathlib.Path(directory)
@@ -141,7 +153,7 @@ def main():
             cases.append({"case": "evidence_collection_smoke.py", "status": "passed"})
     report = {"candidate_sha": args.candidate_sha, "candidate_version": args.candidate_version,
               "binary": binary.name, "os": platform.platform(), "python": platform.python_version(),
-              "go": command(["go", "version"]).stdout.strip(), "cases": cases}
+              "go": metadata.get("go_version"), "browser_skipped": args.skip_browser, "cases": cases}
     encoded = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)

@@ -1,10 +1,11 @@
 name: Packaged candidate journey
 
 on:
+  pull_request:
   workflow_dispatch:
     inputs:
       archive_url:
-        description: Public URL of the already-built candidate archive
+        description: Public URL of the already-built Linux amd64 candidate archive
         required: true
         type: string
       archive_sha256:
@@ -27,41 +28,72 @@ jobs:
   linux-packaged-journey:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.candidate_sha }}
+      CANDIDATE_VERSION: ${{ github.event_name == 'pull_request' && '0.1.0-alpha.3' || inputs.candidate_version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Download and verify candidate archive
+      - name: Candidate identity regression tests
+        run: python -m unittest scripts/test_packaged_journey.py
+      - name: Build a PR preview through the production packager
+        if: github.event_name == 'pull_request'
+        run: python scripts/package.py --version "$CANDIDATE_VERSION" --require-clean --target linux-amd64 --output "$RUNNER_TEMP/candidate"
+      - name: Download the supplied candidate
+        if: github.event_name == 'workflow_dispatch'
         env:
           ARCHIVE_URL: ${{ inputs.archive_url }}
           ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
         run: |
           set -euo pipefail
-          case "$ARCHIVE_URL" in https://*) ;; *) echo 'archive_url must use HTTPS' >&2; exit 1;; esac
-          curl --fail --location --silent --show-error "$ARCHIVE_URL" -o /tmp/candidate.tar.gz
-          echo "$ARCHIVE_SHA256  /tmp/candidate.tar.gz" | sha256sum --check --status
-          mkdir /tmp/extracted
-          tar -xzf /tmp/candidate.tar.gz --directory /tmp/extracted --no-same-owner
-          test "$(find /tmp/extracted -name BUILD-INFO.json -type f | wc -l)" -eq 1
-          echo "CANDIDATE_DIR=$(dirname "$(find /tmp/extracted -name BUILD-INFO.json -type f)")" >> "$GITHUB_ENV"
+          [[ "$ARCHIVE_URL" == https://* ]]
+          [[ "$ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CANDIDATE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]
+          mkdir -p "$RUNNER_TEMP/candidate"
+          ARCHIVE="findrail_${CANDIDATE_VERSION}_linux-amd64.tar.gz"
+          curl --proto '=https' --proto-redir '=https' --fail --location --silent --show-error "$ARCHIVE_URL" -o "$RUNNER_TEMP/candidate/$ARCHIVE"
+          printf '%s  %s\n' "$ARCHIVE_SHA256" "$ARCHIVE" > "$RUNNER_TEMP/candidate/SHA256SUMS.txt"
+      - name: Verify and safely extract the candidate
+        run: |
+          python - <<'PY'
+          import os, pathlib, sys
+          sys.path.insert(0, 'scripts')
+          import package
+          source = pathlib.Path(os.environ['RUNNER_TEMP']) / 'candidate'
+          version = os.environ['CANDIDATE_VERSION']
+          archive = source / f'findrail_{version}_linux-amd64.tar.gz'
+          package.verify_manifest(source)
+          package.verify_archive(archive, 'linux-amd64', version)
+          root = package.extract_verified(archive, pathlib.Path(os.environ['RUNNER_TEMP']) / 'install space 📦')
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as output:
+              output.write(f'CANDIDATE_DIR={root}\n')
+          PY
       - name: Install pinned matched Chromium and driver
         run: |
           python -m pip install --disable-pip-version-check 'selenium==4.35.0'
           npm install --global --ignore-scripts '@puppeteer/browsers@2.10.6'
-          mkdir -p /tmp/chrome-for-testing
-          npx --yes @puppeteer/browsers@2.10.6 install chrome@139.0.7258.66 --path /tmp/chrome-for-testing
-          npx --yes @puppeteer/browsers@2.10.6 install chromedriver@139.0.7258.66 --path /tmp/chrome-for-testing
-      - name: Run compiled candidate journey
+          npx --yes @puppeteer/browsers@2.10.6 install chrome@139.0.7258.66 --path "$RUNNER_TEMP/chrome-for-testing"
+          npx --yes @puppeteer/browsers@2.10.6 install chromedriver@139.0.7258.66 --path "$RUNNER_TEMP/chrome-for-testing"
+      - name: Run the extracted candidate journey
         env:
-          FINDRAIL_CHROME: /tmp/chrome-for-testing/chrome/linux-139.0.7258.66/chrome-linux64/chrome
-          FINDRAIL_CHROMEDRIVER: /tmp/chrome-for-testing/chromedriver/linux-139.0.7258.66/chromedriver-linux64/chromedriver
+          FINDRAIL_CHROME: ${{ runner.temp }}/chrome-for-testing/chrome/linux-139.0.7258.66/chrome-linux64/chrome
+          FINDRAIL_CHROMEDRIVER: ${{ runner.temp }}/chrome-for-testing/chromedriver/linux-139.0.7258.66/chromedriver-linux64/chromedriver
         run: |
-          set -euo pipefail
-          python scripts/packaged_journey.py "$CANDIDATE_DIR/findrail" \
-            --candidate-sha '${{ inputs.candidate_sha }}' \
-            --candidate-version '${{ inputs.candidate_version }}' \
-            --report /tmp/packaged-journey-report.json
+          python scripts/packaged_journey.py "$CANDIDATE_DIR/findrail" --candidate-sha "$CANDIDATE_SHA" --candidate-version "$CANDIDATE_VERSION" --report "$RUNNER_TEMP/packaged-journey-report.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: packaged-journey-${{ env.CANDIDATE_SHA }}
+          path: ${{ runner.temp }}/packaged-journey-report.json
+          if-no-files-found: warn
+          retention-days: 14

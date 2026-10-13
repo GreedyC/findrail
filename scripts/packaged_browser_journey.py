@@ -16,6 +16,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import Select
 
 sys.dont_write_bytecode = True
 from smoke import docx_fixture, pdf_fixture
@@ -78,7 +79,8 @@ def main():
             browser.get(url + "/")
             wait.until(lambda d: not d.find_element(By.ID, "empty").get_attribute("hidden"))
             assert "empty" in browser.find_element(By.ID, "empty").text.lower()
-            assert not data.exists() or not (data / "findrail.db").exists()
+            with urllib.request.urlopen(url + "/api/v1/sources", timeout=3) as response:
+                assert json.load(response)["sources"] == [], "fresh start registered a source"
             browser.find_element(By.ID, "add-folder-open").click()
             browser.find_element(By.ID, "folder-path").send_keys(str(root.resolve()))
             browser.find_element(By.ID, "folder-form").submit()
@@ -90,25 +92,38 @@ def main():
             def search(query, format_name="all"):
                 browser.find_element(By.ID, "query").clear()
                 browser.find_element(By.ID, "query").send_keys(query)
-                browser.find_element(By.ID, "format").send_keys(format_name)
+                Select(browser.find_element(By.ID, "format")).select_by_value(format_name)
                 browser.find_element(By.ID, "search-form").submit()
-                wait.until(lambda d: query in d.find_element(By.ID, "status").text or "0 matching" in d.find_element(By.ID, "status").text)
+                wait.until(lambda d: not d.find_element(By.ID, "submit").get_property("disabled")
+                           and "matching documents" in d.find_element(By.ID, "status").text)
+                assert "1 matching" in browser.find_element(By.ID, "status").text
 
             search("idempotencymarker")
             assert "1 matching" in browser.find_element(By.ID, "status").text
             browser.find_element(By.XPATH, "//button[.='Preview']").click()
             wait.until(lambda d: "idempotencymarker" in d.find_element(By.ID, "preview-body").text)
             assert browser.execute_script("return window.fixturePwned===true") is False
-            browser.execute_script("const b=document.getElementById('preview-body'),t=b.firstChild,r=document.createRange();r.setStart(t,0);r.setEnd(t,20);getSelection().removeAllRanges();getSelection().addRange(r)")
+            selected = browser.execute_script("""
+                const body=document.getElementById('preview-body');
+                const walker=document.createTreeWalker(body,NodeFilter.SHOW_TEXT),nodes=[];
+                let node; while(node=walker.nextNode()) if(node.length) nodes.push(node);
+                const range=document.createRange(); range.setStart(nodes[0],0);
+                let remaining=20;
+                for(const text of nodes){
+                    if(remaining<=text.length){range.setEnd(text,remaining);break}
+                    remaining-=text.length;
+                }
+                const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+                return selection.toString();
+            """)
+            assert selected == "idempotencymarker fa", selected
             browser.find_element(By.ID, "add-evidence").click()
             wait.until(lambda d: "added" in d.find_element(By.ID, "collection-status").text.lower())
             browser.find_element(By.ID, "add-evidence").click()
             assert "Duplicate" in browser.find_element(By.ID, "collection-status").text
             browser.find_element(By.ID, "close-preview").click()
-            search("page2journey", "PDF")
+            search("page2journey", "pdf")
             browser.find_element(By.XPATH, "//button[.='Preview']").click()
-            wait.until(lambda d: "Page 1 / 2" in d.find_element(By.ID, "page-label").text)
-            browser.find_element(By.ID, "next").click()
             wait.until(lambda d: "Page 2 / 2" in d.find_element(By.ID, "page-label").text)
             assert "secondpage" in browser.find_element(By.ID, "preview-body").text
             browser.execute_script("document.getElementById('whole-preview').checked=true")
@@ -124,10 +139,10 @@ def main():
             while time.monotonic() < deadline and not exported.exists():
                 time.sleep(.05)
             text = exported.read_text(encoding="utf-8")
-            assert "idempotencymarker" in text and "note from packaged journey" in text
-            assert "runbook.pdf — page 2" in text and "#page=2" in text and root.as_uri() in text
+            assert selected in text and "note from packaged journey" in text
+            assert "runbook.pdf — page 2" in text and (root / "runbook.pdf").as_uri() + "#page=2" in text
             browser.find_element(By.ID, "collection-close").click()
-            search("docxjourney", "DOCX")
+            search("docxjourney", "docx")
             browser.find_element(By.XPATH, "//button[.='Preview']").click()
             wait.until(lambda d: "docxjourney" in d.find_element(By.ID, "preview-body").text)
             assert "page numbers are unavailable" in browser.find_element(By.ID, "preview-notice").text.lower()
