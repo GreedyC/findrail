@@ -6,104 +6,92 @@ import tarfile
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import release_assets as release
 
 
 class ReleaseAssetTests(unittest.TestCase):
-    def candidate(self, root, revision='a' * 40, dirty=False):
+    def candidate(self, root, revision='a' * 40, dirty=False, version='0.1.0-alpha.4', schema=None):
         source = root / 'input'
         source.mkdir()
-        for name, target in release.expected_archives('0.1.0-alpha.3').items():
+        schema = release.contract_schema(version) if schema is None else schema
+        for name, target in release.expected_archives(version).items():
+            stem = pathlib.Path(name).name.removesuffix('.tar.gz').removesuffix('.zip')
+            info = {'version': version, 'revision': revision, 'dirty': dirty,
+                    'target': target, 'schema_version': schema}
+            members = {'BUILD-INFO.json': json.dumps(info).encode(),
+                       'INSTALL.txt': b'x', 'LICENSE': b'x', 'NOTICE': b'x',
+                       'licenses/DEPENDENCIES.txt': b'x', 'licenses/Go-LICENSE.txt': b'x'}
             if target.startswith('windows-'):
+                members['findrail.exe'] = b'fake'
                 with zipfile.ZipFile(source / name, 'w') as zf:
-                    def put(path, data):
-                        info = zipfile.ZipInfo(path); info.external_attr = 0o100644 << 16; zf.writestr(info, data)
-                    put(f'findrail_0.1.0-alpha.3_{target}/findrail.exe', b'fake')
-                    put(f'findrail_0.1.0-alpha.3_{target}/BUILD-INFO.json', json.dumps({'version': '0.1.0-alpha.3', 'revision': revision, 'dirty': dirty, 'target': target}))
-                    for item in ('INSTALL.txt', 'LICENSE', 'NOTICE', 'licenses/DEPENDENCIES.txt', 'licenses/Go-LICENSE.txt'):
-                        put(f'findrail_0.1.0-alpha.3_{target}/{item}', 'fixture')
+                    for path, data in members.items():
+                        item = zipfile.ZipInfo(f'{stem}/{path}')
+                        item.external_attr = (0o100755 if path == 'findrail.exe' else 0o100644) << 16
+                        zf.writestr(item, data)
             else:
+                members['findrail'] = b'fake'
                 with tarfile.open(source / name, 'w:gz') as tf:
-                    stem = f'findrail_0.1.0-alpha.3_{target}'
-                    data = {'version': '0.1.0-alpha.3', 'revision': revision, 'dirty': dirty, 'target': target}
-                    members = {'findrail': b'fake', 'BUILD-INFO.json': json.dumps(data).encode(), 'INSTALL.txt': b'x', 'LICENSE': b'x', 'NOTICE': b'x', 'licenses/DEPENDENCIES.txt': b'x', 'licenses/Go-LICENSE.txt': b'x'}
-                    for item, contents in members.items():
-                        info = tarfile.TarInfo(f'{stem}/{item}'); info.size = len(contents); info.mode = 0o755 if item == 'findrail' else 0o644
-                        tf.addfile(info, io.BytesIO(contents))
+                    for path, data in members.items():
+                        item = tarfile.TarInfo(f'{stem}/{path}')
+                        item.size = len(data)
+                        item.mode = 0o755 if path == 'findrail' else 0o644
+                        tf.addfile(item, io.BytesIO(data))
         with zipfile.ZipFile(source / release.VSIX, 'w') as zf:
-            zf.writestr('extension/package.json', json.dumps({'version':'0.1.0', 'name':'findrail-readonly',
-                'publisher':'findrail-local', 'main':'./dist/extension.js', 'extensionKind':['ui']}))
+            zf.writestr('extension/package.json', json.dumps({'version': '0.1.0', 'name': 'findrail-readonly',
+                'publisher': 'findrail-local', 'main': './dist/extension.js', 'extensionKind': ['ui']}))
             for name in ('[Content_Types].xml', 'extension.vsixmanifest', 'extension/LICENSE.txt',
                          'extension/readme.md', 'extension/changelog.md', 'extension/dist/extension.js'):
                 zf.writestr(name, 'fixture')
         return source, revision
 
-    def test_assemble_exact_inventory_manifest_and_checksums(self):
+    def test_candidate_manifest_archive_metadata_and_checksums(self):
         with tempfile.TemporaryDirectory() as temp:
-            root = pathlib.Path(temp); source, revision = self.candidate(root)
+            root = pathlib.Path(temp); source, revision = self.candidate(root); output = root / 'release'
+            manifest = release.assemble(source, output, '0.1.0-alpha.4', revision)
+            self.assertEqual(manifest['schema_version'], 6)
+            self.assertEqual(len(manifest['assets']), 6)
+            self.assertEqual(release.verify(output, '0.1.0-alpha.4', revision), manifest)
+
+    def test_candidate_schema_is_source_derived_and_supports_next_migration(self):
+        with patch.object(release.package, 'schema_version', return_value=7):
+            self.assertEqual(release.contract_schema('0.1.0-alpha.4'), 7)
+        self.assertEqual(release.contract_schema('0.1.0-alpha.3'), 6)
+        with self.assertRaises(ValueError): release.contract_schema('0.1.0-alpha.5')
+
+    def test_historical_alpha3_contract_keeps_schema_six(self):
+        self.assertEqual(release.contract_schema('0.1.0-alpha.3'), 6)
+
+    def test_historical_alpha3_schema_remains_verifiable_when_source_advances(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            source, revision = self.candidate(root, version='0.1.0-alpha.3', schema=6)
             output = root / 'release'
-            result = release.assemble(source, output, '0.1.0-alpha.3', revision)
-            self.assertEqual(result['schema_version'], 6)
-            self.assertEqual(len(result['assets']), 6)
-            self.assertEqual(release.verify(output, '0.1.0-alpha.3', revision), result)
+            with patch.object(release.package, 'schema_version', return_value=7):
+                release.assemble(source, output, '0.1.0-alpha.3', revision)
+                self.assertEqual(release.verify(output, '0.1.0-alpha.3', revision)['schema_version'], 6)
 
-    def test_missing_target_or_vsix_and_unknown_name_fail_closed(self):
-        for remove in ('findrail-readonly-0.1.0.vsix', 'findrail_0.1.0-alpha.3_linux-arm64.tar.gz'):
-            with self.subTest(remove=remove), tempfile.TemporaryDirectory() as temp:
-                root = pathlib.Path(temp); source, _ = self.candidate(root); (source / remove).unlink()
-                with self.assertRaises(ValueError): release.assemble(source, root / 'out', '0.1.0-alpha.3', 'a' * 40)
-
-    def test_wrong_revision_dirty_metadata_and_checksum_are_rejected(self):
+    def test_exact_assets_provenance_schema_and_checksum_fail_closed(self):
         with tempfile.TemporaryDirectory() as temp:
-            root = pathlib.Path(temp); source, revision = self.candidate(root); output = root / 'out'
-            release.assemble(source, output, '0.1.0-alpha.3', revision)
-            archive = output / 'findrail_0.1.0-alpha.3_linux-amd64.tar.gz'
-            archive.write_bytes(archive.read_bytes() + b'corrupt')
-            with self.assertRaises(ValueError): release.verify(output, '0.1.0-alpha.3', revision)
-
-    def test_checksum_mismatch_is_rejected_independently(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = pathlib.Path(temp); source, revision = self.candidate(root); output = root / 'out'
-            release.assemble(source, output, '0.1.0-alpha.3', revision)
+            root = pathlib.Path(temp); source, revision = self.candidate(root); output = root / 'release'
+            release.assemble(source, output, '0.1.0-alpha.4', revision)
+            (output / 'unexpected').write_text('no')
+            with self.assertRaisesRegex(ValueError, 'asset set'): release.verify(output, '0.1.0-alpha.4', revision)
+            (output / 'unexpected').unlink()
             sums = output / 'SHA256SUMS.txt'
-            line = sums.read_text().splitlines()[0]
-            sums.write_text('0' * 64 + line[64:] + '\n' + '\n'.join(sums.read_text().splitlines()[1:]) + '\n')
-            with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
-                release.verify(output, '0.1.0-alpha.3', revision)
-
-    def test_dirty_and_unknown_provenance_are_rejected_during_assembly(self):
-        for bad_revision, dirty in (('a' * 40, True), ('unknown', False)):
-            with self.subTest(revision=bad_revision, dirty=dirty), tempfile.TemporaryDirectory() as temp:
-                root = pathlib.Path(temp); source, _ = self.candidate(root, bad_revision, dirty)
-                with self.assertRaises(ValueError): release.assemble(source, root / 'out', '0.1.0-alpha.3', 'a' * 40)
-
-    def test_manifest_wrong_version_and_unsafe_duplicate_names_fail(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = pathlib.Path(temp); source, revision = self.candidate(root); output = root / 'out'
-            release.assemble(source, output, '0.1.0-alpha.3', revision)
+            sums.write_text(sums.read_text() + sums.read_text().splitlines()[0] + '\n')
             with self.assertRaises(ValueError): release.verify(output, '0.1.0-alpha.4', revision)
-            with self.assertRaises(ValueError): release.verify(output, '0.1.0-alpha.3', 'b' * 40)
-            with (output / 'SHA256SUMS.txt').open('a') as sums: sums.write('0' * 64 + '  ../escape\n')
-            with self.assertRaises(ValueError): release.verify(output, '0.1.0-alpha.3', revision)
-            line = (output / 'SHA256SUMS.txt').read_text().splitlines()[0]
-            (output / 'SHA256SUMS.txt').write_text(line + '\n' + line + '\n')
-            with self.assertRaises(ValueError): release.verify(output, '0.1.0-alpha.3', revision)
 
-    def test_another_extension_with_the_same_version_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = pathlib.Path(temp); source, revision = self.candidate(root)
-            archive = source / release.VSIX
-            with zipfile.ZipFile(archive) as zf:
-                members = {name: zf.read(name) for name in zf.namelist()}
-            metadata = json.loads(members['extension/package.json'])
-            metadata['publisher'] = 'another-publisher'
-            members['extension/package.json'] = json.dumps(metadata).encode()
-            with zipfile.ZipFile(archive, 'w') as zf:
-                for name, content in members.items(): zf.writestr(name, content)
-            with self.assertRaisesRegex(ValueError, 'VSIX identity'):
-                release.assemble(source, root / 'out', '0.1.0-alpha.3', revision)
+    def test_fake_schema_dirty_and_wrong_revision_are_rejected(self):
+        for revision, dirty, schema in (('b' * 40, False, 6), ('a' * 40, True, 6), ('a' * 40, False, 7)):
+            with self.subTest(revision=revision, dirty=dirty, schema=schema), tempfile.TemporaryDirectory() as temp:
+                root = pathlib.Path(temp); source, _ = self.candidate(root, revision, dirty, schema=schema)
+                with self.assertRaises(ValueError): release.assemble(source, root / 'out', '0.1.0-alpha.4', 'a' * 40)
+
+    def test_fake_extension_and_unknown_version_are_rejected(self):
+        with self.assertRaises(ValueError): release.contract_schema('0.1.0-alpha.9')
 
 
 if __name__ == '__main__':

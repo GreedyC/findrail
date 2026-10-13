@@ -12,10 +12,12 @@ PR and fork previews have read-only permissions.
 
 ## Preview rehearsal (agent 05 handoff)
 
-For candidate app version `0.1.0-alpha.3`, use **Actions → Package rehearsal
-(no release) → Run workflow** with `candidate_sha` set to the exact commit SHA.
+For an unpublished alpha.4 candidate, use **Actions → Package rehearsal
+(no release) → Run workflow** with `candidate_sha` set to the exact commit SHA and
+`candidate_version` explicitly set to `0.1.0-alpha.4`. `build/package/VERSION`
+remains `0.1.0-alpha.3`; this source build is a rehearsal, not a published release.
 The workflow checks out that SHA (not a PR merge ref), builds through
-`scripts/package.py --version 0.1.0-alpha.3 --require-clean`, and executes each
+`scripts/package.py --version 0.1.0-alpha.4 --require-clean`, and executes each
 extracted binary from a temporary path containing spaces and Unicode. It cannot
 create or move tags, edit VERSION, or publish a release. The five artifacts are
 named `candidate-<sha>-<target>` and retained for 14 days. A full asset rehearsal
@@ -37,9 +39,9 @@ python3 scripts/release_assets.py verify \
 The native artifacts contain only their archive and a small verification report;
 no temporary indexes, user paths, credentials, or test databases are uploaded.
 
-## Alpha.3 asset contract
+## Published alpha.3 asset contract
 
-The aggregate contains exactly these eight files (no staging extras):
+The immutable published alpha.3 contains exactly these eight files (no staging extras):
 
 ```text
 findrail_0.1.0-alpha.3_linux-amd64.tar.gz
@@ -84,7 +86,12 @@ actual generated values are authoritative):
 }
 ```
 
-The generated manifest includes the five platform archives and the one VSIX.
+The published manifest is pinned to the historical alpha.3 tag SHA
+`d5dc1bec50efcb3c26d09e9b24b14cf3c0b2f4cb`, schema 6, API 1 and extension 0.1.0.
+The no-publish alpha.4 candidate records the schema read from
+`internal/store/sqlite/sqlite.go`; packaging checks it against the contiguous
+migration inventory, and archive BUILD-INFO must agree with the manifest. Unknown
+candidate versions and malformed metadata fail closed. The generated manifest includes the five platform archives and the one VSIX.
 Archive bytes are not compared across operating systems/toolchains. Native
 verification checks BUILD-INFO revision/version/target/cleanliness and invokes
 the executable version command; Linux additionally runs upgrade and browser/API
