@@ -54,6 +54,12 @@ async function main() {
     execFileSync(cli,[...cliArgs,...isolated,'--install-extension',path.resolve(installedVSIX),'--force'],{stdio:'inherit',timeout:90000});
     const list=execFileSync(cli,[...cliArgs,...isolated,'--list-extensions','--show-versions'],{encoding:'utf8',timeout:30000});
     if(!list.toLowerCase().split(/\r?\n/).includes('findrail-local.findrail-readonly@0.1.0'))throw new Error('vsix_not_installed');
+    const installed=(await fs.readdir(extensions,{withFileTypes:true})).filter(item=>item.isDirectory()&&item.name.toLowerCase().startsWith('findrail-local.findrail-readonly-0.1.0'));
+    if(installed.length!==1)throw new Error('installed_extension_directory_ambiguous');
+    // VS Code binds require('vscode') to the calling file's extension path.
+    // Put only the test runner here so UI stubs share Findrail's installed API.
+    testOptions.extensionTestsPath=path.join(extensions,installed[0].name,'findrail-test-runner.cjs');
+    await fs.copyFile(path.resolve(__dirname,'host.cjs'),testOptions.extensionTestsPath);
     // Only the test bootstrap is a development extension; Findrail loads from the installed VSIX.
     const bootstrap=path.join(temp,'test-bootstrap');await fs.mkdir(bootstrap);
     await fs.writeFile(path.join(bootstrap,'package.json'),JSON.stringify({name:'findrail-test-bootstrap',publisher:'findrail-tests',version:'0.0.0',engines:{vscode:'^1.95.0'}}));
@@ -61,7 +67,7 @@ async function main() {
     testOptions.launchArgs.push(...isolated);testOptions.reuseMachineInstall=true;
     process.env.FINDRAIL_TEST_INSTALLED_DIR=extensions;
    }
-   await fs.writeFile(wrapper,`#!/usr/bin/env node\nconst {spawn}=require('node:child_process');const child=spawn(${JSON.stringify(executable)},process.argv.slice(2).filter(arg=>arg!=='--disable-workspace-trust'),{stdio:'inherit',env:{...process.env,FINDRAIL_TEST_RESTRICTED:'1'}});child.on('error',e=>{console.error(e);process.exit(1)});child.on('exit',(code,signal)=>process.exit(code??(signal?1:0)));\n`);
+   await fs.writeFile(wrapper,`#!/usr/bin/env node\nconst {spawn}=require('node:child_process');const child=spawn(${JSON.stringify(executable)},process.argv.slice(2).filter(arg=>arg!=='--disable-workspace-trust'),{stdio:'inherit',env:{...process.env,FINDRAIL_TEST_RESTRICTED:'1'}});const timer=setTimeout(()=>{console.error('extension_host_test_timeout');child.kill('SIGTERM');setTimeout(()=>child.kill('SIGKILL'),5000).unref()},120000);child.on('error',e=>{console.error(e);process.exit(1)});child.on('exit',(code,signal)=>{clearTimeout(timer);process.exit(code??(signal?1:0))});\n`);
    await fs.chmod(wrapper,0o755);testOptions.vscodeExecutablePath=wrapper;
   } else {if(installedVSIX)throw new Error('installed_vsix_host_requires_linux');testOptions.version='1.95.0'}
   await runTests(testOptions);
