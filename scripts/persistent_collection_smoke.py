@@ -62,9 +62,9 @@ def main():
         (notes / "first.md").write_text("First persistent citation passage.", encoding="utf-8")
         (notes / "second.md").write_text("Second persistent citation passage.", encoding="utf-8")
         indexed = subprocess.run([str(binary), "index", "--json", "--data-dir", str(data), str(notes)], check=True, capture_output=True, text=True, timeout=30)
-        source_id = json.loads(indexed.stdout)["source"]["id"]
+        assert json.loads(indexed.stdout)["source"]["id"]
         port = free_port()
-        server = subprocess.Popen([str(binary), "start", "--data-dir", str(data), "--no-sync", "--no-open", "--enable-originals", "--addr", f"127.0.0.1:{port}"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        server = subprocess.Popen([str(binary), "start", "--data-dir", str(data), "--sync-interval", "1s", "--no-open", "--enable-originals", "--addr", f"127.0.0.1:{port}"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         browser = None
         try:
             deadline = time.monotonic() + 15
@@ -128,7 +128,7 @@ def main():
             browser = None
             server.terminate()
             server.wait(timeout=7)
-            server = subprocess.Popen([str(binary), "start", "--data-dir", str(data), "--no-sync", "--no-open", "--enable-originals", "--addr", f"127.0.0.1:{port}"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            server = subprocess.Popen([str(binary), "start", "--data-dir", str(data), "--sync-interval", "1s", "--no-open", "--enable-originals", "--addr", f"127.0.0.1:{port}"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
                 if server.poll() is not None:
@@ -167,8 +167,6 @@ def main():
             wait.until(lambda d: not d.find_element(By.ID, "collection-fallback").get_attribute("hidden"))
             assert driver.find_element(By.ID, "collection-output").get_attribute("value") == export
             (notes / "first.md").unlink()
-            refreshed = api(driver, "/api/v1/sources/" + source_id + "/refresh", "POST")
-            assert refreshed.get("status") == 202, refreshed
             wait.until(lambda d: len(api(d, "/api/v1/collections/" + first_id).get("data", {}).get("entries", [])) == 1)
             driver.find_element(By.ID, "collection-copy").click()
             wait.until(lambda d: "Saved citations were removed" in d.find_element(By.ID, "collection-status").text)
