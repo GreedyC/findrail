@@ -21,6 +21,17 @@
   exposes source mutations guarded by the actual bound authority, exact Origin,
   process-memory CSRF capability, Fetch Metadata and strict bounded JSON. The
   capability is not persisted; it does not protect against same-user processes.
+- `start --enable-originals` optionally exposes a token-protected same-origin POST
+  action. The server resolves a document ID against the current source registration
+  and indexed content identity, then launches an allowlisted current filesystem
+  file through fixed OS commands. The client cannot supply a path, URL, executable
+  or command arguments. Search and preview GETs never launch applications; `serve`,
+  `demo`, MCP and VSIX do not enable native opening.
+- PDF/DOCX use the OS-configured opener; text/source files use a fixed editor where
+  supported. Spawn success means an attempt, not proof of display. A positive PDF
+  page must exist in indexed evidence, but page navigation is not requested from
+  an unknown viewer. Opened content is the current file; preview and citations stay
+  tied to the indexed snapshot.
 - `forget` removes searchable source data logically. Old disk / WAL / backup bytes may remain.
 - Imported archive sources are frozen, offline SQLite data; removal does not
   delete exported archive copies or guarantee physical erasure.
@@ -61,3 +72,8 @@ loopback server. A malicious plugin, compromised account, or copied index can
 expose data. A future encrypted-storage feature needs a separate key-management
 design. The current browser interface does not provide network or multi-user
 deployment security.
+Path checks immediately before launch cannot eliminate the operating-system race
+where another local process replaces a file between validation and use by the OS
+opener. Opening may fail if a fixed editor/opener is unavailable. Imported archive
+provenance is frozen and never opened as a live original; pinned public GitHub
+permalinks remain a separate explicit browser action.

@@ -22,6 +22,7 @@ import (
 	githubconnector "github.com/Lephiziel/findrail/internal/connectors/github"
 	"github.com/Lephiziel/findrail/internal/diagnostics"
 	"github.com/Lephiziel/findrail/internal/ingest"
+	"github.com/Lephiziel/findrail/internal/originals"
 	"github.com/Lephiziel/findrail/internal/search"
 	"github.com/Lephiziel/findrail/internal/snapshot"
 	"github.com/Lephiziel/findrail/pkg/connector"
@@ -493,7 +494,7 @@ func (s *Store) Search(ctx context.Context, request search.Request) (search.Resp
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT d.id,d.title,d.uri,d.path,d.source_id,s.name,s.kind,
         snippet(documents_fts,1,'[',']','…',32),-bm25(documents_fts,4.0,1.0)
-        ,d.media_type,d.page_count
+	        ,d.media_type,d.page_count,s.registration_token,s.revision,d.content_hash
         FROM documents_fts JOIN documents d ON d.rowid=documents_fts.rowid JOIN sources s ON s.id=d.source_id
         WHERE `+where+` ORDER BY bm25(documents_fts,4.0,1.0),d.id LIMIT ?`, append(args, request.Limit)...)
 	if err != nil {
@@ -502,9 +503,12 @@ func (s *Store) Search(ctx context.Context, request search.Request) (search.Resp
 	defer rows.Close()
 	for rows.Next() {
 		var result search.Result
-		if err := rows.Scan(&result.ID, &result.Title, &result.URI, &result.Path, &result.SourceID, &result.SourceName, &result.SourceKind, &result.Snippet, &result.Score, &result.MediaType, &result.PageCount); err != nil {
+		var token, hash string
+		var revision int64
+		if err := rows.Scan(&result.ID, &result.Title, &result.URI, &result.Path, &result.SourceID, &result.SourceName, &result.SourceKind, &result.Snippet, &result.Score, &result.MediaType, &result.PageCount, &token, &revision, &hash); err != nil {
 			return response, err
 		}
+		result.OriginalIdentity = originals.Identity(token, revision, hash, result.SourceID, result.ID)
 		response.Results = append(response.Results, result)
 	}
 	if err := rows.Err(); err != nil {
@@ -1351,14 +1355,17 @@ func (s *Store) evidence(ctx context.Context, sourceID, id string, page int) (se
 		where += " AND d.source_id=?"
 		args = append(args, sourceID)
 	}
-	err = tx.QueryRowContext(ctx, `SELECT d.id,d.title,d.uri,d.path,d.source_id,s.name,s.kind,d.media_type,d.content_hash,d.modified_at,d.page_count
-	        FROM documents d JOIN sources s ON s.id=d.source_id WHERE `+where, args...).Scan(&e.ID, &e.Title, &e.URI, &e.Path, &e.SourceID, &e.SourceName, &e.SourceKind, &e.MediaType, &e.ContentHash, &e.ModifiedAt, &e.PageCount)
+	var token string
+	var revision int64
+	err = tx.QueryRowContext(ctx, `SELECT d.id,d.title,d.uri,d.path,d.source_id,s.name,s.kind,d.media_type,d.content_hash,d.modified_at,d.page_count,s.registration_token,s.revision
+	        FROM documents d JOIN sources s ON s.id=d.source_id WHERE `+where, args...).Scan(&e.ID, &e.Title, &e.URI, &e.Path, &e.SourceID, &e.SourceName, &e.SourceKind, &e.MediaType, &e.ContentHash, &e.ModifiedAt, &e.PageCount, &token, &revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return e, search.ErrNotFound
 	}
 	if err != nil {
 		return e, err
 	}
+	e.OriginalIdentity = originals.Identity(token, revision, e.ContentHash, e.SourceID, e.ID)
 	if e.PageCount > 0 {
 		if page == -1 {
 			if err := tx.QueryRowContext(ctx, "SELECT substr(content,1,65536),length(content)>65536 FROM documents WHERE id=?", e.ID).Scan(&e.Text, &e.Truncated); err != nil {
@@ -1383,6 +1390,28 @@ func (s *Store) evidence(ctx context.Context, sourceID, id string, page int) (se
 		return e, err
 	}
 	return e, nil
+}
+
+type OriginalTarget struct{ Root, RelativePath, MediaType, SourceKind, SourceID, DocumentID string }
+
+func (s *Store) ResolveOriginal(ctx context.Context, id, expected string) (OriginalTarget, error) {
+	var t OriginalTarget
+	var token, hash string
+	var revision int64
+	err := s.readers.QueryRowContext(ctx, `SELECT s.root,s.kind,d.path,d.media_type,s.registration_token,s.revision,d.content_hash,s.id,d.id FROM documents d JOIN sources s ON s.id=d.source_id WHERE d.id=?`, id).Scan(&t.Root, &t.SourceKind, &t.RelativePath, &t.MediaType, &token, &revision, &hash, &t.SourceID, &t.DocumentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return t, search.ErrNotFound
+	}
+	if err != nil {
+		return t, err
+	}
+	if t.SourceKind != "filesystem" {
+		return t, originals.ErrNotFilesystem
+	}
+	if expected == "" || originals.Identity(token, revision, hash, t.SourceID, t.DocumentID) != expected {
+		return t, originals.ErrSnapshotChanged
+	}
+	return t, nil
 }
 
 // ForgetSource removes a source and its searchable documents. Originals are

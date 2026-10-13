@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -18,10 +19,12 @@ import (
 
 	"github.com/Lephiziel/findrail/internal/connectors/filesystem"
 	"github.com/Lephiziel/findrail/internal/ingest"
+	"github.com/Lephiziel/findrail/internal/originals"
 	"github.com/Lephiziel/findrail/internal/search"
 	"github.com/Lephiziel/findrail/internal/sourceapp"
 	"github.com/Lephiziel/findrail/internal/store/sqlite"
 	transport "github.com/Lephiziel/findrail/internal/transport/http"
+	"github.com/Lephiziel/findrail/pkg/connector"
 )
 
 func TestLocalSearchAPIAndBrowserBoundary(t *testing.T) {
@@ -305,6 +308,197 @@ func TestManagementRequiresSameOriginCapabilityAndStrictJSON(t *testing.T) {
 	t.Fatalf("accepted folder job did not finish: %+v", app.Jobs())
 }
 
+func TestNativeOriginalRequiresTokenAndResolvesRegisteredDocument(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store, err := sqlite.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	root := t.TempDir()
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "notes.txt")
+	if err = os.WriteFile(file, []byte("safe original content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(root, "manual.pdf"), []byte("synthetic pdf input"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	pdfExtractor := func(context.Context, io.Reader, int64) ([]connector.Page, error) {
+		return []connector.Page{{Number: 1, Text: "evidence on page one"}}, nil
+	}
+	conn, err := filesystem.NewWithOptions(root, filesystem.Options{MaxTextBytes: 1024, MaxPDFBytes: 1024, ExtractPDF: pdfExtractor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, store, conn); err != nil {
+		t.Fatal(err)
+	}
+	found, err := store.Search(ctx, search.Request{Query: "original", Limit: 5})
+	if err != nil || len(found.Results) != 1 {
+		t.Fatalf("search: %+v %v", found, err)
+	}
+	var launches int
+	var launched string
+	app := sourceapp.New(ctx, store, t.TempDir(), "/unused")
+	defer func() {
+		c, stop := context.WithTimeout(context.Background(), time.Second)
+		defer stop()
+		if e := app.Close(c); e != nil {
+			t.Error(e)
+		}
+	}()
+	ready := make(chan string, 1)
+	served := make(chan error, 1)
+	go func() {
+		served <- transport.Serve(ctx, "127.0.0.1:0", store, transport.WithManagement(app), transport.WithOriginals(store, func(_ originals.Action, path string) error { launches++; launched = path; return nil }), transport.WithReady(func(u string) error { ready <- u; return nil }))
+	}()
+	base := <-ready
+	defer func() {
+		cancel()
+		select {
+		case e := <-served:
+			if e != nil {
+				t.Error(e)
+			}
+		case <-time.After(7 * time.Second):
+			t.Error("server did not stop")
+		}
+	}()
+	u, _ := url.Parse(base)
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(base + "/api/v1/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var session struct {
+		Token string `json:"token"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&session)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || session.Token == "" {
+		t.Fatalf("session status %d", resp.StatusCode)
+	}
+	for _, path := range []string{"/api/v1/search?q=original", "/api/v1/documents/" + found.Results[0].ID} {
+		get, e := client.Get(base + path)
+		if e != nil {
+			t.Fatal(e)
+		}
+		get.Body.Close()
+		if launches != 0 {
+			t.Fatalf("GET %s invoked native launcher", path)
+		}
+	}
+	body, _ := json.Marshal(map[string]any{"document_id": found.Results[0].ID, "original_identity": found.Results[0].OriginalIdentity, "action": "file"})
+	post := func(origin, token string, payload []byte) int {
+		r, _ := http.NewRequest("POST", base+"/api/v1/originals/open", bytes.NewReader(payload))
+		r.Header.Set("Origin", origin)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Sec-Fetch-Site", "same-origin")
+		if token != "" {
+			r.Header.Add("X-Findrail-Token", token)
+		}
+		q, e := client.Do(r)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer q.Body.Close()
+		return q.StatusCode
+	}
+	if got := post("http://"+u.Host, "", body); got != 403 || launches != 0 {
+		t.Fatalf("missing token status=%d launches=%d", got, launches)
+	}
+	if got := post("http://evil.invalid", session.Token, body); got != 403 || launches != 0 {
+		t.Fatalf("cross-origin status=%d launches=%d", got, launches)
+	}
+	duplicate, _ := http.NewRequest("POST", base+"/api/v1/originals/open", bytes.NewReader(body))
+	duplicate.Header.Set("Origin", "http://"+u.Host)
+	duplicate.Header.Set("Content-Type", "application/json")
+	duplicate.Header.Set("Sec-Fetch-Site", "same-origin")
+	duplicate.Header.Add("X-Findrail-Token", session.Token)
+	duplicate.Header.Add("X-Findrail-Token", session.Token)
+	dupResp, err := client.Do(duplicate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dupResp.Body.Close()
+	if dupResp.StatusCode != 403 || launches != 0 {
+		t.Fatalf("duplicate token status=%d launches=%d", dupResp.StatusCode, launches)
+	}
+	spoof, _ := http.NewRequest("POST", base+"/api/v1/originals/open", bytes.NewReader(body))
+	spoof.Host = "localhost:1"
+	spoof.Header.Set("Origin", "http://"+u.Host)
+	spoof.Header.Set("Content-Type", "application/json")
+	spoof.Header.Set("Sec-Fetch-Site", "same-origin")
+	spoof.Header.Set("X-Findrail-Token", session.Token)
+	spoofResp, err := client.Do(spoof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spoofResp.Body.Close()
+	if spoofResp.StatusCode != 403 || launches != 0 {
+		t.Fatalf("spoofed Host status=%d launches=%d", spoofResp.StatusCode, launches)
+	}
+	if got := post("http://"+u.Host, session.Token, []byte(`{"document_id":"fake","original_identity":"fake","action":"file"}`)); got != 404 || launches != 0 {
+		t.Fatalf("fake document status=%d launches=%d", got, launches)
+	}
+	if got := post("http://"+u.Host, session.Token, body); got != 202 || launches != 1 || launched != file {
+		t.Fatalf("status=%d launches=%d path=%q", got, launches, launched)
+	}
+	pageBody, _ := json.Marshal(map[string]any{"document_id": found.Results[0].ID, "original_identity": found.Results[0].OriginalIdentity, "action": "file", "page": 1})
+	if got := post("http://"+u.Host, session.Token, pageBody); got != 400 || launches != 1 {
+		t.Fatalf("text page status=%d launches=%d", got, launches)
+	}
+	pdfSearch, err := store.Search(ctx, search.Request{Query: "evidence", Limit: 5})
+	if err != nil || len(pdfSearch.Results) != 1 || pdfSearch.Results[0].Page != 1 {
+		t.Fatalf("PDF search: %+v %v", pdfSearch, err)
+	}
+	pdfBody, _ := json.Marshal(map[string]any{"document_id": pdfSearch.Results[0].ID, "original_identity": pdfSearch.Results[0].OriginalIdentity, "action": "file", "page": 1})
+	if got := post("http://"+u.Host, session.Token, pdfBody); got != 202 || launches != 2 || launched != filepath.Join(root, "manual.pdf") {
+		t.Fatalf("PDF page action status=%d launches=%d path=%q", got, launches, launched)
+	}
+	badPage, _ := json.Marshal(map[string]any{"document_id": pdfSearch.Results[0].ID, "original_identity": pdfSearch.Results[0].OriginalIdentity, "action": "file", "page": 2})
+	if got := post("http://"+u.Host, session.Token, badPage); got != 400 || launches != 2 {
+		t.Fatalf("invalid PDF page status=%d launches=%d", got, launches)
+	}
+	titleOnly, err := store.Search(ctx, search.Request{Query: "manual", Limit: 5})
+	if err != nil || len(titleOnly.Results) != 1 || titleOnly.Results[0].Page != 0 {
+		t.Fatalf("title-only PDF result: %+v %v", titleOnly, err)
+	}
+	titleBody, _ := json.Marshal(map[string]any{"document_id": titleOnly.Results[0].ID, "original_identity": titleOnly.Results[0].OriginalIdentity, "action": "file"})
+	if got := post("http://"+u.Host, session.Token, titleBody); got != 202 || launches != 3 || launched != filepath.Join(root, "manual.pdf") {
+		t.Fatalf("title-only PDF open status=%d launches=%d path=%q", got, launches, launched)
+	}
+	folderBody, _ := json.Marshal(map[string]any{"document_id": found.Results[0].ID, "original_identity": found.Results[0].OriginalIdentity, "action": "folder"})
+	if got := post("http://"+u.Host, session.Token, folderBody); got != 202 || launches != 4 || launched != root {
+		t.Fatalf("folder status=%d launches=%d path=%q", got, launches, launched)
+	}
+	conn, err = filesystem.NewWithOptions(root, filesystem.Options{MaxTextBytes: 1024, MaxPDFBytes: 1024, ExtractPDF: pdfExtractor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, store, conn); err != nil {
+		t.Fatal(err)
+	}
+	if got := post("http://"+u.Host, session.Token, body); got != 409 || launches != 4 {
+		t.Fatalf("stale registration status=%d launches=%d", got, launches)
+	}
+	capResp, err := client.Get(base + "/api/v1/capabilities")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer capResp.Body.Close()
+	var caps map[string]any
+	_ = json.NewDecoder(capResp.Body).Decode(&caps)
+	if caps["open_originals"] != true {
+		t.Fatalf("capability missing: %#v", caps)
+	}
+}
+
 func TestReadOnlyHandlerDoesNotExposeMutationController(t *testing.T) {
 	s, err := sqlite.Open(context.Background(), t.TempDir())
 	if err != nil {
@@ -312,6 +506,20 @@ func TestReadOnlyHandlerDoesNotExposeMutationController(t *testing.T) {
 	}
 	defer s.Close()
 	handler := transport.Handler(s)
+	capabilityRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7766/api/v1/capabilities", nil)
+	capabilityResponse := httptest.NewRecorder()
+	handler.ServeHTTP(capabilityResponse, capabilityRequest)
+	if capabilityResponse.Code != 200 || !strings.Contains(capabilityResponse.Body.String(), `"open_originals":false`) {
+		t.Fatalf("read-only opener capability: %d %s", capabilityResponse.Code, capabilityResponse.Body.String())
+	}
+	openRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7766/api/v1/originals/open", strings.NewReader(`{}`))
+	openRequest.Header.Set("Origin", "http://127.0.0.1:7766")
+	openRequest.Header.Set("Content-Type", "application/json")
+	openResponse := httptest.NewRecorder()
+	handler.ServeHTTP(openResponse, openRequest)
+	if openResponse.Code != http.StatusNotFound {
+		t.Fatalf("read-only opener route status %d", openResponse.Code)
+	}
 	for _, path := range []string{"/api/v1/sources", "/api/v1/jobs/anything/cancel"} {
 		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7766"+path, strings.NewReader(`{"type":"folder"}`))
 		r.Header.Set("Origin", "http://127.0.0.1:7766")

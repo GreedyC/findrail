@@ -28,7 +28,7 @@ Usage:
   findrail index [--data-dir DIR] [--max-bytes N] [--max-pdf-bytes N] [--max-docx-bytes N] [--report] [--show-paths] [--json] DIRECTORY
   findrail index-github [--data-dir DIR] [--ref REF] [--path PATH] [--max-bytes N] [--timeout 2m] [--report] [--show-paths] [--json] OWNER/REPO
   findrail refresh-github [--data-dir DIR] [--timeout 2m] [--report] [--show-paths] [--json] SOURCE_ID
-  findrail start [--data-dir DIR] [--addr 127.0.0.1:7766] [--no-open] [DIRECTORY]
+  findrail start [--data-dir DIR] [--addr 127.0.0.1:7766] [--no-open] [--enable-originals] [DIRECTORY]
   findrail desktop [--data-dir DIR] [DIRECTORY]
   findrail demo [--addr 127.0.0.1:7766] [--no-open]
   findrail search [--data-dir DIR] [--limit N] [--source ID] [--mode MODE] [--format FORMAT] [--path-prefix PATH] [--title-contains TEXT] [--json] QUERY
@@ -47,7 +47,7 @@ Usage:
   findrail doctor [--data-dir DIR] [--json] [--show-paths]
 
 Options must precede positional arguments. Run COMMAND --help for details.
-Local alpha: text, Markdown, source code, text PDFs, preview and automatic refresh.
+Local alpha: text, Markdown, source code, text PDFs, preview and automatic refresh. Native file opening is opt-in with start --enable-originals.
 start includes local source management in source builds; serve and demo are read-only.
 Public GitHub snapshots are manually refreshed. Source builds also include a read-only stdio MCP server.
 `

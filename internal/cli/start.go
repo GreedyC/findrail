@@ -15,6 +15,7 @@ import (
 	"github.com/Lephiziel/findrail/internal/desktop"
 	pdfextract "github.com/Lephiziel/findrail/internal/extract/pdf"
 	"github.com/Lephiziel/findrail/internal/ingest"
+	"github.com/Lephiziel/findrail/internal/originals"
 	"github.com/Lephiziel/findrail/internal/sourceapp"
 	"github.com/Lephiziel/findrail/internal/sourcecoord"
 	"github.com/Lephiziel/findrail/internal/store/sqlite"
@@ -50,6 +51,7 @@ func runStartWithManagement(ctx context.Context, args []string, out, stderr io.W
 	}
 	addr := fs.String("addr", defaultAddr, "loopback address for the local UI")
 	noOpen := fs.Bool("no-open", false, "print the UI URL without opening a browser")
+	enableOriginals := fs.Bool("enable-originals", false, "enable explicit native open actions for registered filesystem documents")
 	maxBytes := fs.Int64("max-bytes", filesystem.DefaultMaxBytes, "maximum bytes per text document in DIRECTORY")
 	maxPDFBytes := fs.Int64("max-pdf-bytes", 16<<20, "maximum bytes per PDF in DIRECTORY; 0 disables PDFs")
 	maxDOCXBytes := fs.Int64("max-docx-bytes", 8<<20, "maximum bytes per DOCX in DIRECTORY; 0 disables DOCX")
@@ -62,6 +64,9 @@ func runStartWithManagement(ctx context.Context, args []string, out, stderr io.W
 	}
 	if fs.NArg() > 1 {
 		return fmt.Errorf("start accepts at most one directory")
+	}
+	if *enableOriginals && !management {
+		return fmt.Errorf("native originals require the writable start composition")
 	}
 	if *interval < time.Second {
 		return fmt.Errorf("sync interval must be at least 1s")
@@ -153,6 +158,10 @@ func runStartWithManagement(ctx context.Context, args []string, out, stderr io.W
 	if management {
 		app = sourceapp.NewWithCoordinator(child, store, dir, executable, coordinator)
 		opts = append(opts, transport.WithManagement(app))
+	}
+	if *enableOriginals {
+		opener := originals.New(originals.SystemLaunch)
+		opts = append(opts, transport.WithOriginals(store, opener.Open))
 	}
 	var desktopRecord *desktop.Record
 	if desktopLock != nil {

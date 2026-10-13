@@ -169,10 +169,11 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [management, desktop, client_api_version, search_modes, search_filters, pdf_title_only_evidence]
+                required: [management, desktop, open_originals, client_api_version, search_modes, search_filters, pdf_title_only_evidence]
                 properties:
                   management: {type: boolean}
                   desktop: {type: boolean, description: Explicit desktop quit is available only in the desktop composition}
+                  open_originals: {type: boolean}
                   client_api_version: {type: integer, const: 1}
                   search_modes:
                     type: array
@@ -335,6 +336,61 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Evidence'
+  /api/v1/originals/open:
+    post:
+      operationId: openOriginal
+      summary: Attempt to open a currently registered local original
+      description: Available only in the writable start composition when explicitly enabled. Same-origin POST requires the session token. The client supplies a document ID, opaque snapshot identity, action and optional indexed PDF page; it never supplies a path, URL, executable or command arguments. A 202 means a native launch was attempted, not that a viewer displayed the file.
+      parameters:
+      - name: Origin
+        in: header
+        required: true
+        schema: {type: string}
+      - name: X-Findrail-Token
+        in: header
+        required: true
+        schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [document_id, original_identity, action]
+              properties:
+                document_id: {type: string, minLength: 1, maxLength: 512}
+                original_identity: {type: string, pattern: '^[0-9a-f]{64}$'}
+                action: {type: string, enum: [file, folder]}
+                page: {type: integer, minimum: 0, maximum: 100000, description: Positive indexed PDF page only; 0 or omission means no page request, including title-only matches and non-PDF files.}
+      responses:
+        '202':
+          description: Native spawn attempted; display is not guaranteed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, message]
+                properties:
+                  status: {type: string, const: attempted}
+                  message: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404':
+          description: Document is absent from the current index
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '409':
+          description: Source registration/snapshot changed, or current file/type is unsafe or unavailable
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '503':
+          description: Fixed native opener is unavailable
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
   /api/v1/sync:
     get:
       operationId: getSyncStatus
@@ -471,6 +527,10 @@ components:
           description: Negative SQLite BM25 value; higher ranks first, not a probability
         media_type: &id007
           type: string
+        original_identity:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Opaque document, source-registration and indexed-content identity for the opt-in native open action.
         page: &id008
           type: integer
           minimum: 0
@@ -638,6 +698,9 @@ components:
         page_count: *id009
         content_hash:
           type: string
+        original_identity:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
         modified_at:
           type: string
           format: date-time
