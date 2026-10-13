@@ -1,9 +1,11 @@
 # alpha.3 release-candidate acceptance (not a release)
 
-Acceptance evidence recorded 2026-10-13. This is a technical **conditional GO**
-for the current alpha.3 candidate, not permission to publish. The owner’s short
-human smoke and approval of release notes/target remain before-release actions.
-The published release remains alpha.2; no alpha.3 tag or release exists.
+Candidate acceptance evidence recorded 2026-10-13. This was a technical
+**conditional GO** for the alpha.3 candidate, not permission to publish. At that
+checkpoint the owner's short human smoke and approval of release notes/target
+were still before-release actions.
+At that acceptance checkpoint the published release was alpha.2 and no alpha.3
+tag or release existed. See the dated owner handoff below for the later decision.
 
 ## Candidate identity
 
@@ -119,3 +121,27 @@ release notes and target `0.1.0-alpha.3`.
 
 Earlier PR #30/#31 rehearsals are history only; this acceptance evidence is from
 post-integration `main` SHA `0254e3063182695b2742f6c6d166024123c9d0f7`.
+
+## Owner handoff received 2026-10-13
+
+**GO for the authorized alpha.3 release handoff, subject to the final release
+commit passing the production gates.** The owner reported following the supplied
+startup instructions, adding a folder of Word documents, searching it and opening
+a working Preview. The owner then indexed the project repository and confirmed
+search worked there too. No private document content or paths are recorded.
+
+This is the actual scope of the owner report. Manual citation export, restart,
+PDF-page checking, OS/browser details and an independently reported binary SHA
+were not supplied. The earlier candidate's automated Chromium journey covers
+citation export, PDF evidence and restart; those results remain automated
+evidence and will be repeated on the final release commit. No additional manual
+result is inferred.
+
+The owner's existing instruction to execute task 06 authorizes
+`0.1.0-alpha.3`; the received local smoke satisfies that handoff's remaining
+owner-check condition. The prepared notes and eight-file asset contract were
+reviewed and accepted during PR #33 review. `docs/release-notes.md` now contains
+the final publisher text, and the packaged INSTALL describes alpha.3. This entry
+does not claim publication or reuse candidate assets as release assets: the
+VERSION commit must be rebuilt and verified, then public assets downloaded and
+checked before the post-release documentation promotion.
