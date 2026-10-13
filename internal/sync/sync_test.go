@@ -10,6 +10,7 @@ import (
 	"github.com/Lephiziel/findrail/internal/connectors/filesystem"
 	"github.com/Lephiziel/findrail/internal/ingest"
 	"github.com/Lephiziel/findrail/internal/search"
+	"github.com/Lephiziel/findrail/internal/sourcecoord"
 	"github.com/Lephiziel/findrail/internal/store/sqlite"
 	syncer "github.com/Lephiziel/findrail/internal/sync"
 	"github.com/Lephiziel/findrail/pkg/connector"
@@ -139,13 +140,20 @@ func TestMissingRootPreservesSnapshotAndRecovers(t *testing.T) {
 	if _, err := ingest.Run(ctx, s, conn); err != nil {
 		t.Fatal(err)
 	}
-	m := syncer.New(s, syncer.Config{Factory: func(source connector.Source) (*filesystem.Connector, error) {
+	locks := sourcecoord.New()
+	m := syncer.New(s, syncer.Config{Coordinator: locks, Factory: func(source connector.Source) (*filesystem.Connector, error) {
 		return filesystem.NewWithOptions(source.Root, filesystem.Options{MaxTextBytes: source.MaxTextBytes, MaxPDFBytes: source.MaxPDFBytes, MaxDOCXBytes: source.MaxDOCXBytes, RegistrationToken: source.RegistrationToken, RegistrationRevision: source.RegistrationRevision})
 	}, Interval: 50 * time.Millisecond, PollOnly: true})
 	done := make(chan struct{})
 	go func() { defer close(done); m.Run(ctx) }()
 	defer func() { cancel(); <-done }()
 	eventually(t, func() bool { return len(m.Status()) == 1 && m.Status()[0].State == "idle" })
+	// Exclude successful polls between the baseline report and moving the root.
+	unlock, err := locks.Acquire(ctx, conn.Source().ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
 	prior, err := s.SourceReport(ctx, conn.Source().ID, false)
 	if err != nil {
 		t.Fatal(err)
@@ -155,6 +163,7 @@ func TestMissingRootPreservesSnapshotAndRecovers(t *testing.T) {
 	if err := os.Rename(root, moved); err != nil {
 		t.Fatal(err)
 	}
+	unlock()
 	eventually(t, func() bool { return m.Status()[0].State == "error" })
 	failed := m.Status()[0].Progress
 	if failed.Committed || !failed.Partial || failed.FailureCode != "scan_failed" || failed.Phase != "done" {
