@@ -137,7 +137,14 @@ with tempfile.TemporaryDirectory(prefix="findrail-diagnostics-") as temporary:
             time.sleep(.05)
         assert job["status"]=="succeeded" and job["progress"]["committed"] and job["progress"]["report_id"],job
         configured_report=json.loads(run(*summary_args).stdout)["report"]
-        assert configured_report["operation"]=="configure" and any(r["code"]=="format_disabled" for r in configured_report["reasons"]),configured_report
+        # Reports retain only the last successful scan. A watcher may publish a
+        # refresh after Configure commits but before the next CLI read (notably
+        # with macOS notifications). Bind Configure to its own completed job.
+        assert job["type"]=="configure",job
+        expected_operation="configure" if configured_report["report_id"]==job["progress"]["report_id"] else "refresh"
+        assert configured_report["operation"]==expected_operation and any(r["code"]=="format_disabled" for r in configured_report["reasons"]),configured_report
+        configured_source=next(item for item in get("/api/v1/sources")["sources"] if item["id"]==sid)
+        assert configured_source.get("max_docx_bytes",0)==0 and get("/api/v1/search?q=syntheticdocxmarker")["total"]==0,configured_source
         (source/"note.md").write_text("synthetic committed note watcherfresh",encoding="utf-8")
         eventually(lambda:get("/api/v1/search?q=watcherfresh")["total"]==1)
         watcher_report=json.loads(run(*summary_args).stdout)["report"]

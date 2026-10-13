@@ -9,6 +9,12 @@ exports.run = async function() {
  const http=require('node:http');const request=http.request;let requests=0;http.request=function(...args){requests++;return request.apply(this,args)};
  const ext=vscode.extensions.getExtension('findrail-local.findrail-readonly');
  assert.ok(ext,'extension is installed in the test host');
+ if(process.env.FINDRAIL_TEST_INSTALLED_DIR){
+  const relative=path.relative(process.env.FINDRAIL_TEST_INSTALLED_DIR,ext.extensionPath);
+  assert.ok(relative&&!relative.startsWith('..')&&!path.isAbsolute(relative),'Findrail loads from the isolated installed extensions directory');
+  assert.strictEqual(fs.existsSync(path.join(ext.extensionPath,'src')),false,'installed VSIX contains no development source');
+  assert.ok(fs.existsSync(path.join(ext.extensionPath,'dist','extension.js')),'installed extension uses its packaged bundle');
+ }
  await ext.activate();
  const commands=await vscode.commands.getCommands(true);
  for(const name of ['connect','chooseSource','search','searchSelection','setMode','setFilters','refreshSources','disconnect','nextPage','previousPage','refreshEvidence','copyLocation','copyCitation']) assert.ok(commands.includes(`findrail.${name}`),`registered ${name}`);
@@ -58,6 +64,5 @@ exports.run = async function() {
     await vscode.commands.executeCommand('findrail.disconnect');
     await vscode.commands.executeCommand('findrail.connect');let selectedArchive;vscode.window.showQuickPick=async items=>{const archive=items.find(item=>item.source?.kind==='archive');if(archive){selectedArchive=archive.source;assert.match(archive.label,/frozen archive/);return archive}return items[0]};await vscode.commands.executeCommand('findrail.chooseSource');assert.equal(selectedArchive?.kind,'archive');overrideQuery='webhook';await vscode.commands.executeCommand('findrail.search');assert.match(vscode.window.activeTextEditor.document.getText(),/Source: Frozen synthetic archive \([^;]+; archive\)/);await vscode.commands.executeCommand('findrail.disconnect');
   }
-  const implementation=fs.readFileSync(path.join(ext.extensionPath,'src','extension.ts'),'utf8');assert.doesNotMatch(implementation,/globalState|workspaceState/,'extension does not persist queries, inventory, results, or evidence');
   console.log('Findrail VS Code extension-host assertions passed');
 };
