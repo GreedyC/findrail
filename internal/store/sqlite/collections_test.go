@@ -263,6 +263,65 @@ func TestCollectionCountUTF8NameAndAggregateTextQuotas(t *testing.T) {
 	}
 }
 
+func TestSerializedPayloadQuotaAt64MiBBoundary(t *testing.T) {
+	ctx := context.Background()
+	s, e := Open(ctx, t.TempDir())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	root := t.TempDir()
+	_ = os.WriteFile(filepath.Join(root, "one.md"), []byte("quota binding"), 0600)
+	conn, e := filesystem.New(root, 1<<20)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = ingest.Run(ctx, s, conn); e != nil {
+		t.Fatal(e)
+	}
+	var doc string
+	if e = s.readers.QueryRowContext(ctx, "SELECT id FROM documents LIMIT 1").Scan(&doc); e != nil {
+		t.Fatal(e)
+	}
+	holderTitle := strings.Repeat("h", 256)
+	finalTitle := strings.Repeat("f", 256)
+	holder, e := s.CreateCollection(ctx, holderTitle)
+	if e != nil {
+		t.Fatal(e)
+	}
+	rowMax := 4 << 20
+	target := (64 << 20) - len(holderTitle) - len(finalTitle)
+	last := target - 15*rowMax
+	if last <= 0 || last > rowMax {
+		t.Fatalf("invalid test accounting last=%d", last)
+	}
+	full := strings.Repeat("x", rowMax)
+	tail := strings.Repeat("y", last)
+	tx, e := s.db.BeginTx(ctx, nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for i := 0; i < 16; i++ {
+		payload := full
+		if i == 15 {
+			payload = tail
+		}
+		if _, e = tx.ExecContext(ctx, "INSERT INTO evidence_collection_entries(collection_id,entry_id,ordinal,source_id,document_id,snapshot_json) VALUES(?,?,?,?,?,?)", holder.ID, fmt.Sprintf("quota-%02d", i), i, conn.Source().ID, doc, payload); e != nil {
+			tx.Rollback()
+			t.Fatal(e)
+		}
+	}
+	if e = tx.Commit(); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.CreateCollection(ctx, finalTitle); e != nil {
+		t.Fatalf("exact 64 MiB quota rejected: %v", e)
+	}
+	if _, e = s.CreateCollection(ctx, "x"); e != ErrCollectionLimit {
+		t.Fatalf("payload overage=%v", e)
+	}
+}
+
 func TestSchemaSixMigrationAndRollback(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
