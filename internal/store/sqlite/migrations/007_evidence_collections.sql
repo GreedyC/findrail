@@ -7,7 +7,7 @@ CREATE TABLE evidence_collection_entries (
  entry_id TEXT NOT NULL, ordinal INTEGER NOT NULL CHECK(ordinal>=0),
  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
  document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
- snapshot_json TEXT NOT NULL CHECK(length(CAST(snapshot_json AS BLOB))<=540672),
+ snapshot_json TEXT NOT NULL CHECK(length(CAST(snapshot_json AS BLOB))<=4194304),
  PRIMARY KEY(collection_id,entry_id), UNIQUE(collection_id,ordinal)
 );
 CREATE INDEX evidence_collection_entries_document ON evidence_collection_entries(document_id);

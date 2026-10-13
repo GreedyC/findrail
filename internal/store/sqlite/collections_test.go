@@ -3,8 +3,10 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Lephiziel/findrail/internal/connectors/filesystem"
@@ -196,6 +198,68 @@ func TestCollectionSaveIsAtomicForNewPinsAndOrdering(t *testing.T) {
 	}
 	if _, e = s.SaveCollection(ctx, c.ID, c.Revision, "stale", good); e != ErrCollectionConflict {
 		t.Fatalf("stale save=%v", e)
+	}
+}
+
+func TestCollectionCountUTF8NameAndAggregateTextQuotas(t *testing.T) {
+	ctx := context.Background()
+	s, e := Open(ctx, t.TempDir())
+	if e != nil {
+		t.Fatal(e)
+	}
+	for i := 0; i < maxCollections; i++ {
+		if _, e = s.CreateCollection(ctx, fmt.Sprintf("set %d", i)); e != nil {
+			t.Fatalf("create %d: %v", i, e)
+		}
+	}
+	if _, e = s.CreateCollection(ctx, "101"); e != ErrCollectionLimit {
+		t.Fatalf("101st collection=%v", e)
+	}
+	s.Close()
+	s, e = Open(ctx, t.TempDir())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	if _, e = s.CreateCollection(ctx, strings.Repeat("🦊", 64)); e != nil {
+		t.Fatalf("256-byte UTF-8 name rejected: %v", e)
+	}
+	if _, e = s.CreateCollection(ctx, strings.Repeat("🦊", 65)); e == nil {
+		t.Fatal("accepted >256 UTF-8 byte name")
+	}
+	root := t.TempDir()
+	doc := filepath.Join(root, "large.md")
+	body := strings.Repeat("a", 65500) + "z"
+	if e = os.WriteFile(doc, []byte(body), 0600); e != nil {
+		t.Fatal(e)
+	}
+	conn, e := filesystem.New(root, 1<<20)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = ingest.Run(ctx, s, conn); e != nil {
+		t.Fatal(e)
+	}
+	var id string
+	if e = s.readers.QueryRowContext(ctx, "SELECT id FROM documents LIMIT 1").Scan(&id); e != nil {
+		t.Fatal(e)
+	}
+	c, e := s.CreateCollection(ctx, "aggregate")
+	if e != nil {
+		t.Fatal(e)
+	}
+	for i := 1; i <= maxCollectionEntries; i++ {
+		_, e = s.PinCollectionEntry(ctx, c.ID, int64(i), id, 0, strings.Repeat("a", i)+"z", false)
+		if i <= 32 && e != nil {
+			t.Fatalf("entry %d: %v", i, e)
+		}
+		if i == 33 && e != ErrCollectionLimit {
+			t.Fatalf("aggregate overflow error=%v", e)
+		}
+	}
+	loaded, e := s.LoadCollection(ctx, c.ID)
+	if e != nil || len(loaded.Entries) != 32 || loaded.Revision != 33 {
+		t.Fatalf("partial quota write: len=%d revision=%d err=%v", len(loaded.Entries), loaded.Revision, e)
 	}
 }
 

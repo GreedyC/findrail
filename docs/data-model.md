@@ -34,8 +34,8 @@ Schema 4 indexes upgrade transactionally; archive metadata is removed with its
 source. No plaintext token or credential fields are introduced.
 Migration 6 adds the bounded last-successful indexing report. It does not fabricate
 reports for existing sources or change portable snapshot v1.
-Migration 7 adds persistent named collections. Entry JSON is bounded to 528 KiB,
-FK-cascades on source/document deletion, and retains historical snapshots across
+Migration 7 adds persistent named collections. Collection writes are bounded to
+4 MiB. Entry rows cascade on source/document deletion and retain historical snapshots across
 same-ID content refresh; revision checks prevent stale tab writes. Source snapshot
 v1 remains source-only and does not export collection data.
 See [upgrade instructions](local-alpha.md#upgrade).

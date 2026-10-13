@@ -34,7 +34,7 @@ and entry counts; `GET /api/v1/collections/{id}` loads one bounded collection.
 `POST /api/v1/collections` creates; `POST /api/v1/collections/{id}/entries`
 pins a verified preview passage; `PUT /api/v1/collections/{id}` updates title,
 notes, order and removals; `DELETE /api/v1/collections/{id}?revision=N` deletes.
-Writes are capped at 512 KiB. Updates carry an integer revision and stale edits
+Collection writes are capped at 4 MiB. Updates carry an integer revision and stale edits
 return HTTP 409; the UI keeps local edits and requires reload/retry rather than
 silently replacing newer data. SQLite transactions make pin, reorder/save, delete
 and Forget atomic. Late collection loads are ignored if the user has selected a

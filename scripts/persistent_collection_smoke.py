@@ -111,6 +111,8 @@ def main():
             assert rows[1].find_element(By.TAG_NAME, "textarea").get_attribute("value") == "Saved note"
             export = driver.execute_script("return window.localEvidenceCollection.export()")
             assert "First persistent citation passage" in export and "Second persistent citation passage" in export
+            assert export.index("Second persistent citation passage") < export.index("First persistent citation passage")
+            assert "Saved note" in export
             print(f"Chromium {driver.capabilities.get('browserVersion')} on {sys.platform}: two named collections, citations, note/order and Markdown restored after reload")
         finally:
             if browser:

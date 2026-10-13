@@ -24,7 +24,7 @@ export class EvidenceCollection {
     let text=0, metadata=0;
     for (const x of entries) {
       if (!x || typeof x.key !== 'string' || typeof x.text !== 'string' || typeof x.excerpt !== 'string' || typeof x.note !== 'string' || bytes(x.text)>LIMITS.preview || bytes(x.note)>LIMITS.note || !x.text.includes(x.excerpt)) throw new TypeError('Invalid saved collection entry.');
-      text+=bytes(x.text)+bytes(x.excerpt);metadata+=bytes(JSON.stringify({...x,text:'',excerpt:'',note:''}));
+      text+=bytes(x.text)+bytes(x.excerpt);const meta=bytes(JSON.stringify({...x,text:'',excerpt:'',note:''}));if(meta>LIMITS.metadata)throw new RangeError('Saved entry metadata exceeds 16 KiB.');metadata+=meta;
     }
     if(text>LIMITS.text||metadata>LIMITS.entries*LIMITS.metadata)throw new RangeError('Saved collection exceeds limits.');
     this.#title=title;this.#entries=jsonCopy(entries);this.#generation++;

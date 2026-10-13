@@ -142,6 +142,13 @@ func (s *Store) CreateCollection(ctx context.Context, title string) (Collection,
 	if _, e = tx.ExecContext(ctx, "INSERT INTO evidence_collections VALUES(?,?,1,?,?)", id, title, now, now); e != nil {
 		return c, e
 	}
+	var payload int
+	if e = tx.QueryRowContext(ctx, "SELECT COALESCE((SELECT sum(length(CAST(snapshot_json AS BLOB))) FROM evidence_collection_entries),0)+COALESCE((SELECT sum(length(CAST(title AS BLOB))) FROM evidence_collections),0)").Scan(&payload); e != nil {
+		return c, e
+	}
+	if payload > maxCollectionPayload {
+		return c, ErrCollectionLimit
+	}
 	if e = tx.Commit(); e != nil {
 		return c, e
 	}
@@ -251,7 +258,7 @@ func (s *Store) PinCollectionEntry(ctx context.Context, id string, rev int64, do
 	if e != nil {
 		return out, e
 	}
-	if len(raw) > 540672 {
+	if len(raw) > 4<<20 {
 		return out, ErrCollectionLimit
 	}
 	metadata := entry
@@ -362,7 +369,7 @@ func (s *Store) UpdateCollection(ctx context.Context, id string, rev int64, titl
 		if e != nil {
 			return out, e
 		}
-		if len(b) > 540672 {
+		if len(b) > 4<<20 {
 			return out, ErrCollectionLimit
 		}
 		total += len(b)
@@ -503,7 +510,7 @@ func (s *Store) SaveCollection(ctx context.Context, id string, rev int64, title 
 		if err != nil {
 			return out, err
 		}
-		if len(raw) > 540672 {
+		if len(raw) > 4<<20 {
 			return out, ErrCollectionLimit
 		}
 		total += len(raw)

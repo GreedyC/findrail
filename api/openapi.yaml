@@ -213,6 +213,7 @@ paths:
       operationId: updateEvidenceCollection
       summary: Atomically rename, reorder, edit notes or remove entries using an expected revision
       parameters: [{$ref: '#/components/parameters/ManagementToken'}, {name: id, in: path, required: true, schema: {type: string}}]
+      description: The complete edit is one SQLite transaction. Request bodies are capped at 4 MiB; stale revisions return 409 without applying any edits.
       requestBody:
         required: true
         content:

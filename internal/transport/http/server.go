@@ -555,12 +555,13 @@ func boundedHTTPError(s string) string {
 }
 
 func decodeCollectionMutation(w http.ResponseWriter, r *http.Request, target any) bool {
-	if r.ContentLength > 512<<10 {
+	const maxCollectionWrite = 4 << 20
+	if r.ContentLength > maxCollectionWrite {
 		writeError(w, 413, "collection write too large")
 		return false
 	}
-	b, e := io.ReadAll(io.LimitReader(r.Body, (512<<10)+1))
-	if e != nil || len(b) > 512<<10 {
+	b, e := io.ReadAll(io.LimitReader(r.Body, maxCollectionWrite+1))
+	if e != nil || len(b) > maxCollectionWrite {
 		writeError(w, 413, "collection write too large")
 		return false
 	}
@@ -580,7 +581,7 @@ func decodeCollectionMutation(w http.ResponseWriter, r *http.Request, target any
 func collectionReadAllowed(w http.ResponseWriter, r *http.Request, c options) bool {
 	t := r.Header.Get("X-Findrail-Token")
 	origins := r.Header.Values("Origin")
-	if len(origins) > 1 || (len(origins) == 1 && origins[0] != "http://"+c.authority) || !requestAuthority(r, c.authority) || crossSite(r) || len(r.Header.Values("X-Findrail-Token")) != 1 || len(t) != len(c.token) || subtle.ConstantTimeCompare([]byte(t), []byte(c.token)) != 1 {
+	if c.management == nil || c.token == "" || len(origins) > 1 || (len(origins) == 1 && origins[0] != "http://"+c.authority) || !requestAuthority(r, c.authority) || crossSite(r) || len(r.Header.Values("X-Findrail-Token")) != 1 || len(t) != len(c.token) || subtle.ConstantTimeCompare([]byte(t), []byte(c.token)) != 1 {
 		writeError(w, 403, "authenticated same local origin required")
 		return false
 	}
