@@ -12,8 +12,10 @@ import (
 
 	"github.com/Lephiziel/findrail/internal/config"
 	"github.com/Lephiziel/findrail/internal/connectors/filesystem"
+	"github.com/Lephiziel/findrail/internal/desktop"
 	pdfextract "github.com/Lephiziel/findrail/internal/extract/pdf"
 	"github.com/Lephiziel/findrail/internal/ingest"
+	"github.com/Lephiziel/findrail/internal/originals"
 	"github.com/Lephiziel/findrail/internal/sourceapp"
 	"github.com/Lephiziel/findrail/internal/sourcecoord"
 	"github.com/Lephiziel/findrail/internal/store/sqlite"
@@ -30,7 +32,7 @@ func runStart(ctx context.Context, args []string, out, stderr io.Writer, open fu
 func runStartReadOnly(ctx context.Context, args []string, out, stderr io.Writer, open func(string) error) error {
 	return runStartWithManagement(ctx, args, out, stderr, open, false)
 }
-func runStartWithManagement(ctx context.Context, args []string, out, stderr io.Writer, open func(string) error, management bool) error {
+func runStartWithManagement(ctx context.Context, args []string, out, stderr io.Writer, open func(string) error, management bool, desktopLocks ...*desktop.Lock) error {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
@@ -38,8 +40,18 @@ func runStartWithManagement(ctx context.Context, args []string, out, stderr io.W
 		fs.PrintDefaults()
 	}
 	dataDir := fs.String("data-dir", "", "directory for Findrail's private index")
-	addr := fs.String("addr", "127.0.0.1:7766", "loopback address for the local UI")
+	defaultAddr := "127.0.0.1:7766"
+	var desktopLock *desktop.Lock
+	if len(desktopLocks) > 0 {
+		desktopLock = desktopLocks[0]
+		defaultAddr = "127.0.0.1:0"
+	}
+	if desktopLock != nil {
+		defer func() { _ = desktopLock.RemoveRecord(); _ = desktopLock.Close() }()
+	}
+	addr := fs.String("addr", defaultAddr, "loopback address for the local UI")
 	noOpen := fs.Bool("no-open", false, "print the UI URL without opening a browser")
+	enableOriginals := fs.Bool("enable-originals", false, "enable explicit native open actions for registered filesystem documents")
 	maxBytes := fs.Int64("max-bytes", filesystem.DefaultMaxBytes, "maximum bytes per text document in DIRECTORY")
 	maxPDFBytes := fs.Int64("max-pdf-bytes", 16<<20, "maximum bytes per PDF in DIRECTORY; 0 disables PDFs")
 	maxDOCXBytes := fs.Int64("max-docx-bytes", 8<<20, "maximum bytes per DOCX in DIRECTORY; 0 disables DOCX")
@@ -52,6 +64,9 @@ func runStartWithManagement(ctx context.Context, args []string, out, stderr io.W
 	}
 	if fs.NArg() > 1 {
 		return fmt.Errorf("start accepts at most one directory")
+	}
+	if *enableOriginals && !management {
+		return fmt.Errorf("native originals require the writable start composition")
 	}
 	if *interval < time.Second {
 		return fmt.Errorf("sync interval must be at least 1s")
@@ -129,7 +144,9 @@ func runStartWithManagement(ctx context.Context, args []string, out, stderr io.W
 			}
 		}
 	}
-	child, cancel := context.WithCancel(ctx)
+	applicationCtx, cancelApplication := context.WithCancel(ctx)
+	defer cancelApplication()
+	child, cancel := context.WithCancel(applicationCtx)
 	done := make(chan struct{})
 	coordinator := sourcecoord.New()
 	manager := syncer.New(store, syncer.Config{Interval: *interval, Factory: factory, Coordinator: coordinator})
@@ -142,8 +159,27 @@ func runStartWithManagement(ctx context.Context, args []string, out, stderr io.W
 		app = sourceapp.NewWithCoordinator(child, store, dir, executable, coordinator)
 		opts = append(opts, transport.WithManagement(app))
 	}
-	serveErr := transport.Serve(ctx, *addr, store, append(opts,
+	if *enableOriginals {
+		opener := originals.New(originals.SystemLaunch)
+		opts = append(opts, transport.WithOriginals(store, opener.Open))
+	}
+	var desktopRecord *desktop.Record
+	if desktopLock != nil {
+		desktopRecord = &desktop.Record{}
+		opts = append(opts, transport.WithDesktop(desktopRecord, cancelApplication))
+	}
+	serveErr := transport.Serve(applicationCtx, *addr, store, append(opts,
 		transport.WithReady(func(url string) error {
+			if desktopLock != nil {
+				record, e := desktop.NewRecord(desktopLock.DataDir, url)
+				if e != nil {
+					return e
+				}
+				if e = desktopLock.Publish(record); e != nil {
+					return e
+				}
+				*desktopRecord = record
+			}
 			if ctx.Err() != nil {
 				return nil
 			}

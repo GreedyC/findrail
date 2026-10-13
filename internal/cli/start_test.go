@@ -257,25 +257,30 @@ func TestReadOnlyStartCompositionHasNoManagement(t *testing.T) {
 	go func() {
 		done <- runStartReadOnly(ctx, []string{"--data-dir", data, "--addr", "127.0.0.1:0", "--no-open"}, out, io.Discard, func(string) error { return nil })
 	}()
+	startupFinished := false
+	defer func() {
+		cancel()
+		if startupFinished {
+			return
+		}
+		select {
+		case err := <-done:
+			if err != nil && !errors.Is(err, context.Canceled) {
+				t.Errorf("read-only server shutdown: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("read-only server did not stop after cancellation")
+		}
+	}()
 	var base string
 	select {
 	case base = <-out.urls:
 	case err := <-done:
+		startupFinished = true
 		t.Fatalf("read-only startup failed: %v", err)
 	case <-time.After(3 * time.Second):
 		t.Fatal("listener did not start")
 	}
-	defer func() {
-		cancel()
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Error(err)
-			}
-		case <-time.After(3 * time.Second):
-			t.Error("read-only server did not stop")
-		}
-	}()
 	resp, err := http.Get(base + "/api/v1/capabilities")
 	if err != nil {
 		t.Fatal(err)
@@ -298,6 +303,92 @@ func TestReadOnlyStartCompositionHasNoManagement(t *testing.T) {
 	result.Body.Close()
 	if result.StatusCode == http.StatusAccepted {
 		t.Fatal("read-only composition accepted a source mutation")
+	}
+}
+
+func TestReadOnlyStartCanceledBeforeStartupExits(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	data := filepath.Join(t.TempDir(), "index")
+	// Cancellation precedes scheduling the worker, so this is a deterministic
+	// pre-start cancellation rather than a race against fast initialization.
+	cancel()
+	go func() {
+		done <- runStartReadOnly(ctx, []string{"--data-dir", data, "--addr", "127.0.0.1:0", "--no-open"}, io.Discard, io.Discard, func(string) error { return nil })
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("startup result = %v, want context cancellation", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("canceled read-only startup did not finish")
+	}
+}
+
+func TestReadOnlyStartStartupFailureIsDrained(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	parent := t.TempDir()
+	data := filepath.Join(parent, "not-a-directory")
+	if err := os.WriteFile(data, []byte("synthetic"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- runStartReadOnly(ctx, []string{"--data-dir", data, "--addr", "127.0.0.1:0", "--no-open"}, io.Discard, io.Discard, func(string) error { return nil })
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("startup unexpectedly succeeded with a file as data directory")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("failed read-only startup did not finish")
+	}
+	if err := os.Remove(data); err != nil {
+		t.Fatalf("startup failure left the data path locked: %v", err)
+	}
+}
+
+type startupHoldWriter struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (w startupHoldWriter) Write(p []byte) (int, error) {
+	select {
+	case w.entered <- struct{}{}:
+	default:
+	}
+	<-w.release
+	return len(p), nil
+}
+
+func TestReadOnlyStartCanceledDuringDelayedReadyIsDrained(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	data := t.TempDir()
+	writer := startupHoldWriter{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() {
+		done <- runStartReadOnly(ctx, []string{"--data-dir", data, "--addr", "127.0.0.1:0", "--no-open"}, writer, io.Discard, func(string) error { return nil })
+	}()
+	select {
+	case <-writer.entered:
+	case <-time.After(5 * time.Second):
+		close(writer.release)
+		t.Fatal("startup did not reach the deliberately delayed ready callback")
+	}
+	cancel()
+	close(writer.release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("delayed startup shutdown: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("delayed read-only startup did not drain after cancellation")
 	}
 }
 

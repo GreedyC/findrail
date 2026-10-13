@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Lephiziel/findrail/internal/originals"
 	"github.com/Lephiziel/findrail/internal/search"
 )
 
@@ -26,6 +27,7 @@ const (
 var ErrCollectionNotFound = errors.New("collection not found")
 var ErrCollectionConflict = errors.New("collection revision conflict")
 var ErrCollectionLimit = errors.New("collection limit exceeded")
+var ErrCollectionSnapshotChanged = errors.New("indexed evidence changed; reload its preview before saving")
 
 type CollectionEntry struct {
 	Key          string          `json:"key"`
@@ -36,12 +38,13 @@ type CollectionEntry struct {
 	CollectedAt  string          `json:"collected_at"`
 }
 type CollectionEdit struct {
-	Key          string `json:"key"`
-	Note         string `json:"note"`
-	DocumentID   string `json:"document_id"`
-	Page         int    `json:"page"`
-	Excerpt      string `json:"excerpt"`
-	WholePreview bool   `json:"whole_preview"`
+	Key              string `json:"key"`
+	Note             string `json:"note"`
+	DocumentID       string `json:"document_id"`
+	Page             int    `json:"page"`
+	Excerpt          string `json:"excerpt"`
+	WholePreview     bool   `json:"whole_preview"`
+	OriginalIdentity string `json:"original_identity"`
 }
 type Collection struct {
 	ID         string            `json:"id"`
@@ -84,7 +87,12 @@ func (s *Store) ListCollections(ctx context.Context) ([]Collection, error) {
 }
 func (s *Store) LoadCollection(ctx context.Context, id string) (Collection, error) {
 	var c Collection
-	e := s.readers.QueryRowContext(ctx, "SELECT id,title,revision,created_at,updated_at FROM evidence_collections WHERE id=?", id).Scan(&c.ID, &c.Title, &c.Revision, &c.CreatedAt, &c.UpdatedAt)
+	tx, e := s.readers.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if e != nil {
+		return c, e
+	}
+	defer tx.Rollback()
+	e = tx.QueryRowContext(ctx, "SELECT id,title,revision,created_at,updated_at FROM evidence_collections WHERE id=?", id).Scan(&c.ID, &c.Title, &c.Revision, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(e, sql.ErrNoRows) {
 		return c, ErrCollectionNotFound
 	}
@@ -92,19 +100,28 @@ func (s *Store) LoadCollection(ctx context.Context, id string) (Collection, erro
 		return c, e
 	}
 	c.Entries = []CollectionEntry{}
-	r, e := s.readers.QueryContext(ctx, "SELECT snapshot_json FROM evidence_collection_entries WHERE collection_id=? ORDER BY ordinal", id)
+	r, e := tx.QueryContext(ctx, "SELECT snapshot_json FROM evidence_collection_entries WHERE collection_id=? ORDER BY ordinal", id)
 	if e != nil {
 		return c, e
 	}
 	defer r.Close()
+	textBytes, payloadBytes := 0, 0
 	for r.Next() {
 		var b string
 		var x CollectionEntry
 		if e = r.Scan(&b); e != nil {
 			return c, e
 		}
+		payloadBytes += len(b)
+		if len(c.Entries) >= maxCollectionEntries || len(b) > 4<<20 || payloadBytes > 16<<20 {
+			return c, ErrCollectionLimit
+		}
 		if e = json.Unmarshal([]byte(b), &x); e != nil {
 			return c, e
+		}
+		textBytes += len(x.Evidence.Text) + len(x.Excerpt)
+		if len(x.Evidence.Text) > 256<<10 || len(x.Note) > maxCollectionNote || textBytes > maxCollectionText {
+			return c, ErrCollectionLimit
 		}
 		c.Entries = append(c.Entries, x)
 	}
@@ -112,7 +129,10 @@ func (s *Store) LoadCollection(ctx context.Context, id string) (Collection, erro
 		return c, e
 	}
 	c.EntryCount = len(c.Entries)
-	return c, nil
+	if e = r.Close(); e != nil {
+		return c, e
+	}
+	return c, tx.Commit()
 }
 func (s *Store) CreateCollection(ctx context.Context, title string) (Collection, error) {
 	var c Collection
@@ -156,12 +176,12 @@ func (s *Store) CreateCollection(ctx context.Context, title string) (Collection,
 }
 
 // PinCollectionEntry accepts only a document ID, page and selected passage. All provenance is read from the indexed database inside the same writer transaction.
-func (s *Store) PinCollectionEntry(ctx context.Context, id string, rev int64, docID string, page int, excerpt string, whole bool) (Collection, error) {
+func (s *Store) PinCollectionEntry(ctx context.Context, id string, rev int64, docID string, page int, excerpt string, whole bool, expected string) (Collection, error) {
 	var out Collection
 	if s.db == nil {
 		return out, errors.New("index is read-only")
 	}
-	if len(excerpt) == 0 || len(excerpt) > 256<<10 || !utf8.ValidString(excerpt) || page < 0 {
+	if strings.TrimSpace(excerpt) == "" || len(excerpt) > 256<<10 || !utf8.ValidString(excerpt) || page < 0 {
 		return out, errors.New("invalid passage")
 	}
 	tx, e := s.db.BeginTx(ctx, nil)
@@ -179,32 +199,12 @@ func (s *Store) PinCollectionEntry(ctx context.Context, id string, rev int64, do
 	if current != rev {
 		return out, ErrCollectionConflict
 	}
-	var v search.Evidence
-	e = tx.QueryRowContext(ctx, `SELECT d.id,d.title,d.uri,d.path,d.source_id,s.name,s.kind,d.media_type,d.content_hash,d.modified_at,d.page_count FROM documents d JOIN sources s ON s.id=d.source_id WHERE d.id=?`, docID).Scan(&v.ID, &v.Title, &v.URI, &v.Path, &v.SourceID, &v.SourceName, &v.SourceKind, &v.MediaType, &v.ContentHash, &v.ModifiedAt, &v.PageCount)
-	if errors.Is(e, sql.ErrNoRows) {
-		return out, search.ErrNotFound
-	}
+	v, e := evidenceInWriteTx(ctx, tx, docID, page)
 	if e != nil {
 		return out, e
 	}
-	if v.PageCount > 0 {
-		if page == 0 {
-			e = tx.QueryRowContext(ctx, "SELECT substr(content,1,65536),length(content)>65536 FROM documents WHERE id=?", docID).Scan(&v.Text, &v.Truncated)
-		} else if page <= v.PageCount {
-			v.Page = page
-			e = tx.QueryRowContext(ctx, "SELECT substr(content,1,65536),length(content)>65536 FROM document_pages WHERE document_id=? AND page_number=?", docID, page).Scan(&v.Text, &v.Truncated)
-			v.URI += fmt.Sprintf("#page=%d", page)
-		} else {
-			return out, search.ErrPage
-		}
-	} else {
-		if page != 0 {
-			return out, search.ErrPage
-		}
-		e = tx.QueryRowContext(ctx, "SELECT substr(content,1,65536),length(content)>65536 FROM documents WHERE id=?", docID).Scan(&v.Text, &v.Truncated)
-	}
-	if e != nil {
-		return out, e
+	if expected == "" || expected != v.OriginalIdentity {
+		return out, ErrCollectionSnapshotChanged
 	}
 	if !strings.Contains(v.Text, excerpt) {
 		return out, errors.New("passage is not part of indexed preview")
@@ -466,12 +466,15 @@ func (s *Store) SaveCollection(ctx context.Context, id string, rev int64, title 
 			keys[edit.Key] = true
 			item.Note = edit.Note
 		} else {
-			if edit.DocumentID == "" || edit.Page < 0 || len(edit.Excerpt) == 0 || len(edit.Excerpt) > 256<<10 || !utf8.ValidString(edit.Excerpt) {
+			if edit.DocumentID == "" || edit.Page < 0 || strings.TrimSpace(edit.Excerpt) == "" || len(edit.Excerpt) > 256<<10 || !utf8.ValidString(edit.Excerpt) {
 				return out, errors.New("invalid new evidence passage")
 			}
 			ev, err := evidenceInWriteTx(ctx, tx, edit.DocumentID, edit.Page)
 			if err != nil {
 				return out, err
+			}
+			if edit.OriginalIdentity == "" || edit.OriginalIdentity != ev.OriginalIdentity {
+				return out, ErrCollectionSnapshotChanged
 			}
 			if len(ev.Text) > 256<<10 || !strings.Contains(ev.Text, edit.Excerpt) {
 				return out, errors.New("passage is not part of indexed preview")
@@ -553,13 +556,16 @@ func evidenceInWriteTx(ctx context.Context, tx *sql.Tx, id string, page int) (se
 	if page < 0 {
 		return v, search.ErrPage
 	}
-	e := tx.QueryRowContext(ctx, `SELECT d.id,d.title,d.uri,d.path,d.source_id,s.name,s.kind,d.media_type,d.content_hash,d.modified_at,d.page_count FROM documents d JOIN sources s ON s.id=d.source_id WHERE d.id=?`, id).Scan(&v.ID, &v.Title, &v.URI, &v.Path, &v.SourceID, &v.SourceName, &v.SourceKind, &v.MediaType, &v.ContentHash, &v.ModifiedAt, &v.PageCount)
+	var registration string
+	var revision int64
+	e := tx.QueryRowContext(ctx, `SELECT d.id,d.title,d.uri,d.path,d.source_id,s.name,s.kind,d.media_type,d.content_hash,d.modified_at,d.page_count,s.registration_token,s.revision FROM documents d JOIN sources s ON s.id=d.source_id WHERE d.id=?`, id).Scan(&v.ID, &v.Title, &v.URI, &v.Path, &v.SourceID, &v.SourceName, &v.SourceKind, &v.MediaType, &v.ContentHash, &v.ModifiedAt, &v.PageCount, &registration, &revision)
 	if errors.Is(e, sql.ErrNoRows) {
 		return v, search.ErrNotFound
 	}
 	if e != nil {
 		return v, e
 	}
+	v.OriginalIdentity = originals.Identity(registration, revision, v.ContentHash, v.SourceID, v.ID)
 	if v.PageCount > 0 {
 		if page == 0 {
 			e = tx.QueryRowContext(ctx, "SELECT substr(content,1,65536),length(content)>65536 FROM documents WHERE id=?", id).Scan(&v.Text, &v.Truncated)

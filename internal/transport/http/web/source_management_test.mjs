@@ -188,6 +188,7 @@ test('job polling resumes if the tab is hidden during an active request', async 
     return {ok: true, json: async () => url.endsWith('/jobs') ? {jobs: []}
       : url.endsWith('/sync') ? {enabled: true, sources: []} : {sources: []}};
   };
+  h.context.window.findrailBootstrap = Promise.resolve({capabilities:{management:false,open_originals:false},token:''});
   const management = [...html.matchAll(/<script type="module">([\s\S]*?)<\/script>/g)][1][1];
   await vm.runInContext(`(async () => {${management}; globalThis.runJobPoll = pollJobs;})()`, h.context);
   const poll = h.context.runJobPoll(); await flush();

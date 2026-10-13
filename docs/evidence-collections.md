@@ -90,3 +90,11 @@ and `python scripts/persistent_collection_smoke.py /path/to/findrail`, with pinn
 Selenium and matching local Chromium/ChromeDriver. They use synthetic documents
 and local fixtures. They do not certify every browser, assistive technology or
 OS-specific behavior.
+
+New pins include the opaque original_identity from the visible indexed evidence.
+The store verifies it in the same transaction as the save, including source
+registration and indexed content, so a delayed save cannot attach an old passage
+to a forgotten and re-registered source. Existing saved entries retain their
+historical snapshots. Collection reads use one SQLite snapshot for both revision
+and entries. Export checks the active saved collection before using its entries;
+a failed check stops export without treating an outage as deletion.

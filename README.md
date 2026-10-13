@@ -13,7 +13,9 @@ Connected services and optional semantic retrieval are the next product stages.
 This is testing software, not a stable release. See the
 [version matrix](docs/launch/press-kit.md#version-boundaries) and
 [verified release checks](docs/release-alpha3-verification.md). Private GitHub,
-OCR, semantic search and desktop launching remain on the roadmap.
+OCR, and semantic search remain on the roadmap. A separate
+source-build desktop launcher is implemented for integration; archive-native
+entrypoints and GUI acceptance remain pending packaging and platform testing.
 
 [Releases](https://github.com/Lephiziel/findrail/releases) ·
 [Product](docs/product.md) · [Architecture](docs/architecture.md) ·
@@ -84,9 +86,14 @@ absolute folder path on the computer running Findrail. Existing indexes resume
 their registered sources; use a fresh `--data-dir` for an isolated empty start.
 
 Search a remembered word in a note, code file, text PDF or DOCX document. Open
-**Preview** to inspect the indexed text and use PDF page controls when present.
-**Copy location** copies the original URI, including `#page=N` for PDF evidence;
-browsers may restrict `file:` navigation. DOCX has no page-number claim.
+**Preview** to inspect indexed text and use PDF page controls when present.
+Search results and Preview can show **Открыть оригинал** and **Открыть папку**
+when native opening is explicitly enabled with `start --enable-originals`.
+`serve` and `demo` remain read-only and never launch applications. **Copy
+location** remains a fallback. PDF page selection is validated against indexed
+evidence, but the opener does not request page navigation from an unknown viewer;
+the current file may open at its default page. DOCX has no page-number claim.
+The opened file is current; preview and saved citations remain the indexed snapshot.
 
 Select exact passages in Preview and add them to a named evidence collection.
 In source builds using writable `start`, explicitly save notes and ordering;

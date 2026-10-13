@@ -253,36 +253,38 @@ func ValidateRequest(r Request) error {
 }
 
 type Result struct {
-	ID         string  `json:"id"`
-	Title      string  `json:"title"`
-	URI        string  `json:"uri"`
-	Path       string  `json:"path"`
-	SourceID   string  `json:"source_id"`
-	SourceName string  `json:"source_name"`
-	SourceKind string  `json:"source_kind"`
-	Snippet    string  `json:"snippet"`
-	Score      float64 `json:"score"`
-	MediaType  string  `json:"media_type"`
-	Page       int     `json:"page,omitempty"`
-	PageCount  int     `json:"page_count,omitempty"`
+	ID               string  `json:"id"`
+	Title            string  `json:"title"`
+	URI              string  `json:"uri"`
+	Path             string  `json:"path"`
+	SourceID         string  `json:"source_id"`
+	SourceName       string  `json:"source_name"`
+	SourceKind       string  `json:"source_kind"`
+	Snippet          string  `json:"snippet"`
+	Score            float64 `json:"score"`
+	MediaType        string  `json:"media_type"`
+	OriginalIdentity string  `json:"original_identity,omitempty"`
+	Page             int     `json:"page,omitempty"`
+	PageCount        int     `json:"page_count,omitempty"`
 }
 
 // Evidence is an indexed snapshot, never an arbitrary read from the filesystem.
 type Evidence struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	URI         string `json:"uri"`
-	Path        string `json:"path"`
-	SourceID    string `json:"source_id"`
-	SourceName  string `json:"source_name"`
-	SourceKind  string `json:"source_kind"`
-	MediaType   string `json:"media_type"`
-	ContentHash string `json:"content_hash"`
-	ModifiedAt  string `json:"modified_at"`
-	Page        int    `json:"page,omitempty"`
-	PageCount   int    `json:"page_count,omitempty"`
-	Text        string `json:"text"`
-	Truncated   bool   `json:"truncated"`
+	ID               string `json:"id"`
+	Title            string `json:"title"`
+	URI              string `json:"uri"`
+	Path             string `json:"path"`
+	SourceID         string `json:"source_id"`
+	SourceName       string `json:"source_name"`
+	SourceKind       string `json:"source_kind"`
+	OriginalIdentity string `json:"original_identity,omitempty"`
+	MediaType        string `json:"media_type"`
+	ContentHash      string `json:"content_hash"`
+	ModifiedAt       string `json:"modified_at"`
+	Page             int    `json:"page,omitempty"`
+	PageCount        int    `json:"page_count,omitempty"`
+	Text             string `json:"text"`
+	Truncated        bool   `json:"truncated"`
 }
 
 type Response struct {

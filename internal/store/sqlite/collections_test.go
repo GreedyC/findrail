@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,7 +44,7 @@ func TestPersistentCollectionSnapshotRevisionAndDocumentRemoval(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	pinned, e := s.PinCollectionEntry(ctx, c.ID, c.Revision, id, 0, "alpha beta", false)
+	pinned, e := s.PinCollectionEntry(ctx, c.ID, c.Revision, id, 0, "alpha beta", false, collectionIdentity(t, s, id))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -133,7 +134,7 @@ func TestForgetAndReaddDoesNotResurrectCollectionEntry(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.PinCollectionEntry(ctx, c.ID, c.Revision, id, 0, "forget lifecycle", false); e != nil {
+	if _, e = s.PinCollectionEntry(ctx, c.ID, c.Revision, id, 0, "forget lifecycle", false, collectionIdentity(t, s, id)); e != nil {
 		t.Fatal(e)
 	}
 	if e = s.ForgetSource(ctx, conn.Source().ID); e != nil {
@@ -180,7 +181,7 @@ func TestCollectionSaveIsAtomicForNewPinsAndOrdering(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	bad := []CollectionEdit{{Note: "first", DocumentID: id, Excerpt: "first saved excerpt"}, {Note: "bad", DocumentID: "missing", Excerpt: "missing"}}
+	bad := []CollectionEdit{{Note: "first", DocumentID: id, OriginalIdentity: collectionIdentity(t, s, id), Excerpt: "first saved excerpt"}, {Note: "bad", DocumentID: "missing", Excerpt: "missing"}}
 	if _, e = s.SaveCollection(ctx, c.ID, c.Revision, "Batch", bad); e == nil {
 		t.Fatal("partial save unexpectedly succeeded")
 	}
@@ -188,7 +189,7 @@ func TestCollectionSaveIsAtomicForNewPinsAndOrdering(t *testing.T) {
 	if e != nil || after.Revision != c.Revision || len(after.Entries) != 0 {
 		t.Fatalf("failed batch committed partially: %+v %v", after, e)
 	}
-	good := []CollectionEdit{{Note: "first", DocumentID: id, Excerpt: "first saved excerpt"}, {Note: "second", DocumentID: id, Excerpt: "second saved excerpt"}}
+	good := []CollectionEdit{{Note: "first", DocumentID: id, OriginalIdentity: collectionIdentity(t, s, id), Excerpt: "first saved excerpt"}, {Note: "second", DocumentID: id, OriginalIdentity: collectionIdentity(t, s, id), Excerpt: "second saved excerpt"}}
 	saved, e := s.SaveCollection(ctx, c.ID, c.Revision, "Renamed", good)
 	if e != nil {
 		t.Fatal(e)
@@ -249,7 +250,7 @@ func TestCollectionCountUTF8NameAndAggregateTextQuotas(t *testing.T) {
 		t.Fatal(e)
 	}
 	for i := 1; i <= maxCollectionEntries; i++ {
-		_, e = s.PinCollectionEntry(ctx, c.ID, int64(i), id, 0, strings.Repeat("a", i)+"z", false)
+		_, e = s.PinCollectionEntry(ctx, c.ID, int64(i), id, 0, strings.Repeat("a", i)+"z", false, collectionIdentity(t, s, id))
 		if i <= 32 && e != nil {
 			t.Fatalf("entry %d: %v", i, e)
 		}
@@ -378,5 +379,69 @@ func TestSchemaSixMigrationAndRollback(t *testing.T) {
 	defer db.Close()
 	if e = db.QueryRow("PRAGMA user_version").Scan(&version); e != nil || version != 6 {
 		t.Fatalf("failed migration changed version=%d err=%v", version, e)
+	}
+}
+
+func collectionIdentity(t testing.TB, s *Store, id string) string {
+	t.Helper()
+	v, err := s.Evidence(context.Background(), id, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v.OriginalIdentity
+}
+
+func TestDelayedNewPinsCannotFollowForgottenSourceRegistration(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	root := t.TempDir()
+	if err = os.WriteFile(filepath.Join(root, "same.md"), []byte("same passage after registration"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := filesystem.New(root, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, s, conn); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.Search(ctx, search.Request{Query: "passage", Limit: 5})
+	if err != nil || len(result.Results) != 1 {
+		t.Fatalf("search: %+v %v", result, err)
+	}
+	doc := result.Results[0].ID
+	oldIdentity := collectionIdentity(t, s, doc)
+	c, err := s.CreateCollection(ctx, "Empty saved collection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ForgetSource(ctx, conn.Source().ID); err != nil {
+		t.Fatal(err)
+	}
+	conn, err = filesystem.New(root, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, s, conn); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.PinCollectionEntry(ctx, c.ID, c.Revision, doc, 0, "same passage", false, oldIdentity); !errors.Is(err, ErrCollectionSnapshotChanged) {
+		t.Fatalf("stale direct pin: %v", err)
+	}
+	edits := []CollectionEdit{{DocumentID: doc, Excerpt: "same passage", OriginalIdentity: oldIdentity}}
+	if _, err = s.SaveCollection(ctx, c.ID, c.Revision, "Stale save", edits); !errors.Is(err, ErrCollectionSnapshotChanged) {
+		t.Fatalf("stale staged save: %v", err)
+	}
+	after, err := s.LoadCollection(ctx, c.ID)
+	if err != nil || after.Revision != c.Revision || len(after.Entries) != 0 || after.Title != c.Title {
+		t.Fatalf("rejected save changed collection: %+v %v", after, err)
+	}
+	edits[0].OriginalIdentity = collectionIdentity(t, s, doc)
+	if _, err = s.SaveCollection(ctx, c.ID, c.Revision, "Fresh selection", edits); err != nil {
+		t.Fatal(err)
 	}
 }

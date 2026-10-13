@@ -48,6 +48,7 @@ export class EvidenceCollection {
     if (bytes(text) > LIMITS.preview) throw new RangeError('Preview exceeds the 256 KiB per-entry limit.');
     formatCitation({...evidence,text,truncated:evidence.truncated===true,page:evidence.page??0},{excerpt:passage});
     const snapshot = { id:evidence.id, source_id:evidence.source_id, source_name:evidence.source_name, source_kind:evidence.source_kind, title:evidence.title, path:evidence.path, uri:evidence.uri, media_type:evidence.media_type, content_hash:evidence.content_hash, modified_at:evidence.modified_at, page:evidence.page ?? 0, page_count:evidence.page_count ?? 0, text, truncated:evidence.truncated === true, excerpt:passage, whole_preview:options.wholePreview===true, note:'', collected_at:new Date().toISOString(), status:'not checked' };
+    snapshot.original_identity=evidence.original_identity || "";
     snapshot.key=crypto.randomUUID();
     const metadata={...snapshot,text:'',excerpt:'',note:''};
     if (bytes(JSON.stringify(metadata)) > LIMITS.metadata) throw new RangeError('Evidence metadata exceeds 16 KiB.');
