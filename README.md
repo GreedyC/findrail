@@ -46,9 +46,10 @@ Python are only development tools.
 
 > [!NOTE]
 > **Early alpha — feedback welcome.** The current download is
-> [0.1.0-alpha.3](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.3).
-> Desktop launchers, opening originals and saved collections are in the
-> [unpublished alpha.4 candidate](#whats-next). They are not in alpha.3 archives.
+> [0.1.0-alpha.4](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.4),
+> with desktop launchers, optional original-file opening and saved collections.
+> [What's new](#new-in-alpha4) · [Verified release](docs/release-alpha4-verification.md).
+> Upgrading an existing index? [Stop and back up the whole data directory first](build/package/INSTALL.txt).
 
 ## A path back to your documents
 
@@ -64,7 +65,7 @@ Python are only development tools.
     </td>
     <td width="33%" valign="top">
       <h3>✍️ Take the evidence</h3>
-      Select passages, collect them with notes, and export Markdown citations. Alpha.3 collections last for the current tab.
+      Select passages, explicitly save named collections with notes, and return after a restart. Export Markdown citations to your own tools.
     </td>
   </tr>
   <tr>
@@ -102,45 +103,54 @@ as independent frozen sources. [GitHub sources](docs/github.md) ·
 
 ### 1. Download
 
-Download **0.1.0-alpha.3** for your computer, verify the matching entry in
-[SHA256SUMS.txt](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/SHA256SUMS.txt),
+Download **0.1.0-alpha.4** for your computer, verify the matching entry in
+[SHA256SUMS.txt](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.4/SHA256SUMS.txt),
 then extract the archive into a folder you own.
 
 | Linux | macOS | Windows |
 |:---|:---|:---|
-| [x86-64 / amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_linux-amd64.tar.gz) | [Apple Silicon / arm64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_darwin-arm64.tar.gz) | [x86-64 / amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_windows-amd64.zip) |
-| [ARM64 / arm64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_linux-arm64.tar.gz) | [Intel / amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_darwin-amd64.tar.gz) | |
+| [x86-64 / amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.4/findrail_0.1.0-alpha.4_linux-amd64.tar.gz) | [Apple Silicon / arm64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.4/findrail_0.1.0-alpha.4_darwin-arm64.tar.gz) | [x86-64 / amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.4/findrail_0.1.0-alpha.4_windows-amd64.zip) |
+| [ARM64 / arm64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.4/findrail_0.1.0-alpha.4_linux-arm64.tar.gz) | [Intel / amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.4/findrail_0.1.0-alpha.4_darwin-amd64.tar.gz) | |
 
-No Go, Python, database server or Docker setup is required. These alpha binaries
-are unsigned; read the bundled `INSTALL.txt` for platform-specific first-run
-instructions. On macOS, an app-specific allowance may be needed in Privacy &
-Security. [Installation, upgrade and rollback](build/package/INSTALL.txt) ·
-[Release manifest](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/release-manifest.json)
+No Go, Python, database server or Docker setup is required. **macOS 13+** is
+required for these macOS builds. The alpha binaries are unsigned; read the
+bundled `INSTALL.txt` for platform-specific first-run instructions. On macOS,
+an app-specific allowance may be needed in Privacy & Security. [Installation, upgrade and rollback](build/package/INSTALL.txt) ·
+[Release manifest](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.4/release-manifest.json)
 
 ### 2. Start
 
-Run from inside the extracted directory:
+Launch from inside the extracted directory:
 
 ```bash
-# Linux / macOS
-./findrail start
+# Linux
+./findrail-desktop
+
+# macOS
+open Findrail.app
 ```
 
 ```powershell
 # Windows PowerShell
-.\findrail.exe start
+.\findrail-desktop.exe
 ```
 
-Findrail opens your browser. If it does not, open the loopback URL printed in
-the terminal, normally **http://127.0.0.1:7766**. Keep the process running;
-**Ctrl+C** stops it. Running the same command later resumes your index.
+Findrail opens its local browser interface. Launching it again reopens the
+same running instance and index. Closing the tab keeps Findrail running;
+choose **Quit Findrail** in the app to stop it. The desktop launcher chooses
+an available loopback port.
+
+Want an entry in your OS menu? Use the archive's per-user installer in
+`launcher/linux/`, `launcher/macos/` or `launcher/windows/`.
+[Desktop setup and uninstall](build/package/INSTALL.txt).
 
 ### 3. Find something you remember
 
 In **Sources → Add folder**, enter the absolute path to a folder on this
 computer. Search a word from one of your documents, open **Preview**, and check
-the passage. Select text to copy a Markdown citation or add it to the temporary
-evidence collection. A fresh index starts empty; Findrail scans only selected
+the passage. Select text to copy a Markdown citation or add it to a named evidence
+collection. Add a note and press **Save** to keep it across restarts with the
+same data directory. A fresh index starts empty; Findrail scans only selected
 sources.
 
 > [!TIP]
@@ -153,7 +163,7 @@ sources.
 <summary><strong>Command-line examples</strong></summary>
 
 ```bash
-# Use a separate index and open search for this folder.
+# Run the foreground CLI with a separate index for this folder.
 ./findrail start --data-dir ./findrail-data /absolute/path/to/notes
 
 # Query that same index from another terminal.
@@ -166,8 +176,10 @@ sources.
 ```
 
 Options precede positional arguments. Use the same `--data-dir` each time.
-Use `start --no-open` on a headless machine. `demo` uses its own temporary index
-and does not accept `--data-dir`.
+The foreground `start` command normally uses **http://127.0.0.1:7766**;
+keep its terminal open and stop it with **Ctrl+C**. Use `start --no-open` on a
+headless machine. `demo` uses its own temporary index and does not accept
+`--data-dir`.
 
 [Query semantics](docs/search-query.md) · [Search evaluation](docs/search-evaluation.md) ·
 [All commands and limits](docs/local-alpha.md)
@@ -191,7 +203,7 @@ and does not accept `--data-dir`.
 
 > [!IMPORTANT]
 > Stop Findrail and back up the **whole data directory** before upgrading.
-> Alpha.3 uses schema **6**; current source / alpha.4 candidates use schema **7**.
+> Alpha.4 uses schema **7**; alpha.3 uses schema **6**.
 > Upgrades are forward-only, so an alpha.3 binary cannot open a schema-7 index.
 > [Backup and rollback instructions](build/package/INSTALL.txt).
 
@@ -201,20 +213,24 @@ do not reproduce Word layout or page numbers. Preview shows the indexed
 snapshot, which may differ from the current file.
 [Data handling](docs/data-handling.md) · [Extraction limits](docs/local-alpha.md)
 
-## What's next
+## New in alpha.4
 
-The **unpublished alpha.4 candidate** adds a workflow from finding a passage to
-reopening the document and returning to a saved collection:
+Find a passage, reopen its source, and return to a saved collection:
 
-| In current source / candidate archives | Details |
+| Included in the current download | Details |
 |:---|:---|
 | Desktop launcher and per-user install resources | Launch from the OS menu; repeat launch reuses the existing instance. Closing the tab keeps it running; **Quit Findrail** stops it. [Desktop guide](docs/desktop-launcher.md) |
-| Open original / open containing folder | Explicitly enabled with `start --enable-originals`; available only for eligible local files. External viewers may open at their default page. [Local workflow](docs/local-alpha.md) |
+| Open original / open containing folder | Explicitly enabled with `findrail-desktop --enable-originals` or `findrail start --enable-originals`; available only for eligible local files. External viewers may open at their default page. [Local workflow](docs/local-alpha.md) |
 | Named evidence collections | Explicitly save passages, notes and order; restore from the same data directory after restart. `serve` / `demo` remain temporary. [Collections guide](docs/evidence-collections.md) |
 
-Native package, browser, installed VSIX and upgrade checks have passed for the
-candidate. Manual OS menu and external viewer acceptance remains before
-publication. [Release pipeline](docs/release-pipeline.md) · [Roadmap](docs/roadmap.md)
+The release passed five native package jobs, browser, installed VSIX and
+upgrade checks. The owner also reported the supplied short desktop check
+working. [Release verification and coverage](docs/release-alpha4-verification.md) ·
+[Roadmap](docs/roadmap.md)
+
+The read-only `serve` and `demo` interfaces keep temporary in-tab collections;
+original-file opening is opt-in in `start` / desktop. Saved collections are
+historical indexed passages, not live copies of the original files.
 
 ## Documentation
 
@@ -226,13 +242,13 @@ publication. [Release pipeline](docs/release-pipeline.md) · [Roadmap](docs/road
 | [DOCX support](docs/docx.md) | [Optional VS Code client](docs/vscode.md) |
 | [Indexing diagnostics](docs/indexing-diagnostics.md) | [Search evaluation](docs/search-evaluation.md) |
 | [Portable snapshots](docs/portable-snapshots.md) | [Experimental connector kit](docs/connectors.md) |
-| [Release checks](docs/release-alpha3-verification.md) | [Product direction](docs/product.md) |
+| [Release checks](docs/release-alpha4-verification.md) | [Product direction](docs/product.md) |
 | [Русский обзор](docs/ru/overview.md) | [Contributing](CONTRIBUTING.md) |
 
 ## Build from source
 
-Requires **Go 1.26+**. No CGO is required. The source tree contains the
-unpublished alpha.4 capabilities described above.
+Requires **Go 1.26+**. No CGO is required. Published packages and their exact
+source revision are listed in the [release verification](docs/release-alpha4-verification.md).
 
 ```bash
 git clone https://github.com/Lephiziel/findrail.git
