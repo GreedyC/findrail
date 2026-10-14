@@ -88,6 +88,19 @@ their registered sources; use a fresh `--data-dir` for an isolated empty start.
 
 Search a remembered word in a note, code file, text PDF or DOCX document. Open
 **Preview** to inspect indexed text and use PDF page controls when present.
+For the optional synthetic demo, stop Findrail and run `./findrail demo`
+(Windows: `.\findrail.exe demo`), then search **idempotency**. The PDF match is
+on page 2. The demo uses its own temporary workspace, removed on normal stop;
+a forced kill can leave temporary files. See [demo instructions](docs/demo.md)
+and the [manual smoke sheet](docs/release-smoke-alpha3.md).
+
+### Unpublished alpha.4 candidate
+
+The following features are in current source builds and alpha.4 rehearsal archives.
+The published alpha.3 downloads above do not contain them. Candidate archives
+also contain the desktop launcher and user install resources; see
+[desktop installation](build/package/INSTALL.txt).
+
 Search results and Preview can show **Открыть оригинал** and **Открыть папку**
 when native opening is explicitly enabled with `start --enable-originals`.
 `serve` and `demo` remain read-only and never launch applications. **Copy
@@ -103,12 +116,6 @@ keeps the temporary in-tab collection. Downloaded Markdown is separate and may
 contain private text and paths. Keep `start` running for
 folder refresh. Ctrl+C stops it; later `./findrail start` resumes the same index.
 If you set `--data-dir`, use that same directory each time.
-
-For the optional synthetic demo, stop Findrail and run `./findrail demo`
-(Windows: `.\findrail.exe demo`), then search **idempotency**. The PDF match is
-on page 2. The demo uses its own temporary workspace, removed on normal stop;
-a forced kill can leave temporary files. See [demo instructions](docs/demo.md)
-and the [manual smoke sheet](docs/release-smoke-alpha3.md).
 
 ### Build from source
 

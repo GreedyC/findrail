@@ -21,10 +21,11 @@ remains `0.1.0-alpha.3`; this source build is a rehearsal, not a published relea
 The workflow checks out that SHA (not a PR merge ref), builds through
 `scripts/package.py --version 0.1.0-alpha.4 --require-clean`, and executes each
 extracted CLI and desktop binaries from a temporary path containing spaces and
-Unicode. Linux and macOS native jobs exercise first/second desktop launch using a
+Unicode. All five native targets exercise first/second desktop launch and PDF
+child extraction through the packaged launcher using a
 controlled native executable adapter on each target OS; these are lifecycle
-checks, not manual viewer demonstrations. Windows also checks its packaged
-PowerShell resources. Linux additionally migrates a synthetic schema-6
+checks, not manual viewer demonstrations. macOS uses the packaged app entrypoint;
+Windows uses the GUI executable. Linux additionally migrates a synthetic schema-6
 alpha.3 index, checks a stopped backup with the real published alpha.3 binary,
 and retains the schema-2 upgrade path. The packaged browser journey tests native
 original/folder actions through controlled local executable adapters and verifies

@@ -116,6 +116,8 @@ def configure_legacy_docx(binary, data, cwd, folder_id):
 
 
 def upgrade_alpha3_schema6(candidate, published_alpha3, root, source_root):
+    if published_alpha3 is None:
+        raise SystemExit('published alpha.3 binary required to verify stopped-backup restore')
     data = root / 'alpha3-schema6-data'
     data.mkdir()
     dbpath, source_id = create_schema2(data, source_root)
@@ -143,6 +145,11 @@ def upgrade_alpha3_schema6(candidate, published_alpha3, root, source_root):
     db.close()
     if before['sources'] != 1 or before['documents'] != 1 or before['search'] != 1 or before['pages'][1][0] != 2:
         raise SystemExit('synthetic alpha.3 schema-6 baseline evidence is invalid')
+    # Prove the fixture is readable by the real old executable before migration.
+    old_listing = json.loads(invoke(published_alpha3, ['sources', '--data-dir', str(data), '--json']).stdout)
+    old_search = json.loads(invoke(published_alpha3, ['search', '--data-dir', str(data), '--json', 'oldcandidateevidence']).stdout)
+    if len(old_listing['sources']) != 1 or old_search['total'] != 1 or old_search['results'][0].get('page') != 2:
+        raise SystemExit('published alpha.3 cannot read the schema-6 baseline')
 
     backup = root / 'stopped-alpha3-schema6-backup'
     shutil.copytree(data, backup)
@@ -227,15 +234,18 @@ def upgrade_alpha3_schema6(candidate, published_alpha3, root, source_root):
     shutil.copytree(backup, restored)
     if directory_digest(restored) != stopped_digest:
         raise SystemExit('stopped schema-6 backup restore changed bytes')
-    if published_alpha3 is None:
-        raise SystemExit('published alpha.3 binary required to verify stopped-backup restore')
     invoke(published_alpha3, ['sources', '--data-dir', str(restored), '--json'])
+    restored_search = json.loads(invoke(published_alpha3, ['search', '--data-dir', str(restored), '--json', 'oldcandidateevidence']).stdout)
+    if restored_search['total'] != 1 or restored_search['results'][0].get('page') != 2:
+        raise SystemExit('published alpha.3 cannot search its restored schema-6 backup')
     restored_db = sqlite3.connect(restored / 'findrail.db')
     restored_schema = restored_db.execute('PRAGMA user_version').fetchone()[0]
     restored_collection_table = restored_db.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='evidence_collections'").fetchone()[0]
     restored_db.close()
     if restored_schema != 6 or restored_collection_table:
         raise SystemExit('published alpha.3 did not read its restored schema-6 backup unchanged')
+    if directory_digest(restored) != stopped_digest:
+        raise SystemExit('published alpha.3 changed its restored stopped backup')
     print(f'Synthetic alpha.3 schema-6 fixture migrated to schema 7 with search, source/document provenance, indexing report, and collection tables; stopped backup restored and opened read-only by the published alpha.3 binary; new collection {collection_id!r} restored after candidate restart. No downgrade attempted.')
 
 

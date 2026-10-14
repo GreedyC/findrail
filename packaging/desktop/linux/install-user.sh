@@ -6,12 +6,14 @@ INSTALL_DIR=$(dirname "$BIN")
 NL='
 '
 CR=$(printf '\r')
-case "$INSTALL_DIR" in *"$NL"*|*"$CR"*) echo 'Install path cannot contain a newline.' >&2; exit 1 ;; esac
-ESCAPED_DIR=$(printf '%s' "$INSTALL_DIR" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/%/%%/g')
+case "$INSTALL_DIR" in *"$NL"*|*"$CR"*|*=*) echo 'Install path cannot contain a newline or equals sign.' >&2; exit 1 ;; esac
+ESCAPED_DIR=$(printf '%s' "$INSTALL_DIR" | sed -e 's/\\/\\\\\\\\/g' -e 's/["`$]/\\\\&/g' -e 's/%/%%/g')
+STRING_DIR=$(printf '%s' "$INSTALL_DIR" | sed -e 's/\\/\\\\/g')
 mkdir -p "$DEST"
 while IFS= read -r line; do
   case "$line" in
-    Exec=*) printf 'Exec="%s/findrail-desktop"\n' "$ESCAPED_DIR" ;;
+    Exec=*) printf 'Exec=/usr/bin/env "%s/findrail-desktop"\n' "$ESCAPED_DIR" ;;
+    TryExec=*) printf 'TryExec=%s/findrail-desktop\n' "$STRING_DIR" ;;
     *) printf '%s\n' "$line" ;;
   esac
 done < "$(dirname "$0")/findrail.desktop" > "$DEST/findrail.desktop"

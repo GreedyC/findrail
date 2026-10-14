@@ -57,6 +57,7 @@ Install for the current user from the extracted archive:
     launcher/linux/uninstall-user.sh.
   macOS: launcher/macos/install-user.sh copies Findrail.app to ~/Applications;
     launcher/macos/uninstall-user.sh removes that app.
+    The candidate macOS app requires macOS 13 or newer, matching its Go 1.27 build.
   Windows: run launcher/windows/install-user.ps1 in PowerShell; remove its
     Start-menu shortcut with launcher/windows/uninstall-user.ps1.
 These scripts do not delete indexed data. On Linux and Windows, the desktop

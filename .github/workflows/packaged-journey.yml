@@ -75,9 +75,9 @@ jobs:
           package.verify_manifest(source)
           package.verify_archive(archive, 'linux-amd64', version)
           root = package.extract_verified(archive, pathlib.Path(os.environ['RUNNER_TEMP']) / 'install space 📦')
-           with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as output:
-               output.write(f'CANDIDATE_DIR={root}\n')
-           PY
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as output:
+              output.write(f'CANDIDATE_DIR={root}\n')
+          PY
       - name: Fetch pinned published alpha.3 for the stopped-backup restore check
         run: |
           set -euo pipefail

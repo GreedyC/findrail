@@ -128,6 +128,7 @@ def extract_verified(archive, destination):
     destination.mkdir(parents=True)
     root = None
     seen = set()
+    portable_seen = set()
     files = set()
 
     def register(name, directory):
@@ -137,22 +138,23 @@ def extract_verified(archive, destination):
         p = pathlib.PurePosixPath(raw)
         if (not raw or p.is_absolute() or '\\' in raw or ':' in raw or
                 any(part in ('', '.', '..') for part in parts) or
-                p.as_posix() != raw or raw in seen):
+                p.as_posix() != raw or raw in seen or raw.casefold() in portable_seen):
             raise ValueError('unsafe or duplicate archive member')
         seen.add(raw)
+        portable_seen.add(raw.casefold())
         if root is None:
             root = p.parts[0]
         if p.parts[0] != root:
             raise ValueError('unexpected archive root')
-        if any('/'.join(p.parts[:index]) in files for index in range(1, len(p.parts))):
+        if any('/'.join(p.parts[:index]).casefold() in files for index in range(1, len(p.parts))):
             raise ValueError('archive member is nested under a regular file')
         if directory:
-            if raw in files:
+            if raw.casefold() in files:
                 raise ValueError('archive member has conflicting types')
         else:
-            if any(existing.startswith(raw + '/') for existing in files):
+            if any(existing.startswith(raw.casefold() + '/') for existing in portable_seen):
                 raise ValueError('archive member conflicts with a directory')
-            files.add(raw)
+            files.add(raw.casefold())
         return p
 
     if archive.name.endswith('.zip'):
@@ -214,6 +216,11 @@ def verify_archive(archive, target, version, expected_schema=None):
         if any(name not in required and not (name.startswith('licenses/') and '/' not in name[len('licenses/'):]
                                              and name.endswith('.txt')) for name in members):
             raise ValueError('package contains an unexpected member')
+        directories = {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_dir()}
+        allowed_directories = {parent.as_posix() for name in members
+                               for parent in pathlib.PurePosixPath(name).parents if parent.as_posix() != '.'}
+        if not directories.issubset(allowed_directories):
+            raise ValueError('package contains an unexpected directory')
         dependency_file = root / 'licenses/DEPENDENCIES.txt'
         dependencies = [line.split(' ', 1)[0] for line in dependency_file.read_text(encoding='utf-8').splitlines() if line]
         module_prefixes = {re.sub(r'[^A-Za-z0-9.-]', '_', module) + '-' for module in dependencies}

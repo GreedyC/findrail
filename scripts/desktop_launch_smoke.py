@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from smoke import pdf_fixture
 
 urllib.request.install_opener(urllib.request.build_opener(urllib.request.ProxyHandler({})))
 
@@ -20,11 +21,16 @@ def main():
     # extracted CLI path to keep this check pinned to that package directory.
     if len(os.sys.argv) == 2:
         launcher = pathlib.Path(os.sys.argv[1]).resolve().parent / executable_name
+    if platform.system() == 'Darwin':
+        launcher = launcher.parent / 'Findrail.app/Contents/MacOS/Findrail'
     if not launcher.is_file():
         raise SystemExit(f'packaged desktop launcher missing: {launcher}')
     with tempfile.TemporaryDirectory(prefix='findrail desktop launcher ') as temporary:
         root = pathlib.Path(temporary)
         data = root / 'private data'
+        notes = root / 'synthetic notes'
+        notes.mkdir()
+        (notes / 'desktop.pdf').write_bytes(pdf_fixture(['desktop first page', 'desktopworkermarker page two']))
         adapters = root / 'controlled opener'
         adapters.mkdir()
         log = root / 'opener.log'
@@ -43,7 +49,7 @@ func main() { f, err := os.OpenFile(os.Getenv("FINDRAIL_OPENER_LOG"), os.O_CREAT
             adapter.chmod(0o755)
         env = {**os.environ, 'PATH': str(adapters) + os.pathsep + os.environ.get('PATH', ''),
                'FINDRAIL_OPENER_LOG': str(log)}
-        first = subprocess.Popen([str(launcher), '--data-dir', str(data)], env=env,
+        first = subprocess.Popen([str(launcher), '--data-dir', str(data), str(notes)], env=env,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             record_path = data / '.desktop-instance.json'
@@ -66,6 +72,10 @@ func main() { f, err := os.OpenFile(os.Getenv("FINDRAIL_OPENER_LOG"), os.O_CREAT
                     time.sleep(.05)
             else:
                 raise AssertionError('desktop endpoint did not become ready')
+            with urllib.request.urlopen(base + '/api/v1/search?q=desktopworkermarker', timeout=3) as response:
+                evidence = json.load(response)
+            if evidence['total'] != 1 or evidence['results'][0].get('page') != 2:
+                raise AssertionError(f'packaged launcher PDF worker failed: {evidence!r}')
 
             second = subprocess.run([str(launcher), '--data-dir', str(data)], env=env,
                                     capture_output=True, text=True, timeout=15)

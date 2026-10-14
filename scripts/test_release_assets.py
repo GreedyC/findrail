@@ -97,23 +97,24 @@ class ReleaseAssetTests(unittest.TestCase):
             with self.assertRaises(ValueError): release.verify(output, '0.1.0-alpha.4', revision)
 
     def test_archive_member_allowlist_rejects_unknown_bundle_files(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = pathlib.Path(temp)
-            source, revision = self.candidate(root)
-            name = 'findrail_0.1.0-alpha.4_linux-amd64.tar.gz'
-            archive = source / name
-            replacement = source / 'rewritten.tar.gz'
-            with tarfile.open(archive, 'r:gz') as original, tarfile.open(replacement, 'w:gz') as output:
-                for member in original.getmembers():
-                    output.addfile(member, original.extractfile(member) if member.isfile() else None)
-                payload = b'unlisted resource'
-                extra = tarfile.TarInfo(name.removesuffix('.tar.gz') + '/launcher/linux/unreviewed')
-                extra.size = len(payload); extra.mode = 0o644
-                output.addfile(extra, io.BytesIO(payload))
-            replacement.replace(archive)
-            with self.assertRaisesRegex(ValueError, 'unexpected member'):
-                release.assemble(source, root / 'out', '0.1.0-alpha.4', revision)
-
+        for directory in (False, True):
+            with tempfile.TemporaryDirectory() as temp:
+                root = pathlib.Path(temp)
+                source, revision = self.candidate(root)
+                name = 'findrail_0.1.0-alpha.4_linux-amd64.tar.gz'
+                archive = source / name
+                replacement = source / 'rewritten.tar.gz'
+                with tarfile.open(archive, 'r:gz') as original, tarfile.open(replacement, 'w:gz') as output:
+                    for member in original.getmembers():
+                        output.addfile(member, original.extractfile(member) if member.isfile() else None)
+                    payload = b'unlisted resource'
+                    extra = tarfile.TarInfo(name.removesuffix('.tar.gz') + '/launcher/linux/unreviewed')
+                    extra.size = 0 if directory else len(payload); extra.mode = 0o644
+                    if directory: extra.type = tarfile.DIRTYPE
+                    output.addfile(extra, None if directory else io.BytesIO(payload))
+                replacement.replace(archive)
+                with self.subTest(directory=directory), self.assertRaisesRegex(ValueError, 'unexpected (member|directory)'):
+                    release.assemble(source, root / 'out', '0.1.0-alpha.4', revision)
     def test_fake_schema_dirty_and_wrong_revision_are_rejected(self):
         current = release.package.schema_version()
         for revision, dirty, schema in (('b' * 40, False, current), ('a' * 40, True, current), ('a' * 40, False, current + 1), ('unknown', False, current)):
