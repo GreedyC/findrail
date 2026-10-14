@@ -11,6 +11,11 @@
   provenance, not original attachments or database backups. They are plaintext
   and may expose original paths/usernames; no secret-redaction guarantee is made.
 - The index contains extracted text, locations, source names, and timestamps.
+- In writable `start`, explicitly saved named evidence collections add selected
+  passages, provenance, ordering and user notes to the same local SQLite data
+  directory. This plaintext is included in a stopped full-directory backup, but
+  not in portable source exports. Published alpha.3 does not contain schema 7;
+  the unpublished alpha.4 candidate does.
 - Runtime local search does not call a hosted model, analytics service, or source API.
 - The database is plaintext, protected by local filesystem permissions rather than encryption.
 - Common credential-like names, hidden entries, and symlinks are skipped. This is not a universal secret detector.

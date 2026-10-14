@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 
 from selenium import webdriver
+from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -33,6 +34,17 @@ def main():
     with tempfile.TemporaryDirectory(prefix="Findrail packaged journey – ") as temporary:
         base = pathlib.Path(temporary)
         root, data = base / "fixture notes – 雪", base / "new private index"
+        adapters = base / "controlled native adapters"
+        adapters.mkdir()
+        adapter_log = base / "native adapter calls.jsonl"
+        adapter = adapters / "gedit"
+        adapter.write_text(f"#!{sys.executable}\nimport json,os,sys\nwith open(os.environ['FINDRAIL_ADAPTER_LOG'],'a',encoding='utf-8') as f:f.write(json.dumps([os.path.basename(sys.argv[0]),*sys.argv[1:]])+'\\n')\n", encoding="utf-8")
+        adapter.chmod(0o755)
+        folder_adapter = adapters / "xdg-open"
+        folder_adapter.write_text(adapter.read_text(encoding="utf-8"), encoding="utf-8")
+        folder_adapter.chmod(0o755)
+        env = {**os.environ, "PATH": str(adapters) + os.pathsep + os.environ.get("PATH", ""),
+               "FINDRAIL_ADAPTER_LOG": str(adapter_log)}
         root.mkdir()
         (root / "meeting notes.md").write_text(
             "idempotencymarker familiar synthetic note. <script>window.fixturePwned=true</script>", encoding="utf-8")
@@ -44,8 +56,8 @@ def main():
         browser = None
 
         def launch():
-            return subprocess.Popen([str(binary), "start", "--data-dir", str(data), "--no-open", "--addr", address],
-                                    cwd=base, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            return subprocess.Popen([str(binary), "start", "--data-dir", str(data), "--enable-originals", "--no-open", "--addr", address],
+                                    cwd=base, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
 
         server = launch()
 
@@ -71,6 +83,7 @@ def main():
             options.add_argument("--headless=new")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--no-proxy-server")
             options.add_experimental_option("prefs", {"download.default_directory": str(base), "download.prompt_for_download": False})
             driver = os.environ.get("FINDRAIL_CHROMEDRIVER")
             browser = webdriver.Chrome(service=Service(executable_path=driver) if driver else Service(), options=options)
@@ -98,11 +111,36 @@ def main():
                            and "matching documents" in d.find_element(By.ID, "status").text)
                 assert "1 matching" in browser.find_element(By.ID, "status").text
 
+            def open_preview(query):
+                def click_matching_result(driver):
+                    if driver.find_element(By.ID, "submit").get_property("disabled"):
+                        return False
+                    for card in driver.find_elements(By.CSS_SELECTOR, ".result"):
+                        if query not in card.find_element(By.CLASS_NAME, "snippet").text:
+                            continue
+                        button = card.find_element(By.XPATH, ".//button[.='Preview']")
+                        if button.is_displayed() and button.is_enabled():
+                            button.click()
+                            return True
+                    return False
+
+                # Live inventory refresh can replace a result between lookup
+                # and click. Reacquire the matching card and use a real click.
+                WebDriverWait(browser, 20, ignored_exceptions=(StaleElementReferenceException,)).until(click_matching_result)
+
             search("idempotencymarker")
             assert "1 matching" in browser.find_element(By.ID, "status").text
-            browser.find_element(By.XPATH, "//button[.='Preview']").click()
+            open_preview("idempotencymarker")
             wait.until(lambda d: "idempotencymarker" in d.find_element(By.ID, "preview-body").text)
+            browser.execute_script("document.querySelector('#preview .preview-actions + p.notice').id='original-action-status'")
             assert browser.execute_script("return window.fixturePwned===true") is False
+            browser.find_element(By.ID, "open-original").click()
+            wait.until(lambda d: "Opening the current file" in d.find_element(By.ID, "original-action-status").text)
+            browser.find_element(By.ID, "open-folder").click()
+            wait.until(lambda d: len(adapter_log.read_text(encoding="utf-8").splitlines()) == 2)
+            adapter_calls = [json.loads(line) for line in adapter_log.read_text(encoding="utf-8").splitlines()]
+            assert adapter_calls == [["gedit", "--", str(root / "meeting notes.md")],
+                                     ["xdg-open", str(root)]], adapter_calls
             selected = browser.execute_script("""
                 const body=document.getElementById('preview-body');
                 const walker=document.createTreeWalker(body,NodeFilter.SHOW_TEXT),nodes=[];
@@ -123,7 +161,7 @@ def main():
             assert "Duplicate" in browser.find_element(By.ID, "collection-status").get_property("textContent")
             browser.find_element(By.ID, "close-preview").click()
             search("page2journey", "pdf")
-            browser.find_element(By.XPATH, "//button[.='Preview']").click()
+            open_preview("page2journey")
             wait.until(lambda d: "Page 2 / 2" in d.find_element(By.ID, "page-label").text)
             assert "secondpage" in browser.find_element(By.ID, "preview-body").text
             browser.execute_script("document.getElementById('whole-preview').checked=true")
@@ -143,7 +181,7 @@ def main():
             assert "runbook.pdf — page 2" in text and (root / "runbook.pdf").as_uri() + "#page=2" in text
             browser.find_element(By.ID, "collection-close").click()
             search("docxjourney", "docx")
-            browser.find_element(By.XPATH, "//button[.='Preview']").click()
+            open_preview("docxjourney")
             wait.until(lambda d: "docxjourney" in d.find_element(By.ID, "preview-body").text)
             assert "page numbers are unavailable" in browser.find_element(By.ID, "preview-notice").text.lower()
             assert "page" not in browser.find_element(By.ID, "preview-meta").text.lower()
@@ -160,7 +198,7 @@ def main():
             assert browser.find_element(By.ID, "collection-count").text == "0"
             search("idempotencymarker")
             assert "1 matching" in browser.find_element(By.ID, "status").text
-            print("Packaged browser journey passed: empty start, UI Add folder, committed source/DOCX policy, search, preview, exact selected quote, duplicate, PDF page 2, Markdown bytes, reload and restart.")
+            print("Packaged browser journey passed: empty start, UI Add folder, committed source/DOCX policy, search, preview, controlled original/folder adapters, exact selected quote, duplicate, PDF page 2, Markdown bytes, reload and restart.")
         finally:
             if browser:
                 browser.quit()

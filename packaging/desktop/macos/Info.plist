@@ -5,5 +5,5 @@
 <key>CFBundleIdentifier</key><string>org.findrail.desktop</string>
 <key>CFBundleName</key><string>Findrail</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>LSMinimumSystemVersion</key><string>11.0</string>
+<key>LSMinimumSystemVersion</key><string>13.0</string>
 </dict></plist>

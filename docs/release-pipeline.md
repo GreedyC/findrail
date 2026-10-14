@@ -8,7 +8,9 @@ read-only published-release state check. Only after every
 gate succeeds can the final job create a release. Pull requests rehearse the
 same gates with publication disabled and app version alpha.3. Publication is
 restricted to the canonical repository's main push or explicit main dispatch;
-PR and fork previews have read-only permissions.
+PR and fork previews have read-only permissions. The unpublished alpha.4
+candidate archives include native desktop launchers and target-specific install
+resources; these are archive members, not additional release assets.
 
 ## Preview rehearsal (agent 05 handoff)
 
@@ -18,7 +20,17 @@ For an unpublished alpha.4 candidate, use **Actions → Package rehearsal
 remains `0.1.0-alpha.3`; this source build is a rehearsal, not a published release.
 The workflow checks out that SHA (not a PR merge ref), builds through
 `scripts/package.py --version 0.1.0-alpha.4 --require-clean`, and executes each
-extracted binary from a temporary path containing spaces and Unicode. It cannot
+extracted CLI and desktop binaries from a temporary path containing spaces and
+Unicode. All five native targets exercise first/second desktop launch and PDF
+child extraction through the packaged launcher using a
+controlled native executable adapter on each target OS; these are lifecycle
+checks, not manual viewer demonstrations. macOS uses the packaged app entrypoint;
+Windows uses the GUI executable. Linux additionally migrates a synthetic schema-6
+alpha.3 index, checks a stopped backup with the real published alpha.3 binary,
+and retains the schema-2 upgrade path. The packaged browser journey tests native
+original/folder actions through controlled local executable adapters and verifies
+named collection restoration only after the candidate process stops and restarts.
+It cannot
 create or move tags, edit VERSION, or publish a release. The five artifacts are
 named `candidate-<sha>-<target>` and retained for 14 days. A full asset rehearsal
 uses **Alpha release candidate → Run workflow** with that SHA and `publish=false`;
@@ -94,8 +106,13 @@ migration inventory, and archive BUILD-INFO must agree with the manifest. Unknow
 candidate versions and malformed metadata fail closed. The generated manifest includes the five platform archives and the one VSIX.
 Archive bytes are not compared across operating systems/toolchains. Native
 verification checks BUILD-INFO revision/version/target/cleanliness and invokes
-the executable version command; Linux additionally runs upgrade and browser/API
-smokes. The Linux browser job consumes that exact native archive, starts an
+the CLI version command. Candidate archives use strict per-target member
+allowlists for the CLI, desktop launcher, that target's install resources, build
+metadata, product notices and bounded license inventory; historical alpha.3
+retains its original archive member set. Extraction rejects traversal,
+duplicate/conflicting paths, links and special files; launcher executable modes
+are checked. Linux additionally runs upgrade and browser/API smokes. The Linux
+browser job consumes that exact native archive, starts an
 empty index, adds a folder in the UI, checks selected text/PDF-page citations
 and Markdown download, and checks reload/restart. The installed client job runs
 extension tests and compiled-server integration, then installs the actual VSIX

@@ -2,7 +2,8 @@
 Type=Application
 Name=Findrail
 Comment=Search your local notes and documents
-Exec=@INSTALL_DIR@/findrail-desktop
+Exec=/usr/bin/env "@INSTALL_DIR@/findrail-desktop"
+TryExec=@INSTALL_DIR@/findrail-desktop
 Terminal=false
 Categories=Utility;Office;
 StartupNotify=true

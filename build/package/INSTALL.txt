@@ -1,10 +1,11 @@
 Findrail local alpha — https://github.com/Lephiziel/findrail
 
-RELEASE STATUS
-This package contains Findrail 0.1.0-alpha.3. BUILD-INFO.json records its exact
-version, source revision and target. Download public archives and checksums only
-from the actual GitHub release page. Older alpha.2 archives use schema 2 and
-remain suitable for a restored pre-upgrade index, not an upgraded schema-6 index.
+PACKAGE IDENTITY
+Read BUILD-INFO.json for the exact application version, source revision, target
+and SQLite schema. A source-built or alpha.4 rehearsal archive is not a published
+release; download public packages and checksums only from the actual GitHub
+release page. Published alpha.3 is pinned to schema 6. Alpha.4 candidate packages
+use schema 7; alpha.3 binaries cannot open their upgraded data directory.
 
 INSTALL A PUBLISHED STANDALONE ARCHIVE
 1. From the GitHub Releases page, download the archive for your OS/CPU and the
@@ -25,25 +26,43 @@ Published alpha.2 lacks the new Sources panel and evidence collections. With
 that archive, use ./findrail demo (Windows: .\findrail.exe demo), or start an
 explicit folder: ./findrail start "/absolute/path/to/notes" (Windows:
 .\findrail.exe start "C:\Users\YOU\Documents\Notes"). The following steps
-describe this alpha.3 package, not the older alpha.2 download.
+    describe the packaged candidate; published alpha.2 has fewer features.
 
-ALPHA.3 FIRST RUN (AFTER VERIFYING THIS ARCHIVE)
+FIRST RUN (AFTER VERIFYING THIS ARCHIVE)
 4. Start Findrail with no source selected yet, then add only the folder you choose.
    Without --data-dir it uses the default location below and resumes an existing
    index there. For an isolated fresh start, use a new --data-dir (spaces are OK):
    Linux/macOS, from the extracted folder:
-      ./findrail start --data-dir "$HOME/Findrail alpha3 test data" --no-open
+      ./findrail start --data-dir "$HOME/Findrail test data" --no-open
    Windows PowerShell, from the extracted folder:
-      .\findrail.exe start --data-dir "$env:USERPROFILE\Findrail alpha3 test data" --no-open
+      .\findrail.exe start --data-dir "$env:USERPROFILE\Findrail test data" --no-open
    Open the loopback URL printed in the terminal (normally
    http://127.0.0.1:7766). In Sources choose Add folder and enter the absolute
    path on the machine running Findrail. A browser picker cannot select a
    server-side path. Keep the terminal process running; Ctrl+C stops it.
-5. Search for a remembered word in a technical note or text PDF. Open Preview;
-   confirm a PDF result's actual page. Collections are optional and in-tab only:
-   select two exact passages, add a note, download the Markdown, then restart
-   Findrail and confirm the app starts normally. The collection itself is cleared
-   when the tab reloads; the downloaded file is separate.
+ 5. Search for a remembered word in a technical note or text PDF. Open Preview;
+    confirm a PDF result's actual page. Select exact passages, save a named
+    collection and notes/order, then restart and confirm restoration. Read-only
+    serve/demo uses only a temporary in-tab collection.
+
+DESKTOP LAUNCHER (candidate archives)
+The five alpha.4 candidate archives include the ordinary `findrail` CLI and the
+separate `findrail-desktop` launcher. It acquires ownership of the chosen data
+directory before opening SQLite. Starting it again opens the verified existing
+loopback endpoint rather than creating a second server. Closing a browser tab does
+not stop Findrail; use the UI Quit action or stop the owning process.
+
+Install for the current user from the extracted archive:
+  Linux: launcher/linux/install-user.sh; remove the menu entry with
+    launcher/linux/uninstall-user.sh.
+  macOS: launcher/macos/install-user.sh copies Findrail.app to ~/Applications;
+    launcher/macos/uninstall-user.sh removes that app.
+    The candidate macOS app requires macOS 13 or newer, matching its Go 1.27 build.
+  Windows: run launcher/windows/install-user.ps1 in PowerShell; remove its
+    Start-menu shortcut with launcher/windows/uninstall-user.ps1.
+These scripts do not delete indexed data. On Linux and Windows, the desktop
+launcher can also be run directly. On macOS, launch Findrail.app. Uninstalling
+the app is separate from deleting the data directory.
 
 For Linux/macOS, an extracted path with spaces works as, for example:
   "/home/alex/Apps/Findrail alpha"/findrail start --no-open
@@ -64,10 +83,10 @@ If you configured --data-dir, use that exact directory for backup and restore.
 The index is separate from the extracted application directory.
 
 UPGRADE / BACKUP / ROLLBACK
-The older alpha.2 binary uses legacy schema 2. This alpha.3 package uses schema 6,
-with forward migrations 1–6 (001_init, 002_local_alpha,
-003_github_snapshots, 004_docx_policy, 005_archive_sources,
-006_indexing_reports). Migrations run forward on the new binary's first write;
+The older alpha.2 binary uses schema 2. Published alpha.3 uses schema 6; the
+alpha.4 candidate uses schema 7 with forward migrations 1–7 (001_init,
+002_local_alpha, 003_github_snapshots, 004_docx_policy, 005_archive_sources,
+006_indexing_reports, 007_evidence_collections). Migrations run forward on the new binary's first write;
 there are no reverse migrations. Legacy schema-2 sources keep DOCX disabled by
 default; enable it explicitly per source before rescanning if desired.
 
@@ -85,7 +104,8 @@ Use the actual configured path if it differs from the defaults. Examples:
 Do not put the backup inside the data directory being copied. Check that the
 backup contains the database and any WAL/SHM files before opening the new binary.
 
-Never point an alpha.2/schema-2 binary at a schema-6 index. For rollback, stop
+Never point an older binary at a newer schema: alpha.2/schema 2 cannot open
+schema 6, and published alpha.3/schema 6 cannot open schema 7. For rollback, stop
 every Findrail process, preserve the upgraded directory separately, and restore
 the WHOLE pre-upgrade backup to a different directory. Run the older compatible
 binary against that restored copy (set --data-dir to that copy if needed). Do not

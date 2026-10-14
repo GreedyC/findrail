@@ -25,13 +25,22 @@ class ReleaseAssetTests(unittest.TestCase):
                 del info['schema_version']
             members = {'BUILD-INFO.json': json.dumps(info).encode(),
                        'INSTALL.txt': b'x', 'LICENSE': b'x', 'NOTICE': b'x',
-                       'licenses/DEPENDENCIES.txt': b'x', 'licenses/Go-LICENSE.txt': b'x'}
+                       'licenses/DEPENDENCIES.txt': b'example.com/dependency v1.0.0\n',
+                       'licenses/Go-LICENSE.txt': b'x',
+                       'licenses/example.com_dependency-LICENSE.txt': b'x'}
+            historical = version == '0.1.0-alpha.3' and revision == release.ALPHA3_REVISION and dirty is False
+            if not historical:
+                members['findrail-desktop.exe' if target.startswith('windows-') else 'findrail-desktop'] = b'desktop'
+                members.update({destination: b'resource' for destination in release.package.RESOURCE_FILES[target.split('-', 1)[0]].values()})
+                if target.startswith('darwin-'):
+                    members['Findrail.app/Contents/MacOS/Findrail'] = b'launcher'
             if target.startswith('windows-'):
                 members['findrail.exe'] = b'fake'
                 with zipfile.ZipFile(source / name, 'w') as zf:
                     for path, data in members.items():
                         item = zipfile.ZipInfo(f'{stem}/{path}')
-                        item.external_attr = (0o100755 if path == 'findrail.exe' else 0o100644) << 16
+                        executable = path in {'findrail.exe', 'findrail-desktop.exe'} or path in release.package.EXECUTABLE_RESOURCES
+                        item.external_attr = (0o100755 if executable else 0o100644) << 16
                         zf.writestr(item, data)
             else:
                 members['findrail'] = b'fake'
@@ -39,7 +48,8 @@ class ReleaseAssetTests(unittest.TestCase):
                     for path, data in members.items():
                         item = tarfile.TarInfo(f'{stem}/{path}')
                         item.size = len(data)
-                        item.mode = 0o755 if path == 'findrail' else 0o644
+                        executable = path in {'findrail', 'findrail-desktop', 'Findrail.app/Contents/MacOS/Findrail'} or path in release.package.EXECUTABLE_RESOURCES
+                        item.mode = 0o755 if executable else 0o644
                         tf.addfile(item, io.BytesIO(data))
         with zipfile.ZipFile(source / release.VSIX, 'w') as zf:
             zf.writestr('extension/package.json', json.dumps({'version': '0.1.0', 'name': 'findrail-readonly',
@@ -86,6 +96,25 @@ class ReleaseAssetTests(unittest.TestCase):
             sums.write_text(sums.read_text() + sums.read_text().splitlines()[0] + '\n')
             with self.assertRaises(ValueError): release.verify(output, '0.1.0-alpha.4', revision)
 
+    def test_archive_member_allowlist_rejects_unknown_bundle_files(self):
+        for directory in (False, True):
+            with tempfile.TemporaryDirectory() as temp:
+                root = pathlib.Path(temp)
+                source, revision = self.candidate(root)
+                name = 'findrail_0.1.0-alpha.4_linux-amd64.tar.gz'
+                archive = source / name
+                replacement = source / 'rewritten.tar.gz'
+                with tarfile.open(archive, 'r:gz') as original, tarfile.open(replacement, 'w:gz') as output:
+                    for member in original.getmembers():
+                        output.addfile(member, original.extractfile(member) if member.isfile() else None)
+                    payload = b'unlisted resource'
+                    extra = tarfile.TarInfo(name.removesuffix('.tar.gz') + '/launcher/linux/unreviewed')
+                    extra.size = 0 if directory else len(payload); extra.mode = 0o644
+                    if directory: extra.type = tarfile.DIRTYPE
+                    output.addfile(extra, None if directory else io.BytesIO(payload))
+                replacement.replace(archive)
+                with self.subTest(directory=directory), self.assertRaisesRegex(ValueError, 'unexpected (member|directory)'):
+                    release.assemble(source, root / 'out', '0.1.0-alpha.4', revision)
     def test_fake_schema_dirty_and_wrong_revision_are_rejected(self):
         current = release.package.schema_version()
         for revision, dirty, schema in (('b' * 40, False, current), ('a' * 40, True, current), ('a' * 40, False, current + 1), ('unknown', False, current)):

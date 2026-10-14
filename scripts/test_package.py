@@ -1,15 +1,110 @@
+import ctypes
+import ctypes.util
+import json
+import os
 import pathlib
+import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 import zipfile
+from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import package
 
 
 class PackageSafetyTests(unittest.TestCase):
+    def test_platform_launcher_allowlists_are_explicit_and_present(self):
+        self.assertEqual(set(package.RESOURCE_FILES), {'linux', 'darwin', 'windows'})
+        for platform, members in package.RESOURCE_FILES.items():
+            with self.subTest(platform=platform):
+                self.assertTrue(members)
+                for source, destination in members.items():
+                    self.assertTrue((package.ROOT / source).is_file(), source)
+                    self.assertNotIn('..', pathlib.PurePosixPath(destination).parts)
+        self.assertIn('Findrail.app/Contents/Info.plist', package.RESOURCE_FILES['darwin'].values())
+        self.assertIn('launcher/linux/findrail.desktop', package.RESOURCE_FILES['linux'].values())
+
+    @unittest.skipIf(os.name == 'nt', 'POSIX desktop installer')
+    def test_linux_user_installer_escapes_package_paths_and_keeps_data_separate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = pathlib.Path(temporary)
+            package_root = base / 'Findrail space & 100% "quoted" \\ back $dollar `tick`' / 'candidate'
+            resources = package_root / 'launcher/linux'
+            resources.mkdir(parents=True)
+            for name in ('findrail.desktop', 'install-user.sh', 'uninstall-user.sh'):
+                shutil.copyfile(package.ROOT / 'packaging/desktop/linux' / name, resources / name)
+            launcher = package_root / 'findrail-desktop'
+            launcher.write_text(f'#!{sys.executable}\nimport json,os,sys\n'
+                               'path=os.environ["FINDRAIL_TEST_LAUNCH_LOG"]\n'
+                               'with open(path+".tmp","w") as f:json.dump(sys.argv,f)\n'
+                               'os.replace(path+".tmp",path)\n', encoding='utf-8')
+            launcher.chmod(0o755)
+            home, xdg = base / 'home', base / 'xdg'
+            home.mkdir()
+            env = {**os.environ, 'HOME': str(home), 'XDG_DATA_HOME': str(xdg)}
+            result = subprocess.run(['sh', str(resources / 'install-user.sh')], env=env,
+                                    capture_output=True, text=True, check=True)
+            installed = (xdg / 'applications/findrail.desktop').read_text(encoding='utf-8')
+            self.assertNotIn('@INSTALL_DIR@', installed)
+            self.assertIn('Installed user menu entry', result.stdout)
+            self.assertFalse((home / '.local/share/findrail').exists())
+            # GLib is the real desktop-entry parser on Linux. Verify the
+            # installed command, rather than mirroring its escaping algorithm.
+            library = ctypes.util.find_library('gio-2.0') if sys.platform == 'linux' else None
+            if library:
+                gio = ctypes.CDLL(library)
+                gio.g_desktop_app_info_new_from_filename.argtypes = [ctypes.c_char_p]
+                gio.g_desktop_app_info_new_from_filename.restype = ctypes.c_void_p
+                gio.g_app_info_launch.argtypes = [ctypes.c_void_p] * 4
+                gio.g_app_info_launch.restype = ctypes.c_int
+                gio.g_object_unref.argtypes = [ctypes.c_void_p]
+                app = gio.g_desktop_app_info_new_from_filename(os.fsencode(xdg / 'applications/findrail.desktop'))
+                self.assertTrue(app, 'installed desktop entry must be accepted by GLib')
+                log = base / 'launched.json'
+                try:
+                    with patch.dict(os.environ, {'FINDRAIL_TEST_LAUNCH_LOG': str(log)}):
+                        self.assertEqual(gio.g_app_info_launch(app, None, None, None), 1)
+                        deadline = time.monotonic() + 3
+                        while not log.exists() and time.monotonic() < deadline:
+                            time.sleep(.02)
+                        self.assertTrue(log.exists(), 'desktop entry did not execute the intended launcher')
+                    self.assertEqual(json.loads(log.read_text()), [str(launcher)])
+                finally:
+                    gio.g_object_unref(app)
+
+    @unittest.skipIf(os.name == 'nt', 'POSIX app installer')
+    def test_macos_reinstall_updates_one_app_and_rejects_symlink_destination(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            package_root = root / 'package'
+            resources = package_root / 'launcher/macos'
+            resources.mkdir(parents=True)
+            installer = resources / 'install-user.sh'
+            shutil.copyfile(package.ROOT / 'packaging/desktop/macos/install-user.sh', installer)
+            source = package_root / 'Findrail.app/Contents/MacOS'
+            source.mkdir(parents=True)
+            executable = source / 'Findrail'
+            executable.write_text('first')
+            home = root / 'user'
+            env = {**os.environ, 'HOME': str(home)}
+            subprocess.run(['sh', str(installer)], env=env, check=True, capture_output=True)
+            executable.write_text('second')
+            subprocess.run(['sh', str(installer)], env=env, check=True, capture_output=True)
+            installed = home / 'Applications/Findrail.app'
+            self.assertEqual((installed / 'Contents/MacOS/Findrail').read_text(), 'second')
+            self.assertFalse((installed / 'Findrail.app').exists())
+            shutil.rmtree(installed)
+            other = root / 'unrelated'; other.mkdir()
+            installed.symlink_to(other, target_is_directory=True)
+            result = subprocess.run(['sh', str(installer)], env=env, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(list(other.iterdir()), [])
+
     def test_go_license_fallback_retains_all_three_conditions(self):
         self.assertIn('Neither the name of Google LLC', package.GO_LICENSE_FALLBACK)
         self.assertIn('specific prior written permission', package.GO_LICENSE_FALLBACK)
@@ -42,6 +137,33 @@ class PackageSafetyTests(unittest.TestCase):
             with zipfile.ZipFile(archive, 'w') as zf:
                 zf.writestr('pkg/..\\..\\escape', b'bad')
             with self.assertRaises(ValueError): package.extract_verified(archive, pathlib.Path(temp) / 'out')
+
+    def test_extract_rejects_duplicate_and_file_directory_conflicts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            for members in ((('pkg/a', b'a'), ('pkg/a', b'b')),
+                            (('pkg/A', b'a'), ('pkg/a', b'b')),
+                            (('pkg/a', b'a'), ('pkg/a/b', b'b'))):
+                archive = root / 'bad.tar.gz'
+                with tarfile.open(archive, 'w:gz') as tf:
+                    for name, data in members:
+                        info = tarfile.TarInfo(name); info.size = len(data)
+                        import io
+                        tf.addfile(info, io.BytesIO(data))
+                with self.subTest(members=members), self.assertRaises(ValueError):
+                    package.extract_verified(archive, root / ('out-' + str(len(list(root.iterdir())))))
+
+    def test_extract_rejects_file_over_an_explicit_child_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp); archive = root / 'bad.tar.gz'
+            with tarfile.open(archive, 'w:gz') as tf:
+                info = tarfile.TarInfo('pkg/a/b'); info.type = tarfile.DIRTYPE
+                tf.addfile(info)
+                info = tarfile.TarInfo('pkg/a'); info.size = 1
+                import io
+                tf.addfile(info, io.BytesIO(b'x'))
+            with self.assertRaises(ValueError):
+                package.extract_verified(archive, root / 'out')
 
     def test_safe_basename(self):
         for name in ('../a', 'a/b', 'C:\\a', ''):
