@@ -222,7 +222,8 @@ func TestRootIgnorePolicyWatcherAtomicRecoveryAndPrunedDiscovery(t *testing.T) {
 	if _, err = ingest.Run(ctx, s, conn); err != nil {
 		t.Fatal(err)
 	}
-	m := syncer.New(s, syncer.Config{Factory: factory, Interval: time.Hour, DiscoveryInterval: 20 * time.Millisecond, Debounce: 20 * time.Millisecond})
+	locks := sourcecoord.New()
+	m := syncer.New(s, syncer.Config{Coordinator: locks, Factory: factory, Interval: time.Hour, DiscoveryInterval: 20 * time.Millisecond, Debounce: 20 * time.Millisecond})
 	done := make(chan struct{})
 	go func() { defer close(done); m.Run(ctx) }()
 	defer func() { cancel(); <-done }()
@@ -262,12 +263,20 @@ func TestRootIgnorePolicyWatcherAtomicRecoveryAndPrunedDiscovery(t *testing.T) {
 	}
 	atomicPolicy("!generated/\n")
 	eventually(t, func() bool { return has("newly", 1) })
+	// A second successful event refresh may still be pending. Keep its commit
+	// out of the baseline-to-malformed-policy interval, as in the missing-root test.
+	unlock, err := locks.Acquire(ctx, conn.Source().ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
 	validReport, err := s.SourceReport(ctx, conn.Source().ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	validReportID := validReport["report"].(sqlite.ReportSummary).ReportID
 	atomicPolicy("[malformed\n")
+	unlock()
 	eventually(t, func() bool { return m.Status()[0].State == "error" })
 	if status := m.Status()[0]; status.Progress.FailureCode != "scan_failed" || status.Progress.Committed {
 		t.Fatalf("policy failure progress leaked or committed: %+v", status.Progress)
