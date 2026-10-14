@@ -87,6 +87,7 @@ def main():
                 assert "Idempotency" in browser.find_element(By.ID, "preview-body").text
                 assert browser.find_element(By.ID, "preview-location").text.endswith("#page=2")
                 (output / "preview-alpha3.png").write_bytes(preview.screenshot_as_png)
+                (output / "overview-alpha3.png").write_bytes(browser.get_screenshot_as_png())
                 (output / "capture.json").write_text(json.dumps({
                     "version": version, "source_revision": "d5dc1bec50efcb3c26d09e9b24b14cf3c0b2f4cb",
                     "schema": 6, "query": "idempotency", "matching_documents": 3,
