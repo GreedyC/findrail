@@ -76,8 +76,11 @@ The release pipeline must verify the exact release commit through full CI,
 five native package jobs, an extracted Linux browser journey, installed VSIX
 checks and complete manifest/checksum verification before publication.
 Automated native-opening checks use controlled executable adapters; they do not
-certify every external viewer or OS menu. Record manual desktop acceptance in
-`docs/release-smoke-alpha4.md` before merging the release PR.
+certify every external viewer or OS menu. On 2026-10-14 the owner reported the
+short desktop acceptance check passed, including menu launch, opening originals
+and restoring a saved collection. Exact OS/viewer details and independent manual
+GUI coverage on other platforms are not established by that report. See
+`docs/release-smoke-alpha4.md`.
 
 This remains an unsigned alpha. Code signing, notarization, automatic updates,
 OCR, semantic retrieval, private GitHub and team authentication are not included.
