@@ -162,7 +162,7 @@ responses; it does not provide a remote endpoint.
 | Connected alpha | Public GitHub snapshots implemented; private credentials and resumable cursors remain |
 | Extensible beta | Connector SDK stabilization, versioned manifests, conformance suite |
 | Semantic beta | Optional embedding worker, passage retrieval, hybrid evaluation |
-| Clients | Read-only stdio MCP and optional read-only VS Code client; desktop launcher and browser integrations remain planned |
+| Clients | Read-only stdio MCP, optional read-only VS Code client, and alpha.4 desktop launcher with per-user integration; browser extensions remain planned |
 | Larger deployments | Operated sync / storage only after demand |
 
 The application becomes a service platform only if user needs and measurements
