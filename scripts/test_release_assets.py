@@ -67,11 +67,20 @@ class ReleaseAssetTests(unittest.TestCase):
             self.assertEqual(len(manifest['assets']), 6)
             self.assertEqual(release.verify(output, '0.1.0-alpha.4', revision), manifest)
 
-    def test_candidate_schema_is_source_derived_and_supports_next_migration(self):
-        with patch.object(release.package, 'schema_version', return_value=7):
+    def test_published_alpha4_schema_is_frozen_when_source_advances(self):
+        with patch.object(release.package, 'schema_version', return_value=8):
             self.assertEqual(release.contract_schema('0.1.0-alpha.4'), 7)
         self.assertEqual(release.contract_schema('0.1.0-alpha.3'), 6)
         with self.assertRaises(ValueError): release.contract_schema('0.1.0-alpha.5')
+
+    def test_alpha4_remains_verifiable_after_a_new_source_migration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            source, revision = self.candidate(root, schema=7)
+            output = root / 'release'
+            release.assemble(source, output, '0.1.0-alpha.4', revision)
+            with patch.object(release.package, 'schema_version', return_value=8):
+                self.assertEqual(release.verify(output, '0.1.0-alpha.4', revision)['schema_version'], 7)
 
     def test_historical_alpha3_contract_keeps_schema_six(self):
         self.assertEqual(release.contract_schema('0.1.0-alpha.3'), 6)

@@ -16,12 +16,12 @@ ALPHA3_REVISION = 'd5dc1bec50efcb3c26d09e9b24b14cf3c0b2f4cb'
 
 
 def contract_schema(version):
-    # Published contracts are immutable. Candidate schema comes from the
-    # migration constant and inventory in the checked-out source tree.
+    # Published contracts are immutable, even after source migrations advance.
+    # A new schema needs a new release/candidate contract.
     if version == '0.1.0-alpha.3':
         return 6
     if version == '0.1.0-alpha.4':
-        return package.schema_version()
+        return 7
     raise ValueError('unsupported release/candidate version contract')
 
 

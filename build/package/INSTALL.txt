@@ -2,9 +2,9 @@ Findrail local alpha — https://github.com/Lephiziel/findrail
 
 PACKAGE IDENTITY
 Read BUILD-INFO.json for the exact application version, source revision, target
-and SQLite schema. A source-built or alpha.4 rehearsal archive is not a published
+and SQLite schema. A source-built or CI/rehearsal archive is not a published
 release; download public packages and checksums only from the actual GitHub
-release page. Published alpha.3 is pinned to schema 6. Alpha.4 candidate packages
+release page. Published alpha.3 is pinned to schema 6. Alpha.4 packages
 use schema 7; alpha.3 binaries cannot open their upgraded data directory.
 
 INSTALL A PUBLISHED STANDALONE ARCHIVE
@@ -26,7 +26,7 @@ Published alpha.2 lacks the new Sources panel and evidence collections. With
 that archive, use ./findrail demo (Windows: .\findrail.exe demo), or start an
 explicit folder: ./findrail start "/absolute/path/to/notes" (Windows:
 .\findrail.exe start "C:\Users\YOU\Documents\Notes"). The following steps
-    describe the packaged candidate; published alpha.2 has fewer features.
+    describe alpha.3/alpha.4; published alpha.2 has fewer features.
 
 FIRST RUN (AFTER VERIFYING THIS ARCHIVE)
 4. Start Findrail with no source selected yet, then add only the folder you choose.
@@ -41,12 +41,13 @@ FIRST RUN (AFTER VERIFYING THIS ARCHIVE)
    path on the machine running Findrail. A browser picker cannot select a
    server-side path. Keep the terminal process running; Ctrl+C stops it.
  5. Search for a remembered word in a technical note or text PDF. Open Preview;
-    confirm a PDF result's actual page. Select exact passages, save a named
-    collection and notes/order, then restart and confirm restoration. Read-only
-    serve/demo uses only a temporary in-tab collection.
+    confirm a PDF result's actual page. In alpha.4 start/desktop, select exact
+    passages, explicitly Save a named collection and notes/order, then restart
+    using the same data directory and confirm restoration. Alpha.3 and read-only
+    serve/demo use only a temporary in-tab collection.
 
-DESKTOP LAUNCHER (candidate archives)
-The five alpha.4 candidate archives include the ordinary `findrail` CLI and the
+DESKTOP LAUNCHER (alpha.4 archives)
+The five alpha.4 archives include the ordinary `findrail` CLI and the
 separate `findrail-desktop` launcher. It acquires ownership of the chosen data
 directory before opening SQLite. Starting it again opens the verified existing
 loopback endpoint rather than creating a second server. Closing a browser tab does
@@ -57,7 +58,7 @@ Install for the current user from the extracted archive:
     launcher/linux/uninstall-user.sh.
   macOS: launcher/macos/install-user.sh copies Findrail.app to ~/Applications;
     launcher/macos/uninstall-user.sh removes that app.
-    The candidate macOS app requires macOS 13 or newer, matching its Go 1.27 build.
+    The alpha.4 macOS app requires macOS 13 or newer, matching its Go 1.27 build.
   Windows: run launcher/windows/install-user.ps1 in PowerShell; remove its
     Start-menu shortcut with launcher/windows/uninstall-user.ps1.
 These scripts do not delete indexed data. On Linux and Windows, the desktop
@@ -84,7 +85,7 @@ The index is separate from the extracted application directory.
 
 UPGRADE / BACKUP / ROLLBACK
 The older alpha.2 binary uses schema 2. Published alpha.3 uses schema 6; the
-alpha.4 candidate uses schema 7 with forward migrations 1–7 (001_init,
+alpha.4 uses schema 7 with forward migrations 1–7 (001_init,
 002_local_alpha, 003_github_snapshots, 004_docx_policy, 005_archive_sources,
 006_indexing_reports, 007_evidence_collections). Migrations run forward on the new binary's first write;
 there are no reverse migrations. Legacy schema-2 sources keep DOCX disabled by

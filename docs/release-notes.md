@@ -1,62 +1,86 @@
-# Findrail 0.1.0-alpha.3
+# Findrail 0.1.0-alpha.4
 
-Findrail is a local-first search app for notes, code and technical documents.
-Alpha.3 adds empty-index startup and folder selection in the browser, with
-indexed-text Preview and PDF-page evidence. Choose a folder, find a technical
-document, inspect its source, save two passages with a note, and download the
-Markdown citations. Go, Python and an external database are not required at
-runtime.
+Alpha.4 connects local search to an everyday workflow: launch Findrail, find a
+passage, reopen the original file, and return to a saved collection after a
+restart. The app still runs locally with its own SQLite index and embedded web
+interface. Go, Python and a database server are not runtime requirements.
 
 ## Highlights
 
-- Bounded offline DOCX body-text extraction, opt-in Advanced queries and
-  source/format/path/title filters. DOCX previews have no page-number claims.
-- Manual commit-pinned public GitHub text snapshots and a scoped, read-only
-  stdio MCP server. Private GitHub and remote serving are not included.
-- Portable source snapshots preserve indexed plaintext and provenance. They do
-  not contain original files or a frozen database; imported sources are
-  independent and frozen.
-- Source reports show the last committed successful indexing run, not a history
-  of failed attempts. Root-only `.findrailignore` rules are supported; a failed
-  policy scan retains the previous committed content/report.
-- Evidence collections are in-tab memory and disappear on reload. Explicit
-  Markdown download is separate and can contain private text/paths.
-- The read-only `evaluate` command checks Literal result path sets for 1–100
-  cases, with up to 100 results per case. Incomplete cases are errors; mismatches
-  return nonzero after the complete report.
-- Five standalone archives, shared `SHA256SUMS.txt`, `release-manifest.json`, and
-  a separate read-only VS Code VSIX. Extension version is `0.1.0`; it requires a
-  running Findrail server/client API v1 and is not a Marketplace/Open VSX release.
-- Connector conformance tooling remains experimental; independent adoption is
-  not established.
+- A separate **desktop launcher**, with per-user Linux menu installation, a
+  macOS app bundle and Windows Start-menu shortcut resources in the five app
+  archives. A second launch reopens the verified existing instance for the
+  same data directory. Closing a tab keeps the app running; **Quit Findrail**
+  stops it. The CLI's foreground `start`, `serve` and `demo` remain available.
+- **Open original / open containing folder**, explicitly enabled with
+  `start --enable-originals` (or `findrail-desktop --enable-originals`).
+  Actions apply to eligible, verified local documents from selected folders.
+  Preview shows the indexed snapshot; the external app opens the current file.
+  A PDF viewer may open at its default page. DOCX has no page-number claim.
+- **Named evidence collections** in writable `start` and desktop sessions.
+  Save exact passages, notes, names and ordering, then load them from the same
+  data directory after restarting. Saving is explicit. Historical passages
+  retain their original text; source removal or committed document pruning
+  removes attached entries. Read-only `serve` / `demo` keep temporary in-tab
+  collections, and portable source export does not include collections.
+- Strengthened package and upgrade verification: desktop resources, executable
+  modes, safe extraction, single-instance lifecycle, collection restoration,
+  schema-6 upgrade and stopped-backup restoration with the published alpha.3
+  binary. Previously published alpha.3 assets and tag remain unchanged.
 
-## Install and upgrade
+Existing keyword search, Advanced queries, DOCX body text, PDF evidence, folder
+refresh, public GitHub file snapshots, portable indexed-text snapshots, read-only
+stdio MCP and the optional read-only VS Code client remain available.
 
-Download the archive for your OS/CPU and `SHA256SUMS.txt` from this release,
-verify the matching checksum, and extract it. Run `./findrail start` on
-Linux/macOS or `.\findrail.exe start` in Windows PowerShell, then open the
-printed loopback URL and choose **Add folder**. Read the bundled `INSTALL.txt`.
+## Install and first run
 
-Alpha.2 uses schema 2; alpha.3 uses schema 6 with forward migrations 1–6. Stop
-all Findrail processes and back up the entire data directory, including SQLite
-WAL/SHM when present, before upgrading. Legacy sources keep DOCX disabled until
-explicitly enabled. Reverse migrations do not exist. Never open schema 6 with an
-older binary: rollback restores the whole stopped backup to a separate location
-and uses a compatible binary. To uninstall, stop all processes and remove the
-extracted app directory; remove the data directory separately only if its
-plaintext indexed copy is no longer needed. Original files are untouched.
+Download the archive for your OS/CPU and the matching `SHA256SUMS.txt` from this
+release. Verify the archive checksum, extract it, and read `INSTALL.txt`.
+The archive includes the normal CLI and the separate desktop launcher; the VSIX
+is an optional separate client, version `0.1.0`, requiring server/client API v1.
 
-## Validation and limitations
+For a terminal session, run `./findrail start` on Linux/macOS or
+`.\findrail.exe start` in Windows PowerShell, then add a folder in **Sources**.
+For OS-menu installation, run the per-user script under `launcher/linux/`,
+`launcher/macos/` or `launcher/windows/`. macOS includes `Findrail.app`.
+Desktop sessions use a dynamic loopback port; open the actual URL provided by
+the app, rather than assuming the CLI's default port.
 
-The release pipeline rebuilds and checks all five native packages at the release
-commit, exercises the extracted Linux archive in Chromium, checks schema-2 → 6
-upgrade/rollback and runs the installed VSIX against that archive. The owner
-also reported successful local indexing/search/Preview with Word documents and
-repository files. That report does not certify every platform or interaction.
+Native opening is opt-in. To try it in a separate data directory:
 
-Findrail stores indexed text and provenance as local plaintext. OCR, semantic
-retrieval, private GitHub, automatic updates, code signing and notarization are
-not included. Archives are unsigned; macOS may require an app-specific security
-allowance. Public GitHub refresh remains manual. The VSIX needs a separate
-running server. Native package checks do not certify every browser/editor/OS
-security prompt.
+```bash
+./findrail-desktop --data-dir ./findrail-alpha4-test --enable-originals
+```
+
+On macOS use the executable inside `Findrail.app/Contents/MacOS/`; on Windows
+use `findrail-desktop.exe`. When reusing an existing desktop instance, the
+first process's configuration remains active; stop it before changing flags.
+
+## Upgrade and rollback
+
+**Alpha.4 uses schema 7. Published alpha.3 uses schema 6.** Stop all processes
+that use the index, then back up the complete data directory, including SQLite
+WAL/SHM files when present, before the new binary opens it. Migrations 1–7 run
+forward; there is no reverse migration. Alpha.3 cannot read a schema-7 index.
+Rollback restores the whole stopped, pre-upgrade backup to a separate location
+and uses the corresponding older binary. Use a fresh data directory for a first
+test if you do not want to migrate your existing index.
+
+Uninstalling menu/shortcut/app resources preserves indexed data. Deleting the
+data directory is separate and does not delete original documents. Indexed
+text, paths, collections and backup copies are plaintext.
+
+## Validation and limits
+
+The release pipeline must verify the exact release commit through full CI,
+five native package jobs, an extracted Linux browser journey, installed VSIX
+checks and complete manifest/checksum verification before publication.
+Automated native-opening checks use controlled executable adapters; they do not
+certify every external viewer or OS menu. Record manual desktop acceptance in
+`docs/release-smoke-alpha4.md` before merging the release PR.
+
+This remains an unsigned alpha. Code signing, notarization, automatic updates,
+OCR, semantic retrieval, private GitHub and team authentication are not included.
+macOS builds require macOS 13 or newer. Public GitHub refresh is manual.
+Local folder search uploads no documents and has no runtime telemetry; an MCP
+client can forward returned passages to its chosen model provider.
