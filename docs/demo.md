@@ -1,8 +1,11 @@
 # Try Findrail with three fictional documents
 
 The demo contains a Markdown note, a small Go example and a two-page text PDF.
-It uses no accounts, external services or private documents. The
-[37-second screen recording](assets/demo.mp4) shows the running web interface
+It uses no accounts, external services or private documents. The current README
+[search screenshot](assets/search-alpha3.png) shows the published alpha.3
+interface running this demo. [Capture details](assets/README.md).
+
+The older [37-second alpha.2 screen recording](assets/demo.mp4) shows the running web interface
 using these files: keyword search, PDF page 2, a note edit and automatic
 refresh. It contains no added captions or end card. The MP4 preserves the
 original 1920×1080 video frames; its empty audio track was removed and the file
@@ -12,7 +15,7 @@ benchmark.
 
 ## Start
 
-Download and extract the `0.1.0-alpha.2` archive for your platform from
+Download and extract the `0.1.0-alpha.3` archive for your platform from
 [Releases](https://github.com/Lephiziel/findrail/releases). Inside the extracted
 folder, run:
 
@@ -46,10 +49,12 @@ three matching documents. Select **Preview** on `webhook-runbook.pdf`: the
 match is on **page 2 of 2**. **Copy location** includes `#page=2`; it does not
 launch an external PDF viewer.
 
-For a Markdown citation, select the sentence in the page 2 preview and choose
-**Copy as Markdown**. Paste it into a note: the selected passage appears in a
-text code block with the PDF title, `file:` source and `#page=2`. With no
-selection, the button copies the whole visible page preview instead.
+For a Markdown citation, select a sentence in the page 2 preview and choose
+**Copy as Markdown**, or explicitly choose **Use whole visible preview** first.
+Paste it into a note: the selected passage appears in a text code block with
+the PDF title, `file:` source and `#page=2`. **Add to collection** collects
+passages and notes in this tab; the demo collection is temporary and disappears
+on reload. Download Markdown before leaving if you want to keep it.
 
 ## Watch an edit appear
 
@@ -72,8 +77,11 @@ Findrail version, whether installation succeeded, and what failed or helped.
 Use the [alpha feedback issue](https://github.com/Lephiziel/findrail/issues/3)
 or the bug-report template. Share only synthetic or redacted reproductions.
 
-This alpha uses literal keyword search. It does not include OCR, semantic
-retrieval, cloud connectors or a desktop file opener.
+Literal keyword search is the default. Alpha.3 also supports opt-in Advanced
+queries and filters. OCR and semantic retrieval are not included. The demo
+does not enable source-management writes or launch external document viewers.
+The unpublished alpha.4 desktop launcher and persistent collections are a
+separate workflow.
 
 ## Prepare a screen recording
 
