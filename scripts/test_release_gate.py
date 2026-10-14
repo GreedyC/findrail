@@ -3,6 +3,7 @@ import sys
 import unittest
 import io
 import json
+import tempfile
 from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -67,7 +68,65 @@ class ReleaseGateTests(unittest.TestCase):
                 {'tag_sha': 'a' * 40, 'manifest': {**manifest, 'source_revision': 'a' * 40}},
                 [{'name': name} for name in names])
         with self.assertRaisesRegex(ValueError, 'unknown published'):
-            release_gate.existing_release_decision('0.1.0-alpha.4', '1' * 40, sha, release, [])
+            release_gate.existing_release_decision('0.1.0-alpha.5', '1' * 40, sha, release, [])
+
+    def alpha4_release(self):
+        sha = 'b' * 40
+        names = {f'findrail_0.1.0-alpha.4_{target}' + ('.zip' if target.startswith('windows-') else '.tar.gz')
+                 for target in release_assets.TARGETS}
+        names.add(release_assets.VSIX)
+        manifest = {'manifest_version': 1, 'source_revision': sha, 'app_version': '0.1.0-alpha.4',
+                    'schema_version': 7, 'client_api_version': 1, 'extension_version': '0.1.0',
+                    'assets': [{'basename': name} for name in sorted(names)]}
+        return sha, {'tag_sha': sha, 'manifest': manifest}, [
+            {'name': name} for name in sorted(names | {'release-manifest.json', 'SHA256SUMS.txt'})]
+
+    def test_alpha4_complete_release_is_noop_after_main_moves(self):
+        sha, release, assets = self.alpha4_release()
+        self.assertEqual(release_gate.existing_release_decision(
+            '0.1.0-alpha.4', 'c' * 40, sha, release, assets), 'noop')
+
+    def test_alpha4_rejects_wrong_schema_revision_and_incomplete_assets(self):
+        sha, release, assets = self.alpha4_release()
+        for key, value in [('schema_version', 6), ('schema_version', 8),
+                           ('schema_version', 7.0), ('source_revision', 'd' * 40),
+                           ('app_version', '0.1.0-alpha.3')]:
+            changed = {**release, 'manifest': {**release['manifest'], key: value}}
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                release_gate.existing_release_decision('0.1.0-alpha.4', 'c' * 40, sha, changed, assets)
+        for changed_assets in (assets[:-1], assets + [assets[0]]):
+            with self.assertRaises(ValueError):
+                release_gate.existing_release_decision('0.1.0-alpha.4', 'c' * 40, sha, release, changed_assets)
+
+    def test_remote_alpha4_checks_all_archive_bytes_when_main_and_schema_advance(self):
+        sha = 'b' * 40
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            fixture = test_release_assets.ReleaseAssetTests()
+            source, _ = fixture.candidate(root, revision=sha, schema=7)
+            output = root / 'release'
+            release_assets.assemble(source, output, '0.1.0-alpha.4', sha)
+            base = 'https://api.github.com/repos/Lephiziel/findrail'
+            assets = [{'name': path.name, 'browser_download_url': 'https://example.invalid/' + path.name}
+                      for path in output.iterdir()]
+            responses = {
+                base + '/releases/tags/v0.1.0-alpha.4': json.dumps({'assets': assets}).encode(),
+                base + '/git/ref/tags/v0.1.0-alpha.4': json.dumps({'object': {'type': 'commit', 'sha': sha}}).encode(),
+                **{'https://example.invalid/' + path.name: path.read_bytes() for path in output.iterdir()}}
+
+            def response(request, **kwargs):
+                return io.BytesIO(responses[request.full_url])
+
+            with patch.object(release_gate.urllib.request, 'urlopen', side_effect=response), \
+                    patch.object(release_assets.package, 'schema_version', return_value=8):
+                self.assertEqual(release_gate.github_release_decision(
+                    'Lephiziel/findrail', '0.1.0-alpha.4', 'c' * 40, 'test-token'), 'noop')
+                archive = next(asset['browser_download_url'] for asset in assets
+                               if asset['name'].endswith('.tar.gz'))
+                responses[archive] += b'corrupt transfer'
+                with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+                    release_gate.github_release_decision(
+                        'Lephiziel/findrail', '0.1.0-alpha.4', 'c' * 40, 'test-token')
 
 
 if __name__ == '__main__':

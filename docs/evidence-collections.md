@@ -1,8 +1,8 @@
-# Evidence collections (alpha.4 candidate)
+# Evidence collections (alpha.4)
 
 Named evidence collections are available when Findrail runs through writable
 `start`. Collections are stored in the current data directory's SQLite database.
-They are included in source builds and the unpublished schema-7 alpha.4 candidate,
+They are included in schema-7 alpha.4 archives and current source builds,
 not in immutable published alpha.3 archives. `serve`, `demo`, MCP and
 read-only composition retain the temporary in-page collection and expose no
 collection persistence routes. The browser does not use localStorage, IndexedDB,

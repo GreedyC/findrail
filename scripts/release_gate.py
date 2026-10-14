@@ -38,14 +38,16 @@ def existing_release_decision(version, current_sha, tag_sha, release, assets, ap
         raise ValueError('existing release contains duplicate assets')
     expected = ALPHA2_ASSETS if version == '0.1.0-alpha.2' else None
     if expected is None:
-        if version != '0.1.0-alpha.3':
+        schemas = {'0.1.0-alpha.3': 6, '0.1.0-alpha.4': 7}
+        if version not in schemas:
             raise ValueError('unknown published release contract')
-        if tag_sha != ALPHA3_REVISION:
+        if version == '0.1.0-alpha.3' and tag_sha != ALPHA3_REVISION:
             raise ValueError('published alpha.3 tag does not match its historical revision')
         manifest = release.get('manifest')
         if (not manifest or manifest.get('manifest_version') != 1 or
                 manifest.get('source_revision') != tag_sha or manifest.get('app_version') != version or
-                manifest.get('schema_version') != 6 or manifest.get('client_api_version') != 1 or
+                type(manifest.get('schema_version')) is not int or
+                manifest.get('schema_version') != schemas[version] or manifest.get('client_api_version') != 1 or
                 manifest.get('extension_version') != '0.1.0' or not isinstance(manifest.get('assets'), list)):
             raise ValueError('existing release manifest contradicts version or tag revision')
         manifest_names = [item.get('basename') for item in manifest['assets']]
