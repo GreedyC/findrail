@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 
 from selenium import webdriver
+from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -110,9 +111,26 @@ def main():
                            and "matching documents" in d.find_element(By.ID, "status").text)
                 assert "1 matching" in browser.find_element(By.ID, "status").text
 
+            def open_preview(query):
+                def click_matching_result(driver):
+                    if driver.find_element(By.ID, "submit").get_property("disabled"):
+                        return False
+                    for card in driver.find_elements(By.CSS_SELECTOR, ".result"):
+                        if query not in card.find_element(By.CLASS_NAME, "snippet").text:
+                            continue
+                        button = card.find_element(By.XPATH, ".//button[.='Preview']")
+                        if button.is_displayed() and button.is_enabled():
+                            button.click()
+                            return True
+                    return False
+
+                # Live inventory refresh can replace a result between lookup
+                # and click. Reacquire the matching card and use a real click.
+                WebDriverWait(browser, 20, ignored_exceptions=(StaleElementReferenceException,)).until(click_matching_result)
+
             search("idempotencymarker")
             assert "1 matching" in browser.find_element(By.ID, "status").text
-            browser.find_element(By.XPATH, "//button[.='Preview']").click()
+            open_preview("idempotencymarker")
             wait.until(lambda d: "idempotencymarker" in d.find_element(By.ID, "preview-body").text)
             browser.execute_script("document.querySelector('#preview .preview-actions + p.notice').id='original-action-status'")
             assert browser.execute_script("return window.fixturePwned===true") is False
@@ -143,7 +161,7 @@ def main():
             assert "Duplicate" in browser.find_element(By.ID, "collection-status").get_property("textContent")
             browser.find_element(By.ID, "close-preview").click()
             search("page2journey", "pdf")
-            browser.find_element(By.XPATH, "//button[.='Preview']").click()
+            open_preview("page2journey")
             wait.until(lambda d: "Page 2 / 2" in d.find_element(By.ID, "page-label").text)
             assert "secondpage" in browser.find_element(By.ID, "preview-body").text
             browser.execute_script("document.getElementById('whole-preview').checked=true")
@@ -163,7 +181,7 @@ def main():
             assert "runbook.pdf — page 2" in text and (root / "runbook.pdf").as_uri() + "#page=2" in text
             browser.find_element(By.ID, "collection-close").click()
             search("docxjourney", "docx")
-            browser.find_element(By.XPATH, "//button[.='Preview']").click()
+            open_preview("docxjourney")
             wait.until(lambda d: "docxjourney" in d.find_element(By.ID, "preview-body").text)
             assert "page numbers are unavailable" in browser.find_element(By.ID, "preview-notice").text.lower()
             assert "page" not in browser.find_element(By.ID, "preview-meta").text.lower()
