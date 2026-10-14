@@ -70,7 +70,91 @@ success and committed presence cannot be inferred. `--data-dir` supplies only
 the path for the dedicated index-directory hard exclusion; the index is never
 opened. Without it, the default data directory is used. `--show-rule` explicitly
 includes a matched rule; normal diagnostics never persist rule text or document
-contents. Source builds only; this is not a shipped alpha.2 capability.
+contents. The standalone alpha.4 release includes this policy; the older alpha.2 release did not. The recipes below were checked with the stated source build.
+
+## Optional recipes
+
+These are examples for fictional sources, not default exclusions. Put the file
+at the root you explicitly select. Names and matching are case-sensitive.
+Hidden entries, sensitive filenames, symlinks and dependency directories remain
+excluded even with a negation rule; `.obsidian/` needs no user rule. Excluding a
+directory prunes it, so a later `!` for a child cannot bring that child back.
+
+### Notes vault
+
+Suppose this root contains:
+
+| Path | Purpose |
+| --- | --- |
+| `Templates/template.md` | A reusable template |
+| `Archive/old.md` | An archived note |
+| `Notes/current.md` | A current note |
+| `Notes/keep.md` | Another current note |
+
+Optional root `.findrailignore`:
+
+```text
+/Templates/
+/Archive/
+```
+
+```sh
+findrail explain-path "/path/to/fictional-notes" --path Templates/template.md --path Archive/old.md --path Notes/current.md --path Notes/keep.md --json
+```
+
+| Path | Expected decision |
+| --- | --- |
+| `Templates/template.md` | `blocked_by_pruned_ancestor` (`Templates`) |
+| `Archive/old.md` | `blocked_by_pruned_ancestor` (`Archive`) |
+| `Notes/current.md` | `eligible_by_path_policy` |
+| `Notes/keep.md` | `eligible_by_path_policy` |
+
+### Go repository
+
+Suppose this root contains:
+
+| Path | Purpose |
+| --- | --- |
+| `README.md` | Project documentation |
+| `cmd/app/main.go` | Hand-written code |
+| `internal/generated/types.go` | A chosen generated directory |
+| `internal/api/service.pb.go` | Generated protocol code |
+| `internal/api/service.gen.go` | Other generated code |
+
+Optional root `.findrailignore`:
+
+```text
+*.pb.go
+*.gen.go
+/internal/generated/
+```
+
+```sh
+findrail explain-path "/path/to/fictional-go" --path README.md --path cmd/app/main.go --path internal/generated/types.go --path internal/api/service.pb.go --path internal/api/service.gen.go --json
+```
+
+| Path | Expected decision |
+| --- | --- |
+| `README.md` | `eligible_by_path_policy` |
+| `cmd/app/main.go` | `eligible_by_path_policy` |
+| `internal/generated/types.go` | `blocked_by_pruned_ancestor` (`internal/generated`) |
+| `internal/api/service.pb.go` | `excluded_user_rule` |
+| `internal/api/service.gen.go` | `excluded_user_rule` |
+
+A basename pattern such as `*.pb.go` applies at every depth; the leading slash
+on `/internal/generated/` anchors that directory to this root. These rules do
+not implement all of `.gitignore`.
+
+### Verification
+
+On 14 October 2026, all nine observed JSON decisions matched the tables above
+using `findrail dev`, built with Go 1.26.5 on macOS arm64 from source commit
+`4746d61c17fe5e097db7d43e28d4a80b139091fd`. Each fixture was created in a temporary
+folder, with regular UTF-8 files and only the listed root rules. No index was
+opened. `eligible_by_path_policy` is a metadata decision, not a promise that
+content extraction or indexing will succeed. The macOS arm64 standalone `findrail v0.1.0-alpha.4` binary from the
+GitHub release was also checked after verifying its archive against the published
+SHA256SUMS; all nine decisions matched. Other operating systems were not tested.
 
 ## Matcher resource spot check
 
