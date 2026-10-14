@@ -1,307 +1,267 @@
-# Findrail
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/findrail-wordmark-dark.svg">
+    <img src="docs/assets/findrail-wordmark-light.svg" width="340" alt="Findrail">
+  </picture>
+</p>
 
-**You remember a word. Find the original.**
+<h3 align="center">You remember a word. Find the original.</h3>
 
-Findrail is an open-source, local-first search app built in Go. Choose folders
-of notes, code, text PDFs and Word DOCX documents; search remembered words,
-preview the matching source and copy its original location. Changes in those folders refresh the
-index while the app runs. Keyword search needs no AI account and uploads no
-documents. Alpha.3 also provides a scoped, read-only stdio MCP server.
-Connected services and optional semantic retrieval are the next product stages.
+<p align="center">
+  Search your notes, code, PDFs and Word documents on your own computer.<br>
+  Find the matching passage, check its source, and take the citation with you.
+</p>
 
-**Status: local alpha.** The latest published release is [0.1.0-alpha.3](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.3).
-This is testing software, not a stable release. See the
-[version matrix](docs/launch/press-kit.md#version-boundaries) and
-[verified release checks](docs/release-alpha3-verification.md). Private GitHub,
-OCR, and semantic search remain on the roadmap. A separate
-desktop launcher and install resources are included in the unpublished alpha.4
-candidate archives. Native platform and GUI acceptance are still required; alpha.4
-is not a published download.
+<p align="center">
+  <a href="https://github.com/Lephiziel/findrail/actions/workflows/ci.yml"><img src="https://github.com/Lephiziel/findrail/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/Lephiziel/findrail/releases"><img src="https://img.shields.io/github/v/release/Lephiziel/findrail?include_prereleases&label=release&color=174f46" alt="Latest release, including alphas"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-174f46" alt="Apache-2.0 license"></a>
+  <a href="#build-from-source"><img src="https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white" alt="Build with Go 1.26 or newer"></a>
+</p>
 
-[Releases](https://github.com/Lephiziel/findrail/releases) ·
-[Product](docs/product.md) · [Architecture](docs/architecture.md) ·
-[Source management](docs/source-management.md) ·
-[Indexing diagnostics](docs/indexing-diagnostics.md) ·
-[Portable snapshots](docs/portable-snapshots.md) ·
-[MCP integration](docs/mcp.md) ·
-[Roadmap](docs/roadmap.md) · [VS Code client](docs/vscode.md) · [Contributing](CONTRIBUTING.md) ·
-[Русский](docs/ru/overview.md)
+<p align="center">
+  <a href="#quick-start"><strong>Download &amp; try</strong></a> ·
+  <a href="docs/demo.md">Demo</a> ·
+  <a href="#documentation">Documentation</a> ·
+  <a href="docs/roadmap.md">Roadmap</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a> ·
+  <a href="docs/ru/overview.md">Русский</a>
+</p>
 
-[Older demo: this recording shows the narrower alpha.2 workflow, not newer
-source-management, snapshot, collection or evaluation features.](docs/assets/demo.mp4)
+<p align="center">
+  <a href="docs/demo.md"><img src="docs/assets/overview-alpha3.png" width="1000" alt="Findrail alpha.3: the real app showing the idempotency passage in webhook-runbook.pdf on page 2 of 2"></a>
+  <br>
+  <sub>Actual alpha.3 interface · fictional documents · <a href="docs/assets/README.md">capture details</a></sub>
+</p>
 
-[Try the three-document demo](docs/demo.md) ·
-[Watch / download the 37-second video](docs/assets/demo.mp4) ·
-[Give alpha feedback](https://github.com/Lephiziel/findrail/issues/3) ·
-[Project facts and media](docs/launch/press-kit.md)
+Findrail brings the **words inside your files** into one local search index.
+Choose the folders you want, search something you remember, and inspect the
+indexed passage alongside its original location. Text PDFs include page numbers;
+DOCX documents have plain-text body previews. Folder changes refresh the index
+while Findrail runs.
 
-[Try the synthetic Turkish and English search evaluation](docs/search-evaluation.md).
+The local folder workflow works offline, with **no account, AI model or document
+uploads**. The standalone app includes its database and web interface; Go and
+Python are only development tools.
 
-Recorded from the running web interface using the fictional demo documents.
-The video shows search, PDF page 2 and an automatic refresh after a note edit.
-The GIF is a short preview; use the MP4 for the full recording and larger text.
+> [!NOTE]
+> **Early alpha — feedback welcome.** The current download is
+> [0.1.0-alpha.3](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.3).
+> Desktop launchers, opening originals and saved collections are in the
+> [unpublished alpha.4 candidate](#whats-next). They are not in alpha.3 archives.
 
-## Install and try — published alpha.3
+## A path back to your documents
 
-Download the archive for Linux, macOS or Windows from
-[Releases](https://github.com/Lephiziel/findrail/releases), compare it against
-`SHA256SUMS.txt`, and extract it. Go, Python and an external database are not required.
-These alpha binaries are unsigned; macOS may require a per-app allowance in
-Privacy & Security. Do not disable system-wide security protections. Each archive
-contains installation instructions and license notices.
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>🔎 Search across files</h3>
+      Notes, Markdown, common code files, text PDFs and DOCX body text. One query across the folders you choose.
+    </td>
+    <td width="33%" valign="top">
+      <h3>📄 Check the passage</h3>
+      Matching text, indexed previews, original locations and PDF page numbers keep every result attached to its source.
+    </td>
+    <td width="33%" valign="top">
+      <h3>✍️ Take the evidence</h3>
+      Select passages, collect them with notes, and export Markdown citations. Alpha.3 collections last for the current tab.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>🔄 Keep folders fresh</h3>
+      Live folder watching, source health and indexing reports. Failed scans preserve the last committed index.
+    </td>
+    <td valign="top">
+      <h3>🎯 Narrow the search</h3>
+      Source, format, path and title filters. Opt-in Advanced mode adds phrases, OR, exclusions and token prefixes.
+    </td>
+    <td valign="top">
+      <h3>🔌 Use your workflow</h3>
+      A CLI, local web UI, read-only HTTP and stdio MCP, plus an optional read-only VS Code client.
+    </td>
+  </tr>
+</table>
 
-Direct downloads for **`0.1.0-alpha.3`**:
+<details>
+<summary><strong>See a match on its PDF page</strong></summary>
 
-| Platform | Archive |
-|---|---|
-| Linux, x86-64 | [Linux amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_linux-amd64.tar.gz) |
-| Linux, ARM64 | [Linux arm64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_linux-arm64.tar.gz) |
-| macOS, Intel | [macOS amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_darwin-amd64.tar.gz) |
-| macOS, Apple Silicon | [macOS arm64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_darwin-arm64.tar.gz) |
-| Windows, x86-64 | [Windows amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_windows-amd64.zip) |
+![Findrail alpha.3 PDF preview showing the idempotency passage on page 2 of 2](docs/assets/preview-alpha3.png)
 
-[Checksums](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/SHA256SUMS.txt) · [Release manifest](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/release-manifest.json) ·
-[Optional VS Code VSIX](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail-readonly-0.1.0.vsix)
+Preview shows indexed text, with the original file location and page attribution.
+It does not reproduce the PDF's visual layout.
 
-The VSIX is a separate client and needs a running Findrail server (API v1); it is
-not required for the web workflow and is not published on Marketplace/Open VSX.
-The previous [alpha.2 release](https://github.com/Lephiziel/findrail/releases/tag/v0.1.0-alpha.2)
-remains available for a compatible pre-upgrade index. Before upgrading, stop
-Findrail and back up the whole data directory; see
-[upgrade and rollback](build/package/INSTALL.txt).
+</details>
+
+You can also explicitly add **public GitHub file snapshots**, pinned to a
+commit and refreshed manually, or transfer **portable indexed-text snapshots**
+as independent frozen sources. [GitHub sources](docs/github.md) ·
+[Portable snapshots](docs/portable-snapshots.md)
+
+## Quick start
+
+### 1. Download
+
+Download **0.1.0-alpha.3** for your computer, verify the matching entry in
+[SHA256SUMS.txt](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/SHA256SUMS.txt),
+then extract the archive into a folder you own.
+
+| Linux | macOS | Windows |
+|:---|:---|:---|
+| [x86-64 / amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_linux-amd64.tar.gz) | [Apple Silicon / arm64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_darwin-arm64.tar.gz) | [x86-64 / amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_windows-amd64.zip) |
+| [ARM64 / arm64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_linux-arm64.tar.gz) | [Intel / amd64](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_darwin-amd64.tar.gz) | |
+
+No Go, Python, database server or Docker setup is required. These alpha binaries
+are unsigned; read the bundled `INSTALL.txt` for platform-specific first-run
+instructions. On macOS, an app-specific allowance may be needed in Privacy &
+Security. [Installation, upgrade and rollback](build/package/INSTALL.txt) ·
+[Release manifest](https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/release-manifest.json)
+
+### 2. Start
+
+Run from inside the extracted directory:
 
 ```bash
-# Linux / macOS, inside the extracted directory:
+# Linux / macOS
 ./findrail start
 ```
 
 ```powershell
-# Windows, inside the extracted directory:
+# Windows PowerShell
 .\findrail.exe start
 ```
 
-Findrail opens the browser after the local listener is ready. If it does not,
-open the URL printed in the terminal (normally **http://127.0.0.1:7766**).
-A new index starts empty. In **Sources**, choose **Add folder** and enter the
-absolute folder path on the computer running Findrail. Existing indexes resume
-their registered sources; use a fresh `--data-dir` for an isolated empty start.
+Findrail opens your browser. If it does not, open the loopback URL printed in
+the terminal, normally **http://127.0.0.1:7766**. Keep the process running;
+**Ctrl+C** stops it. Running the same command later resumes your index.
 
-Search a remembered word in a note, code file, text PDF or DOCX document. Open
-**Preview** to inspect indexed text and use PDF page controls when present.
-For the optional synthetic demo, stop Findrail and run `./findrail demo`
-(Windows: `.\findrail.exe demo`), then search **idempotency**. The PDF match is
-on page 2. The demo uses its own temporary workspace, removed on normal stop;
-a forced kill can leave temporary files. See [demo instructions](docs/demo.md)
-and the [manual smoke sheet](docs/release-smoke-alpha3.md).
+### 3. Find something you remember
 
-### Unpublished alpha.4 candidate
+In **Sources → Add folder**, enter the absolute path to a folder on this
+computer. Search a word from one of your documents, open **Preview**, and check
+the passage. Select text to copy a Markdown citation or add it to the temporary
+evidence collection. A fresh index starts empty; Findrail scans only selected
+sources.
 
-The following features are in current source builds and alpha.4 rehearsal archives.
-The published alpha.3 downloads above do not contain them. Candidate archives
-also contain the desktop launcher and user install resources; see
-[desktop installation](build/package/INSTALL.txt).
+> [!TIP]
+> **Try it before adding your files.** Stop the app and run `./findrail demo`
+> (Windows: `.\findrail.exe demo`). Search **idempotency** across three fictional
+> documents, then preview `webhook-runbook.pdf` on **page 2**.
+> [Follow the demo](docs/demo.md).
 
-Search results and Preview can show **Открыть оригинал** and **Открыть папку**
-when native opening is explicitly enabled with `start --enable-originals`.
-`serve` and `demo` remain read-only and never launch applications. **Copy
-location** remains a fallback. PDF page selection is validated against indexed
-evidence, but the opener does not request page navigation from an unknown viewer;
-the current file may open at its default page. DOCX has no page-number claim.
-The opened file is current; preview and saved citations remain the indexed snapshot.
+<details>
+<summary><strong>Command-line examples</strong></summary>
 
-Select exact passages in Preview and add them to a named evidence collection.
-In writable `start`, explicitly save notes and ordering; saved collections are
-restored from the same data directory after restart. Read-only `serve`/`demo`
-keeps the temporary in-tab collection. Downloaded Markdown is separate and may
-contain private text and paths. Keep `start` running for
-folder refresh. Ctrl+C stops it; later `./findrail start` resumes the same index.
-If you set `--data-dir`, use that same directory each time.
+```bash
+# Use a separate index and open search for this folder.
+./findrail start --data-dir ./findrail-data /absolute/path/to/notes
 
-### Build from source
+# Query that same index from another terminal.
+./findrail search --data-dir ./findrail-data --json "retry budget"
+./findrail sources --data-dir ./findrail-data --json
 
-Requires Go 1.26 or newer. No CGO is required.
+# Check retrieval against a small labeled query corpus.
+./findrail evaluate --data-dir ./findrail-data \
+  --queries /absolute/path/to/queries.json --source SOURCE_ID --json
+```
+
+Options precede positional arguments. Use the same `--data-dir` each time.
+Use `start --no-open` on a headless machine. `demo` uses its own temporary index
+and does not accept `--data-dir`.
+
+[Query semantics](docs/search-query.md) · [Search evaluation](docs/search-evaluation.md) ·
+[All commands and limits](docs/local-alpha.md)
+
+</details>
+
+## Your data stays yours
+
+- **Explicit sources.** Select folders yourself. Hidden entries, symlinks,
+  dependency directories and common credential filenames are skipped;
+  [.findrailignore](docs/folder-ignore.md) adds folder-specific exclusions.
+- **Local storage.** Extracted text, paths and provenance are stored as plaintext
+  in a local SQLite index. The index is not encrypted at rest. Original files
+  are left untouched, and the app has no runtime telemetry.
+- **Local serving.** The web interface binds to loopback. Public GitHub indexing
+  makes network requests only when you add or manually refresh a repository.
+  An MCP client may forward retrieved passages to its configured model provider.
+- **Copies need care.** Markdown citations and portable exports may contain
+  private text and paths. Portable exports contain indexed text and provenance,
+  rather than original files or a complete database backup.
+
+> [!IMPORTANT]
+> Stop Findrail and back up the **whole data directory** before upgrading.
+> Alpha.3 uses schema **6**; current source / alpha.4 candidates use schema **7**.
+> Upgrades are forward-only, so an alpha.3 binary cannot open a schema-7 index.
+> [Backup and rollback instructions](build/package/INSTALL.txt).
+
+Search is lexical. **OCR, semantic search, private GitHub, team authentication
+and automatic updates are not included.** Scanned PDFs need OCR; DOCX previews
+do not reproduce Word layout or page numbers. Preview shows the indexed
+snapshot, which may differ from the current file.
+[Data handling](docs/data-handling.md) · [Extraction limits](docs/local-alpha.md)
+
+## What's next
+
+The **unpublished alpha.4 candidate** adds a workflow from finding a passage to
+reopening the document and returning to a saved collection:
+
+| In current source / candidate archives | Details |
+|:---|:---|
+| Desktop launcher and per-user install resources | Launch from the OS menu; repeat launch reuses the existing instance. Closing the tab keeps it running; **Quit Findrail** stops it. [Desktop guide](docs/desktop-launcher.md) |
+| Open original / open containing folder | Explicitly enabled with `start --enable-originals`; available only for eligible local files. External viewers may open at their default page. [Local workflow](docs/local-alpha.md) |
+| Named evidence collections | Explicitly save passages, notes and order; restore from the same data directory after restart. `serve` / `demo` remain temporary. [Collections guide](docs/evidence-collections.md) |
+
+Native package, browser, installed VSIX and upgrade checks have passed for the
+candidate. Manual OS menu and external viewer acceptance remains before
+publication. [Release pipeline](docs/release-pipeline.md) · [Roadmap](docs/roadmap.md)
+
+## Documentation
+
+| Start here | Go deeper |
+|:---|:---|
+| [Demo and first retrieval task](docs/demo.md) | [Architecture](docs/architecture.md) |
+| [Source management](docs/source-management.md) | [HTTP API](api/openapi.yaml) |
+| [Search queries and filters](docs/search-query.md) | [Read-only MCP setup](docs/mcp.md) |
+| [DOCX support](docs/docx.md) | [Optional VS Code client](docs/vscode.md) |
+| [Indexing diagnostics](docs/indexing-diagnostics.md) | [Search evaluation](docs/search-evaluation.md) |
+| [Portable snapshots](docs/portable-snapshots.md) | [Experimental connector kit](docs/connectors.md) |
+| [Release checks](docs/release-alpha3-verification.md) | [Product direction](docs/product.md) |
+| [Русский обзор](docs/ru/overview.md) | [Contributing](CONTRIBUTING.md) |
+
+## Build from source
+
+Requires **Go 1.26+**. No CGO is required. The source tree contains the
+unpublished alpha.4 capabilities described above.
 
 ```bash
 git clone https://github.com/Lephiziel/findrail.git
 cd findrail
 go build -o bin/findrail ./cmd/findrail
-./bin/findrail index --data-dir .findrail examples/notes
-./bin/findrail search --data-dir .findrail "webhook"
-./bin/findrail start --data-dir .findrail
+./bin/findrail demo
 ```
 
-Options precede positional arguments. If you use `--data-dir`, use the same
-value for start, index, search and serve. `demo` always uses its own temporary
-index and does not accept `--data-dir`.
-
-The older `0.1.0-alpha.1` archives do not include `start` or `demo`. Download
-`0.1.0-alpha.3` for the commands above, or use `index` followed by `serve` on the
-older release.
-
-### Start options
-
-`start` indexes a folder and launches search in one command:
+For a source-built desktop launcher:
 
 ```bash
-./bin/findrail start --data-dir .findrail /path/to/your/notes
-# Later, resume the same registered folders:
-./bin/findrail start --data-dir .findrail
+go build -o bin/findrail-desktop ./cmd/findrail-desktop
+./bin/findrail-desktop --data-dir ./findrail-test-data
 ```
 
-The first command indexes the selected folder, starts automatic refresh and
-attempts to open the local UI in your default browser. The terminal prints the
-actual URL once the listener is bound. Keep it running; Ctrl+C stops the server.
-Use `--no-open` on a headless machine, or open the printed URL manually if no
-browser appears. Browser-opener startup failures do not stop search.
+Use fictional documents and a separate data directory for first tests.
+[Repository structure and boundaries](docs/architecture.md) ·
+[Development checks](CONTRIBUTING.md)
 
-Options precede the folder. `--addr 127.0.0.1:7767` selects another local port;
-network-facing addresses are rejected. Repeating `start DIRECTORY` applies the
-chosen document-size limits to that folder, just like `index`; omitting DIRECTORY
-resumes stored sources with their existing limits. Initial extraction errors
-stop startup and preserve the prior committed inventory.
+## Help shape Findrail
 
-## Published alpha.3 behavior
+Try finding **two real passages whose words you remember**. Tell us what you
+searched, whether you found the original, and where the workflow got in your way.
+Your OS and app version help reproduce a problem; share synthetic or redacted
+examples rather than private documents.
 
-The features below are included in the alpha.3 app archives, with the VS Code
-client distributed as a separate VSIX. Older alpha.2 archives have a narrower
-scope; see the [version matrix](docs/launch/press-kit.md#version-boundaries).
+[Give alpha feedback](https://github.com/Lephiziel/findrail/issues/3) ·
+[Report a bug](https://github.com/Lephiziel/findrail/issues/new/choose) ·
+[Contribute](CONTRIBUTING.md)
 
-- A built-in three-document demo and one-command startup for your own folders.
-- Explicit local folders containing UTF-8 text, Markdown and common source files.
-- Text PDFs with original page numbers; a bounded extraction child process.
-- Bounded offline DOCX plain-text body snapshots (no page numbers).
-- Durable SQLite FTS5 search, BM25 ranking, Unicode terms and source filters.
-- Opt-in Advanced queries and server-side format, indexed-path and title filters.
-- Matching passages and plain-text previews of the indexed snapshot.
-- Automatic refresh using directory notifications, debouncing and periodic scans.
-- Source health: current refresh state, last success, errors and watcher fallback.
-- Atomic full-source scans: failures preserve the previous inventory.
-- Search reads the last committed snapshot while an update is in progress.
-- CLI / JSON output, loopback web UI, read-only HTTP API and read-only stdio MCP (`findrail mcp`).
-- Logical source removal, leaving original files untouched.
-- Bounded committed indexing reports and process-local manual job progress.
-- Optional read-only VS Code client for the alpha.3 server; see [setup](docs/vscode.md).
-- Manual, commit-pinned public GitHub text snapshots with offline preview.
-- Portable plaintext export and isolated frozen archive-source import.
-- Empty-index onboarding and web source management (`start`).
-
-See [alpha behaviour and limits](docs/local-alpha.md) and the
-[validation report](docs/validation.md).
-
-## Indexing and privacy
-
-Text input defaults to **1 MiB per file**, configurable up to 32 MiB. PDFs default
-to **16 MiB input**, with at most 500 pages, 1 MiB of extracted text and a 10-second
-extraction deadline. Image-only / scanned PDFs are skipped: OCR is not included.
-Malformed or encrypted PDFs fail the source scan, preserving its previous index.
-DOCX input defaults to **8 MiB** (0 disables; configurable up to 16 MiB), with
-bounded ZIP/XML parsing and no Office runtime. See [DOCX limits and scope](docs/docx.md).
-
-Hidden entries, symlinks, dependency directories, binary / non-UTF-8 text and
-common credential filenames are skipped. The index directory is excluded. This
-policy cannot detect every secret inside an ordinary document.
-
-The index stores plaintext text and original paths. It is **not encrypted at
-rest**. On Unix, newly created directories and database files use private modes.
-There is no runtime telemetry. See [data handling](docs/data-handling.md).
-
-Schema upgrades are forward-only. This source build uses schema 7; the published
-alpha.3 binaries use schema 6 and cannot read an upgraded data directory. Stop
-Findrail and back up the entire data directory (including SQLite WAL/SHM) before
-upgrading. Rollback means restoring that whole backup to a separate location and
-using a binary compatible with its schema. See the
-[complete install, upgrade, rollback and uninstall guide](build/package/INSTALL.txt).
-
-## Commands
-
-```bash
-findrail index /path/to/notes
-findrail index-github --path docs OWNER/REPO
-findrail refresh-github SOURCE_ID
-findrail start --no-open /path/to/notes
-findrail start
-findrail index --max-pdf-bytes 0 /path/to/text-only
-findrail search --limit 10 "payment webhook"
-findrail search --source SOURCE_ID --json "architecture"
-findrail evaluate --queries examples/evaluation/queries.json --source SOURCE_ID --json
-findrail sources --json
-findrail source-report --data-dir .findrail --source SOURCE_ID
-findrail serve --sync-interval 5m
-findrail serve --no-sync
-findrail watch --sync-interval 5m
-findrail forget SOURCE_ID
-findrail version
-```
-
-`watch` refreshes registered sources without starting HTTP. Periodic full refresh
-is every five minutes by default; the minimum configurable interval is one
-second. Native notifications normally trigger earlier scans.
-
-Portable snapshots are CLI-first. Use `sources --json` to select a source, then
-`export-source`, `inspect-export`, and `import-source`; imported snapshots are
-independent, frozen sources. See [portable snapshots](docs/portable-snapshots.md)
-for privacy, format and transfer details.
-
-Default data directory: `$XDG_DATA_HOME/findrail` or `~/.local/share/findrail` on
-Linux; `~/Library/Application Support/Findrail` on macOS;
-`%LOCALAPPDATA%\Findrail` on Windows. Override with `--data-dir`.
-
-## Product growth
-
-| Capability | Local alpha | Next stages |
-|---|---|---|
-| Documents | Text / Markdown / code / PDF text / bounded DOCX body text | optional OCR |
-| Sources | Local folders; public GitHub snapshots and frozen portable archive imports | Private GitHub, bookmarks, work tools |
-| Freshness | File watching and full reconciliation | Resumable remote sync |
-| Retrieval | Literal search, opt-in Advanced queries, source/format/path/title filters, PDF evidence, read-only result-set evaluation | Optional semantics |
-| Clients | CLI, local web UI, HTTP, read-only stdio MCP, desktop launcher candidate, separately installed VS Code client (server/client API v1) | Broader editor support |
-| Extensions | Experimental connector kit; independent adoption not established | Stable SDK and conformance harness |
-
-The advantage to validate is easy installation, useful retrieval, inspectable
-sources and local ownership. Unified search already exists; user testing must
-establish where Findrail helps. [Launch plan](docs/ru/launch.md).
-
-## Repository layout
-
-The project follows useful conventions from
-[golang-standards/project-layout](https://github.com/golang-standards/project-layout)
-and [official Go module guidance](https://go.dev/doc/modules/layout).
-
-| Path | Responsibility |
-|---|---|
-| `cmd/findrail/` | Executable entry point |
-| `internal/cli/`, `internal/config/` | Composition and commands |
-| `internal/connectors/` | Source adapters |
-| `internal/extract/`, `internal/ingest/` | Text / PDF extraction and atomic indexing |
-| `internal/store/sqlite/`, `internal/search/` | Persistence, FTS and evidence |
-| `internal/sync/` | Source discovery, watchers, retries and health |
-| `internal/transport/` | HTTP, embedded UI and source-built stdio MCP |
-| `internal/sourceapp/` | `start`-only source operations and in-memory jobs |
-| `internal/semantic/` | Future semantic retrieval design |
-| `pkg/connector/` | Experimental public connector contract |
-| `api/`, `docs/` | Implemented API and product documentation |
-| `build/`, `scripts/` | Distribution, smoke tests and developer tools |
-| `examples/`, `test/`, `configs/`, `web/`, `deployments/` | Demo data and extension designs |
-
-Tests live beside their packages. Future modules contain design notes, not
-placeholder functions claiming implemented features.
-
-## Development
-
-```bash
-go test ./...
-go test -race ./...
-go vet ./...
-go mod verify
-go build -o bin/findrail ./cmd/findrail
-python3 scripts/smoke.py bin/findrail
-python3 scripts/package.py
-```
-
-Contributions to extraction fixtures, search evaluation, accessibility and
-platform installation are welcome. See [implementation tasks](docs/implementation-plan.md).
-
-## License
-
-Apache-2.0. The local product remains independently usable. Future hosted
-services may charge for operated infrastructure. See [governance](GOVERNANCE.md).
+Findrail is licensed under [Apache-2.0](LICENSE). The local product remains
+independently usable. [Governance](GOVERNANCE.md).
