@@ -14,8 +14,9 @@ This is testing software, not a stable release. See the
 [version matrix](docs/launch/press-kit.md#version-boundaries) and
 [verified release checks](docs/release-alpha3-verification.md). Private GitHub,
 OCR, and semantic search remain on the roadmap. A separate
-source-build desktop launcher is implemented for integration; archive-native
-entrypoints and GUI acceptance remain pending packaging and platform testing.
+desktop launcher and install resources are included in the unpublished alpha.4
+candidate archives. Native platform and GUI acceptance are still required; alpha.4
+is not a published download.
 
 [Releases](https://github.com/Lephiziel/findrail/releases) ·
 [Product](docs/product.md) · [Architecture](docs/architecture.md) ·
@@ -96,10 +97,10 @@ the current file may open at its default page. DOCX has no page-number claim.
 The opened file is current; preview and saved citations remain the indexed snapshot.
 
 Select exact passages in Preview and add them to a named evidence collection.
-In source builds using writable `start`, explicitly save notes and ordering;
-saved collections are restored from the same data directory after restart.
-Read-only `serve`/`demo` keeps the temporary in-tab collection. Downloaded
-Markdown is separate and may contain private text and paths. Keep `start` running for
+In writable `start`, explicitly save notes and ordering; saved collections are
+restored from the same data directory after restart. Read-only `serve`/`demo`
+keeps the temporary in-tab collection. Downloaded Markdown is separate and may
+contain private text and paths. Keep `start` running for
 folder refresh. Ctrl+C stops it; later `./findrail start` resumes the same index.
 If you set `--data-dir`, use that same directory each time.
 
@@ -246,7 +247,7 @@ Linux; `~/Library/Application Support/Findrail` on macOS;
 | Sources | Local folders; public GitHub snapshots and frozen portable archive imports | Private GitHub, bookmarks, work tools |
 | Freshness | File watching and full reconciliation | Resumable remote sync |
 | Retrieval | Literal search, opt-in Advanced queries, source/format/path/title filters, PDF evidence, read-only result-set evaluation | Optional semantics |
-| Clients | CLI, local web UI, HTTP, read-only stdio MCP and separately installed VS Code client (server/client API v1) | Desktop launcher, broader editor support |
+| Clients | CLI, local web UI, HTTP, read-only stdio MCP, desktop launcher candidate, separately installed VS Code client (server/client API v1) | Broader editor support |
 | Extensions | Experimental connector kit; independent adoption not established | Stable SDK and conformance harness |
 
 The advantage to validate is easy installation, useful retrieval, inspectable

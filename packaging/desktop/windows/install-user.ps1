@@ -1,4 +1,4 @@
-param([string]$Binary = (Join-Path $PSScriptRoot 'findrail-desktop.exe'))
+param([string]$Binary = (Join-Path $PSScriptRoot '..\..\findrail-desktop.exe'))
 $ErrorActionPreference = 'Stop'
 $shortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Findrail.lnk'
 $shell = New-Object -ComObject WScript.Shell

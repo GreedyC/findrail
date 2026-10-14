@@ -16,6 +16,26 @@ import zipfile
 
 TARGETS = ['linux-amd64', 'linux-arm64', 'darwin-amd64', 'darwin-arm64', 'windows-amd64']
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+RESOURCE_FILES = {
+    'linux': {
+        'packaging/desktop/linux/findrail.desktop': 'launcher/linux/findrail.desktop',
+        'packaging/desktop/linux/install-user.sh': 'launcher/linux/install-user.sh',
+        'packaging/desktop/linux/uninstall-user.sh': 'launcher/linux/uninstall-user.sh',
+    },
+    'darwin': {
+        'packaging/desktop/macos/Info.plist': 'Findrail.app/Contents/Info.plist',
+        'packaging/desktop/macos/install-user.sh': 'launcher/macos/install-user.sh',
+        'packaging/desktop/macos/uninstall-user.sh': 'launcher/macos/uninstall-user.sh',
+    },
+    'windows': {
+        'packaging/desktop/windows/install-user.ps1': 'launcher/windows/install-user.ps1',
+        'packaging/desktop/windows/uninstall-user.ps1': 'launcher/windows/uninstall-user.ps1',
+    },
+}
+EXECUTABLE_RESOURCES = {
+    'launcher/linux/install-user.sh', 'launcher/linux/uninstall-user.sh',
+    'launcher/macos/install-user.sh', 'launcher/macos/uninstall-user.sh',
+}
 ALPHA3_REVISION = 'd5dc1bec50efcb3c26d09e9b24b14cf3c0b2f4cb'
 
 
@@ -108,31 +128,49 @@ def extract_verified(archive, destination):
     destination.mkdir(parents=True)
     root = None
     seen = set()
+    files = set()
+
+    def register(name, directory):
+        nonlocal root
+        raw = name[:-1] if directory and name.endswith('/') else name
+        parts = raw.split('/')
+        p = pathlib.PurePosixPath(raw)
+        if (not raw or p.is_absolute() or '\\' in raw or ':' in raw or
+                any(part in ('', '.', '..') for part in parts) or
+                p.as_posix() != raw or raw in seen):
+            raise ValueError('unsafe or duplicate archive member')
+        seen.add(raw)
+        if root is None:
+            root = p.parts[0]
+        if p.parts[0] != root:
+            raise ValueError('unexpected archive root')
+        if any('/'.join(p.parts[:index]) in files for index in range(1, len(p.parts))):
+            raise ValueError('archive member is nested under a regular file')
+        if directory:
+            if raw in files:
+                raise ValueError('archive member has conflicting types')
+        else:
+            if any(existing.startswith(raw + '/') for existing in files):
+                raise ValueError('archive member conflicts with a directory')
+            files.add(raw)
+        return p
+
     if archive.name.endswith('.zip'):
         with zipfile.ZipFile(archive) as zf:
             for item in zf.infolist():
-                p = pathlib.PurePosixPath(item.filename)
+                p = register(item.filename, item.is_dir())
                 mode = item.external_attr >> 16
-                if p.is_absolute() or '..' in p.parts or not p.parts or '\\' in item.filename or ':' in item.filename or item.filename in seen:
-                    raise ValueError('unsafe archive member')
-                seen.add(item.filename)
                 if mode and (stat.S_ISLNK(mode) or (item.is_dir() and not stat.S_ISDIR(mode)) or
                              (not item.is_dir() and not stat.S_ISREG(mode))):
                     raise ValueError('unsafe archive member type')
-                if root is None: root = p.parts[0]
-                if p.parts[0] != root:
-                    raise ValueError('unexpected archive member type or root')
             if not root: raise ValueError('empty archive')
             zf.extractall(destination)
     else:
         with tarfile.open(archive, 'r:gz') as tf:
             for item in tf.getmembers():
-                p = pathlib.PurePosixPath(item.name)
-                if p.is_absolute() or '..' in p.parts or not p.parts or '\\' in item.name or ':' in item.name or item.name in seen or not (item.isfile() or item.isdir()):
+                if not (item.isfile() or item.isdir()):
                     raise ValueError('unsafe archive member')
-                seen.add(item.name)
-                if root is None: root = p.parts[0]
-                if p.parts[0] != root: raise ValueError('unexpected archive root')
+                register(item.name, item.isdir())
             if not root: raise ValueError('empty archive')
             tf.extractall(destination, filter='data')
     return destination / root
@@ -161,13 +199,50 @@ def verify_archive(archive, target, version, expected_schema=None):
         if not binary.is_file(): raise ValueError('package executable missing')
         if not target.startswith('windows-') and not binary.stat().st_mode & 0o111:
             raise ValueError('Unix package executable is not executable')
-        required = {'INSTALL.txt', 'LICENSE', 'NOTICE', 'BUILD-INFO.json', binary.name, 'licenses/DEPENDENCIES.txt', 'licenses/Go-LICENSE.txt'}
+        historical_alpha3 = (version == '0.1.0-alpha.3' and revision == ALPHA3_REVISION and meta.get('dirty') is False)
+        required = {'INSTALL.txt', 'LICENSE', 'NOTICE', 'BUILD-INFO.json', binary.name,
+                    'licenses/DEPENDENCIES.txt', 'licenses/Go-LICENSE.txt'}
+        if not historical_alpha3:
+            launcher_name = 'findrail-desktop.exe' if target.startswith('windows-') else 'findrail-desktop'
+            required.add(launcher_name)
+            required.update(RESOURCE_FILES[target.split('-', 1)[0]].values())
+            if target.startswith('darwin-'):
+                required.add('Findrail.app/Contents/MacOS/Findrail')
         members = {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()}
         if not required.issubset(members):
             raise ValueError('package is missing required installation or license files')
         if any(name not in required and not (name.startswith('licenses/') and '/' not in name[len('licenses/'):]
                                              and name.endswith('.txt')) for name in members):
             raise ValueError('package contains an unexpected member')
+        dependency_file = root / 'licenses/DEPENDENCIES.txt'
+        dependencies = [line.split(' ', 1)[0] for line in dependency_file.read_text(encoding='utf-8').splitlines() if line]
+        module_prefixes = {re.sub(r'[^A-Za-z0-9.-]', '_', module) + '-' for module in dependencies}
+        third_party_licenses = {name for name in members if name.startswith('licenses/') and name not in
+                                {'licenses/DEPENDENCIES.txt', 'licenses/Go-LICENSE.txt'}}
+        covered = set()
+        for name in third_party_licenses:
+            leaf = name[len('licenses/'):]
+            matches = [prefix for prefix in module_prefixes if leaf.startswith(prefix)]
+            if len(matches) != 1 or not re.match(r'(?:LICENSE|COPYING)(?:[A-Za-z0-9._-]*)\.txt$', leaf[len(matches[0]):], re.IGNORECASE):
+                raise ValueError('package contains an unaccounted dependency license')
+            covered.add(matches[0])
+        if covered != module_prefixes:
+            raise ValueError('package dependency license inventory is incomplete')
+        if not historical_alpha3:
+            executable_members = {launcher_name, *EXECUTABLE_RESOURCES.intersection(required)}
+            if target.startswith('darwin-'):
+                executable_members.add('Findrail.app/Contents/MacOS/Findrail')
+            if archive.name.endswith('.zip'):
+                with zipfile.ZipFile(archive) as zf:
+                    modes = {item.filename.removeprefix(root.name + '/'): item.external_attr >> 16
+                             for item in zf.infolist() if not item.is_dir()}
+            else:
+                with tarfile.open(archive, 'r:gz') as tf:
+                    modes = {item.name.removeprefix(root.name + '/'): item.mode
+                             for item in tf.getmembers() if item.isfile()}
+            missing_executable_modes = sorted(name for name in executable_members if not modes.get(name, 0) & 0o111)
+            if missing_executable_modes:
+                raise ValueError('launcher or install resource is not executable in archive: ' + ', '.join(missing_executable_modes))
     return True
 
 
@@ -238,6 +313,12 @@ def main():
         for target in targets:
             os_name, arch = target.split('-'); stem = f'findrail_{args.version}_{target}'
             folder = staging / stem; shutil.copytree(common, folder)
+            for source_name, archive_name in RESOURCE_FILES[os_name].items():
+                destination = folder / archive_name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / source_name, destination)
+                if archive_name in EXECUTABLE_RESOURCES:
+                    destination.chmod(0o755)
             meta = {'version': args.version, 'revision': revision, 'dirty': dirty, 'target': target,
                     'schema_version': schema_version(), 'go_version': run([go, 'version']), 'source_date_epoch': epoch}
             (folder / 'BUILD-INFO.json').write_text(json.dumps(meta, sort_keys=True, indent=2) + '\n', encoding='utf-8', newline='\n')
@@ -245,13 +326,27 @@ def main():
             env = {**os.environ, 'GOOS': os_name, 'GOARCH': arch, 'CGO_ENABLED': '0'}
             subprocess.run([go, 'build', '-trimpath', '-ldflags', f'-s -w -buildid= -X main.version={args.version}', '-o', str(binary), './cmd/findrail'], cwd=ROOT, env=env, check=True)
             if os_name != 'windows': binary.chmod(0o755)
+            launcher = folder / ('findrail-desktop.exe' if os_name == 'windows' else 'findrail-desktop')
+            launcher_ldflags = f'-s -w -buildid= -X main.version={args.version}'
+            if os_name == 'windows':
+                launcher_ldflags += ' -H windowsgui'
+            subprocess.run([go, 'build', '-trimpath', '-ldflags', launcher_ldflags, '-o', str(launcher), './cmd/findrail-desktop'], cwd=ROOT, env=env, check=True)
+            if os_name != 'windows': launcher.chmod(0o755)
+            if os_name == 'darwin':
+                app_launcher = folder / 'Findrail.app/Contents/MacOS/Findrail'
+                app_launcher.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(launcher, app_launcher)
+                app_launcher.chmod(0o755)
             archive = staging / (stem + ('.zip' if os_name == 'windows' else '.tar.gz'))
             if os_name == 'windows':
                 dt = time.gmtime(epoch)[:6]; dt = (dt[0], dt[1], dt[2], dt[3], dt[4], dt[5] // 2 * 2)
                 with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
                     for file in sorted(folder.rglob('*')):
                         if file.is_file():
-                            info = zipfile.ZipInfo(file.relative_to(staging).as_posix(), dt); info.external_attr = (0o100755 if file == binary else 0o100644) << 16
+                            info = zipfile.ZipInfo(file.relative_to(staging).as_posix(), dt)
+                            executable = (file in (binary, launcher) or file.relative_to(folder).as_posix() in EXECUTABLE_RESOURCES or
+                                          file.relative_to(folder).as_posix() == 'Findrail.app/Contents/MacOS/Findrail')
+                            info.external_attr = (0o100755 if executable else 0o100644) << 16
                             zf.writestr(info, file.read_bytes())
             else:
                 raw = archive.open('wb')
@@ -261,7 +356,9 @@ def main():
                         for file in sorted(p for p in folder.rglob('*') if p.is_file()):
                             info = tf.gettarinfo(str(file), arcname=file.relative_to(staging).as_posix())
                             info.uid = info.gid = 0; info.uname = info.gname = ''; info.mtime = epoch
-                            info.mode = 0o755 if file == binary else 0o644
+                            executable = (file in (binary, launcher) or file.relative_to(folder).as_posix() in EXECUTABLE_RESOURCES or
+                                          file.relative_to(folder).as_posix() == 'Findrail.app/Contents/MacOS/Findrail')
+                            info.mode = 0o755 if executable else 0o644
                             with file.open('rb') as stream: tf.addfile(info, stream)
             verify_archive(archive, target, args.version)
             artifacts.append((archive, archive.name))

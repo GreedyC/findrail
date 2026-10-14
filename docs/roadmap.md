@@ -10,8 +10,8 @@ dates. Status changes require working code and evidence.
 | R02 · Connected search | Read-only GitHub, local + remote combined search, secure credentials | Resume, rate limit, revocation, and deletion tests | Public file snapshots/manual refresh implemented; web management is source-build only; private and resumable sync planned |
 | R03 · Extensions | Versioned connector SDK, examples, conformance harness | Independent contributor creates an adapter from docs | Experimental conformance kit and separate-module example implemented; independent-contributor gate and API stabilization remain open |
 | R04 · Optional semantics | Passage chunking, opt-in embedding backend, hybrid ranking | Better retrieval on labeled corpus without losing exact-match quality | Planned |
-| R05 · Daily access | Desktop launcher; read-only VS Code client available for compatible source builds ([setup](vscode.md)) | Daily use and bounded / scoped AI retrieval demonstrated; local stdio MCP is implemented | In progress |
-| R06 · Public beta | Onboarding, releases, migrations, exports, operational documentation | Upgrade / restore / uninstall journeys and cross-platform QA | Source builds include onboarding, schema 6, portable imports and evaluation; candidate package checks pass, published downloads still alpha.2 |
+| R05 · Daily access | Native desktop launcher; read-only VS Code client ([setup](vscode.md)) | Single-instance lifecycle, archive install/uninstall and native platform journeys | Launcher/install resources are in the unpublished alpha.4 candidate; five-target native acceptance remains a release gate. VS Code is separately distributed for API v1. |
+| R06 · Public beta | Onboarding, releases, migrations, exports, operational documentation | Upgrade / stopped-backup restore / uninstall journeys and cross-platform QA | Published alpha.3 is schema 6. Source tree and unpublished alpha.4 candidate use schema 7, with persistent evidence collections; candidate package validation is ongoing. |
 | R07 · Community platform | Connector catalog, governance, optional operated services | Organic contributions and demonstrated demand | Planned |
 
 ## First complete public product
@@ -23,10 +23,10 @@ health panel. Ship a useful workflow rather than many disconnected adapters.
 
 ## Current delivery priority
 
-As of 12 October 2026, PRs #22–28 are merged, but the latest published
-Findrail archives remain alpha.2. The current source tree has passed the
-cross-platform main CI and the identical PR #28 tree passed five native
-candidate-package targets. See the [release and launch handoff](launch/update-2026-10-12.md).
+As of 14 October 2026, PRs #38–42 are integrated on main. Published alpha.3
+archives remain immutable at schema 6. Main packages a no-publish alpha.4
+candidate at schema 7; native, browser, upgrade and installed-client evidence
+must pass on one exact candidate SHA before any separate release decision.
 
 Finish a coherent new release and make the compatible VSIX independently
 downloadable before the next wider editorial wave. Then use installation,

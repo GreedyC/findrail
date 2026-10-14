@@ -131,6 +131,8 @@ def main():
     parser.add_argument("binary", type=pathlib.Path, help="path to extracted findrail executable")
     parser.add_argument("--candidate-sha", required=True)
     parser.add_argument("--candidate-version", required=True)
+    parser.add_argument("--alpha3-binary", type=pathlib.Path, required=True,
+                        help="extracted published alpha.3 binary used to verify stopped-backup restore")
     parser.add_argument("--report", type=pathlib.Path, help="write per-case JSON report")
     parser.add_argument("--skip-browser", action="store_true")
     args = parser.parse_args()
@@ -142,13 +144,20 @@ def main():
     with tempfile.TemporaryDirectory(prefix="findrail packaged journey ") as directory:
         scratch = pathlib.Path(directory)
         cases.append(evaluate(binary, scratch))
-        smokes = ["search_smoke.py", "mcp_smoke.py", "portable_smoke.py", "diagnostics_smoke.py", "ignore_policy_smoke.py", "upgrade_smoke.py"]
+        smokes = ["search_smoke.py", "mcp_smoke.py", "portable_smoke.py", "diagnostics_smoke.py", "ignore_policy_smoke.py"]
         for smoke in smokes:
             command([sys.executable, str(ROOT / "scripts" / smoke), str(binary)], timeout=300)
             cases.append({"case": smoke, "status": "passed"})
+        command([sys.executable, str(ROOT / "scripts/upgrade_smoke.py"), str(binary),
+                 "--alpha3-binary", str(args.alpha3_binary.resolve(strict=True))], timeout=300)
+        cases.append({"case": "upgrade_smoke.py", "status": "passed"})
+        command([sys.executable, str(ROOT / "scripts/desktop_launch_smoke.py"), str(binary)], timeout=90)
+        cases.append({"case": "desktop_launch_smoke.py", "status": "passed"})
         if not args.skip_browser:
             command([sys.executable, str(ROOT / "scripts/packaged_browser_journey.py"), str(binary)], timeout=300)
             cases.append({"case": "packaged_browser_journey.py", "status": "passed"})
+            command([sys.executable, str(ROOT / "scripts/persistent_collection_smoke.py"), str(binary)], timeout=600)
+            cases.append({"case": "persistent_collection_smoke.py", "status": "passed"})
             command([sys.executable, str(ROOT / "scripts/evidence_collection_smoke.py"), str(binary)], timeout=600)
             cases.append({"case": "evidence_collection_smoke.py", "status": "passed"})
     report = {"candidate_sha": args.candidate_sha, "candidate_version": args.candidate_version,
