@@ -144,7 +144,6 @@ jobs:
           "$PY" scripts/desktop_launch_smoke.py "$BINARY"
           if [[ '${{ matrix.target }}' == linux-amd64 ]]; then
             REFERENCE="$RUNNER_TEMP/alpha3-reference"
-            mkdir -p "$REFERENCE"
             ALPHA3_ARCHIVE="$RUNNER_TEMP/findrail_0.1.0-alpha.3_linux-amd64.tar.gz"
             curl --proto '=https' --proto-redir '=https' --fail --location --silent --show-error \
               https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.3/findrail_0.1.0-alpha.3_linux-amd64.tar.gz -o "$ALPHA3_ARCHIVE"
