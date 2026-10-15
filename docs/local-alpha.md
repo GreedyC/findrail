@@ -1,5 +1,12 @@
 # Local alpha behaviour
 
+## Keyboard workflow
+
+Use Tab and Shift+Tab to move through the browser interface. Press `/` or
+`Ctrl+K` (`Cmd+K` on macOS) outside editable fields and dialogs to focus Search.
+Press Enter on a result's Preview button to open its indexed snapshot. Native
+dialogs provide their own focus order and Escape handling.
+
 ## Automatic refresh
 
 `start` and `serve` start refresh workers for registered filesystem sources. It scans at
