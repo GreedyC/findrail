@@ -13,14 +13,15 @@ import release_assets as release
 
 
 class ReleaseAssetTests(unittest.TestCase):
-    def candidate(self, root, revision='a' * 40, dirty=False, version='0.1.0-alpha.4', schema=None, include_schema=True):
+    def candidate(self, root, revision='a' * 40, dirty=False, version='0.1.0-alpha.4', schema=None,
+                  include_schema=True, metadata_version=None, target_override=None):
         source = root / 'input'
         source.mkdir()
         schema = release.contract_schema(version) if schema is None else schema
         for name, target in release.expected_archives(version).items():
             stem = pathlib.Path(name).name.removesuffix('.tar.gz').removesuffix('.zip')
-            info = {'version': version, 'revision': revision, 'dirty': dirty,
-                    'target': target, 'schema_version': schema}
+            info = {'version': metadata_version or version, 'revision': revision, 'dirty': dirty,
+                    'target': target_override or target, 'schema_version': schema}
             if not include_schema:
                 del info['schema_version']
             members = {'BUILD-INFO.json': json.dumps(info).encode(),
@@ -71,7 +72,7 @@ class ReleaseAssetTests(unittest.TestCase):
         with patch.object(release.package, 'schema_version', return_value=8):
             self.assertEqual(release.contract_schema('0.1.0-alpha.4'), 7)
         self.assertEqual(release.contract_schema('0.1.0-alpha.3'), 6)
-        with self.assertRaises(ValueError): release.contract_schema('0.1.0-alpha.5')
+        with self.assertRaises(ValueError): release.contract_schema('0.1.0-alpha.6')
 
     def test_alpha4_remains_verifiable_after_a_new_source_migration(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -81,6 +82,23 @@ class ReleaseAssetTests(unittest.TestCase):
             release.assemble(source, output, '0.1.0-alpha.4', revision)
             with patch.object(release.package, 'schema_version', return_value=8):
                 self.assertEqual(release.verify(output, '0.1.0-alpha.4', revision)['schema_version'], 7)
+
+    def test_alpha5_candidate_tracks_trusted_source_schema_only(self):
+        for source_schema in (7, 8):
+            with self.subTest(source_schema=source_schema), tempfile.TemporaryDirectory() as temp:
+                root = pathlib.Path(temp)
+                with patch.object(release.package, 'schema_version', return_value=source_schema):
+                    self.assertEqual(release.contract_schema('0.1.0-alpha.5'), source_schema)
+                    source, revision = self.candidate(root, version='0.1.0-alpha.5', schema=source_schema)
+                    output = root / 'release'
+                    manifest = release.assemble(source, output, '0.1.0-alpha.5', revision)
+                    self.assertEqual(manifest['schema_version'], source_schema)
+                    self.assertEqual(release.verify(output, '0.1.0-alpha.5', revision)['schema_version'], source_schema)
+
+    def test_alpha3_and_alpha4_contracts_do_not_follow_alpha5_source_schema(self):
+        with patch.object(release.package, 'schema_version', return_value=8):
+            self.assertEqual(release.contract_schema('0.1.0-alpha.3'), 6)
+            self.assertEqual(release.contract_schema('0.1.0-alpha.4'), 7)
 
     def test_historical_alpha3_contract_keeps_schema_six(self):
         self.assertEqual(release.contract_schema('0.1.0-alpha.3'), 6)
@@ -130,6 +148,19 @@ class ReleaseAssetTests(unittest.TestCase):
             with self.subTest(revision=revision, dirty=dirty, schema=schema), tempfile.TemporaryDirectory() as temp:
                 root = pathlib.Path(temp); source, _ = self.candidate(root, revision, dirty, schema=schema)
                 with self.assertRaises(ValueError): release.assemble(source, root / 'out', '0.1.0-alpha.4', 'a' * 40)
+
+    def test_alpha5_rejects_mismatched_candidate_schema_and_metadata(self):
+        version = '0.1.0-alpha.5'
+        schema = release.package.schema_version()
+        cases = [dict(revision='b' * 40), dict(dirty=True), dict(schema=schema + 1),
+                 dict(metadata_version='0.1.0-alpha.4'), dict(target_override='linux-arm64')]
+        for changes in cases:
+            with self.subTest(changes=changes), tempfile.TemporaryDirectory() as temp:
+                root = pathlib.Path(temp)
+                candidate_options = {'schema': schema, **changes}
+                source, _ = self.candidate(root, version=version, **candidate_options)
+                with self.assertRaises(ValueError):
+                    release.assemble(source, root / 'out', version, 'a' * 40)
 
     def test_fake_extension_and_unknown_version_are_rejected(self):
         with self.assertRaises(ValueError): release.contract_schema('0.1.0-alpha.9')

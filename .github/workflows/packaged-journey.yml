@@ -31,7 +31,7 @@ jobs:
     env:
       PYTHONDONTWRITEBYTECODE: '1'
       CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.candidate_sha }}
-      CANDIDATE_VERSION: ${{ github.event_name == 'pull_request' && '0.1.0-alpha.4' || inputs.candidate_version }}
+      CANDIDATE_VERSION: ${{ github.event_name == 'pull_request' && '0.1.0-alpha.5' || inputs.candidate_version }}
     steps:
       - uses: actions/checkout@v4
         with:

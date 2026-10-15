@@ -6,7 +6,8 @@ the full reusable CI, five native package jobs, a real packaged browser journey,
 installed VSIX checks, exact-set aggregation, reusable verification, and a
 read-only published-release state check. Only after every
 gate succeeds can the final job create a release. Pull requests rehearse the
-same gates with publication disabled and app version alpha.4. Publication is
+same gates with publication disabled and preview app version alpha.5 while
+`build/package/VERSION` remains alpha.4. Publication is
 restricted to the canonical repository's main push or explicit main dispatch;
 PR and fork previews have read-only permissions. Alpha.4
 archives include native desktop launchers and target-specific install
@@ -14,12 +15,12 @@ resources; these are archive members, not additional release assets.
 
 ## Preview rehearsal
 
-For an unpublished alpha.4 candidate, use **Actions → Package rehearsal
+For an unpublished alpha.5 candidate, use **Actions → Package rehearsal
 (no release) → Run workflow** with `candidate_sha` set to the exact commit SHA and
-`candidate_version` explicitly set to `0.1.0-alpha.4`. A rehearsal never edits
+`candidate_version` explicitly set to `0.1.0-alpha.5`. A rehearsal never edits
 `build/package/VERSION`; its archive is not a published release.
 The workflow checks out that SHA (not a PR merge ref), builds through
-`scripts/package.py --version 0.1.0-alpha.4 --require-clean`, and executes each
+`scripts/package.py --version 0.1.0-alpha.5 --require-clean`, and executes each
 extracted CLI and desktop binaries from a temporary path containing spaces and
 Unicode. All five native targets exercise first/second desktop launch and PDF
 child extraction through the packaged launcher using a
@@ -34,7 +35,7 @@ It cannot
 create or move tags, edit VERSION, or publish a release. The five artifacts are
 named `candidate-<sha>-<target>` and retained for 14 days. A full asset rehearsal
 uses **Alpha release candidate → Run workflow** with that SHA and `publish=false`;
-set `candidate_version=0.1.0-alpha.4`; its `release-assets-<sha>` aggregate is
+set `candidate_version=0.1.0-alpha.5`; its `release-assets-<sha>` aggregate is
 retained for 30 days. This path accepts only the exact head SHA of `main`, does
 not edit VERSION, and cannot publish when `publish=false`.
 
@@ -44,7 +45,7 @@ candidate set with the same revision and version:
 ```sh
 python3 scripts/release_assets.py verify \
   --directory ./release-assets \
-  --version 0.1.0-alpha.4 \
+  --version 0.1.0-alpha.5 \
   --revision <candidate-sha>
 ```
 
@@ -139,7 +140,8 @@ plus `SHA256SUMS.txt`, without a VSIX or manifest. The publisher has write
 permission only in the final job, rechecks that the tag does not already exist,
 and refuses to replace or move an existing tag/release.
 
-A complete alpha.4 release is also a no-op after main moves. The gate checks
+A complete alpha.4 release is a no-op after main moves, including when source
+checks package an unpublished alpha.5 candidate. The gate checks
 schema 7, the exact eight-file set, all remote checksum bytes, embedded archive
 provenance and the VSIX identity against the release's tag revision, rather
 than today's main revision or a later source schema. The historical alpha.3
@@ -147,13 +149,13 @@ SHA/schema contract remains unchanged.
 
 ## Intentional alpha.4 publication
 
-PR checks package alpha.4 with publication disabled, even when the PR changes
-VERSION. Complete [native desktop acceptance](release-smoke-alpha4.md) before
-merging the release PR. A main push with VERSION set to `0.1.0-alpha.4` intentionally
-enables publication only after all exact-run release checks pass and both
-candidate and selected release versions match. Existing releases and tags are
-never replaced. While main still selects alpha.3, its state gate verifies the
-unchanged historical alpha.3 assets and cannot publish an alpha.4 preview.
+PR and main-source checks package alpha.5 while `VERSION` remains alpha.4. The
+candidate schema is read from the checked-out source; alpha.3 and alpha.4 retain
+their historical schemas 6 and 7. These alpha.5 checks do not publish: the
+publisher still requires the candidate version to equal `VERSION`, and the
+read-only release-state gate verifies the existing alpha.4 release as a no-op.
+Dispatch rehearsals require the exact current main SHA and `publish=false` for
+preparation. Alpha.5 is not accepted as an existing published-release contract.
 
 After the new release exists, [verify the public downloads](release-smoke-alpha4.md#publication-after-acceptance)
 before switching README download links and announcing it. A future source
