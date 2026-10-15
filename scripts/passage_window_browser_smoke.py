@@ -113,8 +113,11 @@ def main():
             raise AssertionError("Shift+Tab order did not reach " + label)
 
         def focused_result(document_id):
-            active = browser.switch_to.active_element
-            return active if "result-preview" in (active.get_attribute("class") or "") and active.get_attribute("data-document-id") == document_id else False
+            try:
+                active = browser.switch_to.active_element
+                return active if "result-preview" in (active.get_attribute("class") or "") and active.get_attribute("data-document-id") == document_id else False
+            except StaleElementReferenceException:
+                return False
 
         def verify_refresh_focus(document_id, quote):
             old = browser.switch_to.active_element
@@ -235,20 +238,12 @@ def main():
             browser.find_element(By.ID, "diagnostics-close").click()
 
             # Preserve the PDF page-2 citation and the Advanced title-only fallback.
-            browser.find_element(By.ID, "query").clear()
-            browser.find_element(By.ID, "query").send_keys("page2journey")
             Select(browser.find_element(By.ID, "format")).select_by_value("pdf")
-            browser.find_element(By.ID, "submit").click()
-            WebDriverWait(browser, 20).until(lambda d: any("page2journey" in row.text for row in d.find_elements(By.CSS_SELECTOR, ".result")))
-            browser.find_element(By.CSS_SELECTOR, ".result .location button").click()
+            open_result("page2journey")
             WebDriverWait(browser, 20).until(lambda d: d.find_element(By.ID, "page-label").text == "Page 2 / 2")
             browser.find_element(By.ID, "close-preview").click()
-            browser.find_element(By.ID, "query").clear()
-            browser.find_element(By.ID, "query").send_keys("runbook")
             Select(browser.find_element(By.ID, "mode")).select_by_value("advanced")
-            browser.find_element(By.ID, "submit").click()
-            WebDriverWait(browser, 20).until(lambda d: any("runbook" in row.text for row in d.find_elements(By.CSS_SELECTOR, ".result")))
-            browser.find_element(By.CSS_SELECTOR, ".result .location button").click()
+            open_result("runbook")
             WebDriverWait(browser, 20).until(lambda d: d.find_element(By.ID, "page-label").text == "Title match · page not determined")
             browser.find_element(By.ID, "close-preview").click()
             Select(browser.find_element(By.ID, "mode")).select_by_value("literal")
