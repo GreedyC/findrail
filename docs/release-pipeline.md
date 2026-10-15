@@ -29,15 +29,19 @@ child extraction through the packaged launcher using a
 controlled native executable adapter on each target OS; these are lifecycle
 checks, not manual viewer demonstrations. macOS uses the packaged app entrypoint;
 Windows uses the GUI executable. Linux additionally migrates synthetic schema-2
-alpha.2 and schema-6 alpha.3 indexes and checks their stopped backups with the
-corresponding published binaries. It also creates a schema-7 index using the
+alpha.2 and schema-6 alpha.3 indexes. The restored schema-2 fixture is checked
+through SQLite; the restored schema-6 backup is opened by the published alpha.3
+binary. It also creates a schema-7 index using the
 published alpha.4 binary, including a committed indexing report and an actual
 saved collection with notes and order. Candidate migration checks search,
 provenance, report retention, and legacy passage start zero. A complete stopped
 backup is opened by the same alpha.4 binary; alpha.4 must reject schema 8 without
 modifying it. An induced failed migration must roll back byte-for-byte. Linux
 also runs a small, same-host synthetic resource comparison against published
-alpha.4; this is not a search-quality claim. The packaged browser journey tests native
+alpha.4; this is not a search-quality claim. The native Linux job also runs the
+generated-config SDK integration against the extracted candidate executable via
+`FINDRAIL_MCP_TEST_BINARY`; it does not substitute a freshly rebuilt source CLI.
+The packaged browser journey tests native
 original/folder actions through controlled local executable adapters and verifies
 named collection restoration only after the candidate process stops and restarts.
 It cannot

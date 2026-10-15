@@ -339,13 +339,16 @@ def upgrade_alpha4_schema7(candidate, published_alpha4, root):
     backup = root / 'stopped-alpha4-schema7-backup'
     shutil.copytree(data, backup)
     backup_fingerprint = directory_digest(backup)
+    def stored_state(db):
+        return {
+            'sources': db.execute('SELECT id,kind,name,root FROM sources ORDER BY id').fetchall(),
+            'documents': db.execute('SELECT id,source_id,title,uri,path,content_hash FROM documents ORDER BY id').fetchall(),
+            'report': db.execute('SELECT report_id,report_json,indexed_documents FROM indexing_reports WHERE source_id=?', (source_id,)).fetchall(),
+            'collection': db.execute('SELECT c.id,c.title,c.revision,e.entry_id,e.ordinal,e.source_id,e.document_id,e.snapshot_json FROM evidence_collections c JOIN evidence_collection_entries e ON e.collection_id=c.id WHERE c.id=? ORDER BY e.ordinal', (collection_id,)).fetchall(),
+        }
+
     baseline = sqlite3.connect(backup / 'findrail.db')
-    before = {
-        'sources': baseline.execute('SELECT id,kind,name,root FROM sources ORDER BY id').fetchall(),
-        'documents': baseline.execute('SELECT id,source_id,title,uri,path,content_hash FROM documents ORDER BY id').fetchall(),
-        'report': baseline.execute('SELECT report_id,report_json,indexed_documents FROM indexing_reports WHERE source_id=?', (source_id,)).fetchall(),
-        'collection': baseline.execute('SELECT c.id,c.title,c.revision,e.entry_id,e.ordinal,e.source_id,e.document_id,e.snapshot_json FROM evidence_collections c JOIN evidence_collection_entries e ON e.collection_id=c.id WHERE c.id=? ORDER BY e.ordinal', (collection_id,)).fetchall(),
-    }
+    before = stored_state(baseline)
     baseline.close()
     if len(before['documents']) != 2 or len(before['collection']) != 2:
         raise SystemExit('schema-7 fixture is missing real documents or saved collection entries')
@@ -366,15 +369,20 @@ def upgrade_alpha4_schema7(candidate, published_alpha4, root):
     if upgraded.execute('PRAGMA user_version').fetchone()[0] != 8:
         raise SystemExit('schema-7 index did not migrate to schema 8')
     start_values = upgraded.execute('SELECT preview_start_char FROM evidence_collection_entries WHERE collection_id=? ORDER BY ordinal', (collection_id,)).fetchall()
-    after_collection = upgraded.execute('SELECT c.id,c.title,c.revision,e.entry_id,e.ordinal,e.source_id,e.document_id,e.snapshot_json FROM evidence_collections c JOIN evidence_collection_entries e ON e.collection_id=c.id WHERE c.id=? ORDER BY e.ordinal', (collection_id,)).fetchall()
+    after = stored_state(upgraded)
     upgraded.close()
-    if start_values != [(0,), (0,)] or after_collection != before['collection']:
-        raise SystemExit('schema-7 collection snapshot/order/note did not migrate with legacy start=0')
+    if start_values != [(0,), (0,)]:
+        raise SystemExit('schema-7 collection did not migrate with legacy start=0')
+    changed = [key for key in before if after[key] != before[key]]
+    if changed:
+        raise SystemExit('schema-7 migration changed saved state: ' + ', '.join(changed))
 
     # A schema-8 candidate must refuse the actual published alpha.4 binary; no
     # downgrade is attempted and rejection must not mutate the candidate index.
     schema8_fingerprint = directory_digest(data)
-    invoke(published_alpha4, ['sources', '--data-dir', str(data), '--json'], ok=False)
+    rejected = invoke(published_alpha4, ['sources', '--data-dir', str(data), '--json'], ok=False)
+    if 'unsupported index schema 8' not in rejected.stderr.lower():
+        raise SystemExit('published alpha.4 failed for a reason other than unsupported schema 8: ' + rejected.stderr)
     if directory_digest(data) != schema8_fingerprint:
         raise SystemExit('published alpha.4 changed the schema-8 candidate data directory while rejecting it')
 
@@ -394,7 +402,9 @@ def upgrade_alpha4_schema7(candidate, published_alpha4, root):
     failed_db.execute('ALTER TABLE evidence_collection_entries ADD COLUMN preview_start_char INTEGER NOT NULL DEFAULT 0')
     failed_db.commit(); failed_db.close()
     failure_before = directory_digest(failed)
-    invoke(candidate, ['sources', '--data-dir', str(failed), '--json'], ok=False)
+    rejected = invoke(candidate, ['sources', '--data-dir', str(failed), '--json'], ok=False)
+    if 'duplicate column' not in rejected.stderr.lower() or 'preview_start_char' not in rejected.stderr:
+        raise SystemExit('schema-8 migration failed for an unexpected reason: ' + rejected.stderr)
     if directory_digest(failed) != failure_before:
         raise SystemExit('failed schema-8 migration was not an atomic rollback')
     print(f'Published alpha.4 schema-7 index migrated to candidate schema 8: source/search/report and two saved ordered notes preserved with legacy start=0; full stopped backup restored and read by real alpha.4; real alpha.4 rejected schema 8 without mutation; induced migration failure rolled back atomically. Collection {collection_id!r}.')

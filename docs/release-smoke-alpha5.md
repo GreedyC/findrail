@@ -40,7 +40,8 @@ remain skipped and no release may be created.
   keyboard/focus, changed evidence/Forget invalidation and purge, and Quit.
   `serve --no-sync` and demo remain read-only with temporary collections.
 - Generated VS Code and Claude Desktop MCP configs are exercised with their
-  recorded executable/argument arrays by the SDK integration test. MCP protocol
+  recorded executable/argument arrays by the SDK integration test, using the
+  extracted Linux candidate executable in the native package job. MCP protocol
   smoke and installed read-only VSIX are separate checks; neither claims a GUI
   session in a third-party AI client or VS Code extension host beyond the test
   host that actually ran.

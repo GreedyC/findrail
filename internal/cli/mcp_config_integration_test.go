@@ -29,11 +29,26 @@ func TestGeneratedMCPConfigSDKJourney(t *testing.T) {
 		name += ".exe"
 		goName += ".exe"
 	}
-	binary := filepath.Join(t.TempDir(), name)
-	build := exec.CommandContext(ctx, filepath.Join(runtime.GOROOT(), "bin", goName), "build", "-o", binary, "../../cmd/findrail")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
+	// Native package verification supplies the freshly extracted candidate.
+	// Ordinary source tests retain the Unicode/space-path build below.
+	binary := os.Getenv("FINDRAIL_MCP_TEST_BINARY")
+	if binary == "" {
+		binary = filepath.Join(t.TempDir(), name)
+		build := exec.CommandContext(ctx, filepath.Join(runtime.GOROOT(), "bin", goName), "build", "-o", binary, "../../cmd/findrail")
+		if output, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build CLI: %v\n%s", err, output)
+		}
+	} else {
+		resolved, err := filepath.Abs(binary)
+		if err != nil {
+			t.Fatal(err)
+		}
+		binary = resolved
+		if info, err := os.Stat(binary); err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("packaged MCP executable is unavailable: %s (%v)", binary, err)
+		}
 	}
+	t.Logf("MCP SDK journey executable: %s", binary)
 	dir := filepath.Join(t.TempDir(), "index 測試 spaces")
 	store, err := sqlite.Open(ctx, dir)
 	if err != nil {

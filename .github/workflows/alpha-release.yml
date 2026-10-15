@@ -140,6 +140,7 @@ jobs:
           fi
           "$PY" scripts/desktop_launch_smoke.py "$BINARY"
           if [[ '${{ matrix.target }}' == linux-amd64 ]]; then
+            FINDRAIL_MCP_TEST_BINARY="$BINARY" go test -count=1 -v ./internal/cli -run '^TestGeneratedMCPConfigSDKJourney$'
             REFERENCE="$RUNNER_TEMP/alpha3-reference"
             ALPHA3_ARCHIVE="$RUNNER_TEMP/findrail_0.1.0-alpha.3_linux-amd64.tar.gz"
             curl --proto '=https' --proto-redir '=https' --fail --location --silent --show-error \
@@ -197,7 +198,7 @@ jobs:
           import package
           out=pathlib.Path(os.environ['RUNNER_TEMP'])/'release-evidence'/'verification.json'
           checks=['archive_checksum','archive_contents','exact_build_info','executable_version','cli','search','browser_api','mcp','portable_snapshot','diagnostics','desktop_single_owner','launcher_pdf_child']
-          if os.environ['TARGET']=='linux-amd64': checks.extend(['alpha2_schema2_upgrade_restore','alpha3_schema6_upgrade_restore','published_alpha4_schema7_to_schema8_saved_collection_restore_rollback','alpha4_same_host_resource_comparison'])
+          if os.environ['TARGET']=='linux-amd64': checks.extend(['generated_mcp_configs_sdk_against_extracted_candidate','alpha2_schema2_upgrade_restore','alpha3_schema6_upgrade_restore','published_alpha4_schema7_to_schema8_saved_collection_restore_rollback','alpha4_same_host_resource_comparison'])
           out.write_text(json.dumps({'candidate_sha':os.environ['CANDIDATE_SHA'],'candidate_version':os.environ['VERSION'],'schema_version':package.schema_version(),'target':os.environ['TARGET'],'source_clean':os.environ['JOB_STATUS']=='success','status':os.environ['JOB_STATUS'],'checks':checks if os.environ['JOB_STATUS']=='success' else []}, sort_keys=True, indent=2)+'\n')
           PY
       - uses: actions/upload-artifact@v4
