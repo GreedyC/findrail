@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -16,7 +17,11 @@ import (
 
 func TestMCPConfigProfilesAndValidation(t *testing.T) {
 	dir := mcpTestIndex(t)
-	binary := filepath.Join(t.TempDir(), `findrail "測試"\ cli`)
+	name := `findrail "測試"\ cli`
+	if runtime.GOOS == "windows" {
+		name = "findrail 測試 cli.exe"
+	}
+	binary := filepath.Join(t.TempDir(), name)
 	if err := os.WriteFile(binary, []byte("synthetic executable"), 0700); err != nil {
 		t.Fatal(err)
 	}

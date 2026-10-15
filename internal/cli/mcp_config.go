@@ -10,6 +10,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/Lephiziel/findrail/internal/config"
 	"github.com/Lephiziel/findrail/internal/store/sqlite"
@@ -83,7 +85,12 @@ func runMCPConfig(ctx context.Context, args []string, out, stderr io.Writer) err
 	if !info.Mode().IsRegular() {
 		return errors.New("binary must be a regular file")
 	}
-	if info.Mode().Perm()&0111 == 0 {
+	// Windows does not expose Unix executable mode bits. Findrail's native
+	// Windows command is an .exe; scripts must not acquire shell semantics.
+	if runtime.GOOS == "windows" && !strings.EqualFold(filepath.Ext(command), ".exe") {
+		return errors.New("binary must be a Windows .exe file")
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0111 == 0 {
 		return errors.New("binary must be executable")
 	}
 	store, err := sqlite.OpenReadOnly(ctx, dir)

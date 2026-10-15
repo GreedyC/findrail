@@ -81,10 +81,10 @@ func Run(ctx context.Context, args []string, out, stderr io.Writer, version stri
 		return runSnapshotCommand(ctx, args[0], args[1:], out, version)
 	}
 	if args[0] == "start" {
-		return runStart(ctx, args[1:], out, stderr, openBrowser)
+		return runStart(ctx, args[1:], out, stderr, openBrowser, version)
 	}
 	if args[0] == "desktop" {
-		return runDesktop(ctx, args[1:], out, stderr, openBrowser)
+		return runDesktop(ctx, args[1:], out, stderr, openBrowser, version)
 	}
 	if args[0] == "mcp" {
 		return runMCP(ctx, args[1:], out, stderr, version)
@@ -93,7 +93,9 @@ func Run(ctx context.Context, args []string, out, stderr io.Writer, version stri
 		return runMCPConfig(ctx, args[1:], out, stderr)
 	}
 	if args[0] == "demo" {
-		return runDemo(ctx, args[1:], out, stderr, openBrowser, runStartReadOnly)
+		return runDemo(ctx, args[1:], out, stderr, openBrowser, func(ctx context.Context, args []string, out, stderr io.Writer, open func(string) error) error {
+			return runStartReadOnly(ctx, args, out, stderr, open, version)
+		})
 	}
 	if args[0] == "index-github" || args[0] == "refresh-github" {
 		return runGitHub(ctx, args[0], args[1:], out, stderr)
@@ -312,7 +314,7 @@ func Run(ctx context.Context, args []string, out, stderr io.Writer, version stri
 		if _, err := fmt.Fprintf(out, "Findrail local UI: http://%s\n", addr); err != nil {
 			return err
 		}
-		return transport.Serve(ctx, addr, store, transport.WithSyncStatus(!noSync, manager.Status))
+		return transport.Serve(ctx, addr, store, transport.WithSyncStatus(!noSync, manager.Status), transport.WithDiagnostics(version))
 	case "forget":
 		if err := store.ForgetSource(ctx, fs.Arg(0)); err != nil {
 			return err

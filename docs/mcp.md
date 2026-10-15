@@ -1,12 +1,13 @@
 # Read-only MCP
 
-Source builds include a local, read-only Model Context Protocol server. It runs
+Published alpha.3 and alpha.4 packages include a local, read-only Model Context Protocol server. It runs
 over stdio as `findrail mcp`; it does not start the web
 server, watch folders, index files, open a browser, call a model, or contact a
 network service.
 
-The first build containing this command is a source build after this change;
-existing alpha archives do not gain MCP retroactively.
+The new `mcp-config` helper is available in source builds after alpha.4; it is
+not included in the published alpha.4 archives. Manual configuration below works
+with the published MCP command.
 
 The MCP client receives indexed snapshots. A client may send that returned text
 to its own AI provider, according to the client's settings; local indexing does
@@ -31,7 +32,7 @@ arguments by hand. Use the real registered source ID from `sources --json`:
 ```
 
 The command writes a single JSON object to stdout. `--binary` can select another
-absolute executable path; it is validated but never run by config generation.
+absolute executable path (a native `.exe` on Windows); it is validated but never run by config generation.
 To permit another source, repeat `--source ID`; every ID is checked against the
 existing index. The generated allowlist is explicit and does not include future
 sources automatically.
@@ -122,10 +123,10 @@ and its compatibility text representation. Evidence reports `truncated` and
 The result is an indexed snapshot, not a fresh read of the original file.
 Findrail does not claim that the snapshot is current when the original changes.
 The server opens an existing supported current index read-only (schema 7 in this
-source candidate) and does not migrate, create, or modify it. Compatibility with
-the special legacy schema-5 read-only profile is limited to the code path that
-explicitly supports that profile; this does not imply arbitrary old schemas can
-be opened or migrated by MCP.
+source candidate) and does not migrate, create, or modify it. MCP and
+`mcp-config` both use the ordinary current-schema read-only profile. The special
+legacy schema-5 profile belongs to the source-report command, not MCP; it does
+not imply that arbitrary old schemas can be opened or migrated by MCP.
 
 ## Updating and troubleshooting
 

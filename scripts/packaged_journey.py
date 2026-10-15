@@ -161,6 +161,8 @@ def main():
             command([sys.executable, str(ROOT / "scripts/evidence_collection_smoke.py"), str(binary)], timeout=600)
             cases.append({"case": "evidence_collection_smoke.py", "status": "passed"})
     report = {"candidate_sha": args.candidate_sha, "candidate_version": args.candidate_version,
+              "schema_version": metadata.get("schema_version"), "target": metadata.get("target"),
+              "source_clean": metadata.get("dirty") is False,
               "binary": binary.name, "os": platform.platform(), "python": platform.python_version(),
               "go": metadata.get("go_version"), "browser_skipped": args.skip_browser, "cases": cases}
     encoded = json.dumps(report, indent=2, ensure_ascii=False) + "\n"

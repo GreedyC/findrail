@@ -133,6 +133,14 @@ func TestDoctorSupportedSchemaAndCorruptDiagnostic(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			var before []byte
+			if !tc.corrupt {
+				var err error
+				before, err = os.ReadFile(filepath.Join(dir, "findrail.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
 			var out, stderr bytes.Buffer
 			err := cli.Run(context.Background(), []string{"doctor", "--data-dir", dir, "--json", "--show-paths"}, &out, &stderr, "test")
 			if tc.corrupt && err == nil {
@@ -142,7 +150,9 @@ func TestDoctorSupportedSchemaAndCorruptDiagnostic(t *testing.T) {
 				t.Fatal(err)
 			}
 			var report struct {
-				Checks []struct {
+				IndexSchema        *int `json:"index_schema"`
+				CurrentWriteSchema int  `json:"current_write_schema"`
+				Checks             []struct {
 					Code    string `json:"code"`
 					Message string `json:"message"`
 				} `json:"checks"`
@@ -162,6 +172,15 @@ func TestDoctorSupportedSchemaAndCorruptDiagnostic(t *testing.T) {
 			if !found {
 				t.Fatalf("missing %s in %+v", tc.code, report.Checks)
 			}
+			if !tc.corrupt && (report.IndexSchema == nil || *report.IndexSchema != sqlite.CurrentWriteSchema() || report.CurrentWriteSchema != sqlite.CurrentWriteSchema()) {
+				t.Fatalf("doctor reported wrong schema facts: actual=%v current=%d", report.IndexSchema, report.CurrentWriteSchema)
+			}
+			if !tc.corrupt {
+				after, err := os.ReadFile(filepath.Join(dir, "findrail.db"))
+				if err != nil || !bytes.Equal(before, after) {
+					t.Fatalf("doctor modified the index: %v", err)
+				}
+			}
 		})
 	}
 }
@@ -171,7 +190,7 @@ func TestDoctorOldAndNewerSchemaDoesNotMigrate(t *testing.T) {
 		schema int
 		want   string
 		exit   int
-	}{{5, "schema_upgrade_needed", 0}, {8, "schema_unsupported", 2}} {
+	}{{5, "schema_upgrade_needed", 0}, {sqlite.CurrentWriteSchema() + 1, "schema_unsupported", 2}} {
 		t.Run(tc.want, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "findrail.db")
