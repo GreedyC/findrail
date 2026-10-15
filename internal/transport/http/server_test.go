@@ -104,6 +104,49 @@ func TestLocalSearchAPIAndBrowserBoundary(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsEndpointReportsOnlyWhitelistedFactsAndCapability(t *testing.T) {
+	store, err := sqlite.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	h := transport.Handler(store, transport.WithDiagnostics("synthetic-version"))
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/diagnostics", nil)
+	r.Host = "127.0.0.1:7766"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("diagnostics status %d: %s", w.Code, w.Body.String())
+	}
+	var report map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report["report_version"] != float64(1) || report["index_schema"] != float64(sqlite.CurrentWriteSchema()) {
+		t.Fatalf("report facts: %+v", report)
+	}
+	if len(w.Body.Bytes()) > 16<<10 {
+		t.Fatalf("report exceeds bound: %d", len(w.Body.Bytes()))
+	}
+	for _, forbidden := range []string{"data_directory", "source_id", "document_id", "query", "nonce", "token", "argv", "logs", "root"} {
+		if strings.Contains(w.Body.String(), forbidden) {
+			t.Fatalf("report disclosed %q: %s", forbidden, w.Body.String())
+		}
+	}
+	capReq := httptest.NewRequest(http.MethodGet, "/api/v1/capabilities", nil)
+	capReq.Host = r.Host
+	capW := httptest.NewRecorder()
+	h.ServeHTTP(capW, capReq)
+	if !strings.Contains(capW.Body.String(), `"diagnostics":true`) {
+		t.Fatalf("missing capability: %s", capW.Body.String())
+	}
+	without := httptest.NewRecorder()
+	transport.Handler(store).ServeHTTP(without, r)
+	if without.Code != http.StatusNotFound {
+		t.Fatalf("unavailable backend capability exposed endpoint: %d", without.Code)
+	}
+}
+
 func TestSourceReportHTTPAvailabilityAndPathOptIn(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(ctx, t.TempDir())

@@ -14,9 +14,15 @@
 - In writable `start`, explicitly saved named evidence collections add selected
   passages, provenance, ordering and user notes to the same local SQLite data
   directory. This plaintext is included in a stopped full-directory backup, but
-  not in portable source exports. Published alpha.3 does not contain schema 7;
-  the unpublished alpha.4 candidate does.
+  not in portable source exports. Published alpha.3 uses schema 6; published
+  alpha.4 uses schema 7.
 - Runtime local search does not call a hosted model, analytics service, or source API.
+- The explicit **Diagnostics** action reads a bounded whitelist of application
+  version, runtime platform, schema compatibility and aggregate policy/source
+  counts. The JSON excludes paths, source/document identities and names, document
+  text, queries, tokens, environment, arguments, logs and raw database errors.
+  It is downloaded only after the user selects **Download report**; Findrail
+  never uploads it or polls a remote service.
 - The database is plaintext, protected by local filesystem permissions rather than encryption.
 - Common credential-like names, hidden entries, and symlinks are skipped. This is not a universal secret detector.
 - Document contents are treated as text and never executed.
