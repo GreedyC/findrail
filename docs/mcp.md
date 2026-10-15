@@ -22,7 +22,43 @@ go build -o bin/findrail ./cmd/findrail
 ./bin/findrail sources --data-dir .findrail-mcp --json
 ```
 
-Copy one real source ID from the JSON result into the MCP client's configuration:
+Generate a client-ready configuration instead of assembling the command and
+arguments by hand. Use the real registered source ID from `sources --json`:
+
+```bash
+./bin/findrail mcp-config --client vscode --data-dir /absolute/path/to/.findrail-mcp --source REAL_SOURCE_ID
+./bin/findrail mcp-config --client claude-desktop --data-dir /absolute/path/to/.findrail-mcp --source REAL_SOURCE_ID
+```
+
+The command writes a single JSON object to stdout. `--binary` can select another
+absolute executable path; it is validated but never run by config generation.
+To permit another source, repeat `--source ID`; every ID is checked against the
+existing index. The generated allowlist is explicit and does not include future
+sources automatically.
+
+For **VS Code**, save the generated object in the workspace-root `.mcp.json`
+file (portable `mcpServers` format), preserving any existing server entries.
+Open the workspace in VS Code and use its MCP server management UI to start and
+inspect `findrail`. The VS Code-specific `.vscode/mcp.json` `servers` format is
+a compatibility destination and is not generated here.
+
+For **Claude Desktop**, open Settings → Developer → Edit Config, preserve any
+existing entries in `claude_desktop_config.json`, add the generated `findrail`
+entry under `mcpServers`, save, and restart Claude Desktop. Its documented config
+locations are `~/Library/Application Support/Claude/claude_desktop_config.json`
+on macOS and `%APPDATA%\\Claude\\claude_desktop_config.json` on Windows. The
+official instructions also list Linux availability, but this project has not
+verified a Linux GUI session.
+
+The two client profiles currently emit the same minimal stdio config structure;
+this is a client configuration, not a universal MCP wire schema. No VS Code or
+Claude Desktop GUI session has been verified. Automated verification means only
+“config parsed + real protocol/SDK child checked.”
+
+The selected client may transmit retrieved indexed text to its configured AI
+provider. Findrail's MCP server itself does not send data to a model.
+
+For manual configuration, the equivalent object is:
 
 ```json
 {
@@ -48,9 +84,8 @@ On Windows, use the executable path and JSON-escaped backslashes, for example:
 }
 ```
 
-This `mcpServers` shape is a common client configuration form, not a promise
-that every client uses the same file or field names. Use the client's own
-configuration location and keep `command` and every path absolute.
+The generated `mcpServers` shape is portable workspace format for VS Code and
+the documented local-server format for Claude Desktop. Keep paths absolute.
 
 To allow another folder, index it normally, run `sources --json` again, and add
 its new ID as another `--source` argument. The allowlist is fixed when the MCP
@@ -86,8 +121,11 @@ and its compatibility text representation. Evidence reports `truncated` and
 
 The result is an indexed snapshot, not a fresh read of the original file.
 Findrail does not claim that the snapshot is current when the original changes.
-The server opens an existing schema-5 index read-only and does not migrate,
-create, or modify it.
+The server opens an existing supported current index read-only (schema 7 in this
+source candidate) and does not migrate, create, or modify it. Compatibility with
+the special legacy schema-5 read-only profile is limited to the code path that
+explicitly supports that profile; this does not imply arbitrary old schemas can
+be opened or migrated by MCP.
 
 ## Updating and troubleshooting
 

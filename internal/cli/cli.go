@@ -43,6 +43,7 @@ Usage:
   findrail watch [--data-dir DIR] [--sync-interval 5m]
   findrail explain-path ROOT --path RELATIVE [--path RELATIVE ...] [--data-dir DIR] [--json] [--show-rule]
   findrail mcp --data-dir DIR --source ID [--source ID ...]
+  findrail mcp-config --client vscode|claude-desktop --data-dir DIR --source ID [--source ID ...] [--binary PATH]
   findrail version
   findrail doctor [--data-dir DIR] [--json] [--show-paths]
 
@@ -87,6 +88,9 @@ func Run(ctx context.Context, args []string, out, stderr io.Writer, version stri
 	}
 	if args[0] == "mcp" {
 		return runMCP(ctx, args[1:], out, stderr, version)
+	}
+	if args[0] == "mcp-config" {
+		return runMCPConfig(ctx, args[1:], out, stderr)
 	}
 	if args[0] == "demo" {
 		return runDemo(ctx, args[1:], out, stderr, openBrowser, runStartReadOnly)
