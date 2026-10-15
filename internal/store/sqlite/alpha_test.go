@@ -717,6 +717,29 @@ func TestSearchReadsPreviousSnapshotDuringWrite(t *testing.T) {
 	if got := find(t, s, "pending", "", 20); got.Total != 1 {
 		t.Fatalf("committed snapshot absent: %+v", got)
 	}
+	// Hold a second writer transaction after its upsert, then cancel it. Search
+	// continues to see the complete committed generation, never the partial one.
+	canceled, err := s.BeginRefresh(context.Background(), conn.Source())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer canceled.Rollback()
+	if _, err := canceled.Upsert(context.Background(), connector.Document{ID: "canceled", SourceID: conn.Source().ID, Title: "canceled", Path: "canceled.txt", URI: "file:///canceled.txt", Content: "canceled generation", Hash: "canceled"}); err != nil {
+		_ = canceled.Rollback()
+		t.Fatal(err)
+	}
+	if got := find(t, s, "pending", "", 20); got.Total != 1 {
+		t.Fatalf("reader lost committed generation during canceled writer: %+v", got)
+	}
+	if got := find(t, s, "canceled", "", 20); got.Total != 0 {
+		t.Fatalf("reader saw partial canceled generation: %+v", got)
+	}
+	if err := canceled.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if got := find(t, s, "pending", "", 20); got.Total != 1 {
+		t.Fatalf("rollback changed committed generation: %+v", got)
+	}
 }
 
 func TestPDFEvidenceUpdateAndDelete(t *testing.T) {
