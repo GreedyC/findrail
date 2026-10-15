@@ -257,7 +257,13 @@ def main():
                     collection_button.send_keys(Keys.ENTER)
                     WebDriverWait(browser, 20).until(lambda d: d.find_element(By.ID, "evidence-collection").get_property("open"))
                     note = tab_until(lambda element: element.tag_name == "textarea" and (element.get_attribute("aria-label") or "").startswith("Personal note for"), "personal note")
-                    note.send_keys("/Late text note")
+                    note.send_keys("/Late")
+                    browser.execute_script("window.__keyboardInventory=false;window.addEventListener('findrail-inventory',()=>window.__keyboardInventory=true,{once:true})")
+                    (notes / "keyboard-note-refresh.md").write_text("Another unrelated synthetic refresh fixture.", encoding="utf-8")
+                    WebDriverWait(browser, 20).until(lambda d: d.execute_script("return window.__keyboardInventory"))
+                    assert browser.switch_to.active_element == note, "inventory refresh interrupted note editing"
+                    browser.switch_to.active_element.send_keys(" text note")
+                    assert browser.switch_to.active_element.get_attribute("value") == "/Late text note"
                     browser.switch_to.active_element.send_keys(Keys.ESCAPE)
                     WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "evidence-collection").get_property("open"))
                     with sqlite3.connect((data / "findrail.db").as_uri() + "?mode=ro", uri=True) as db:
