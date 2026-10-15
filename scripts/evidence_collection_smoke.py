@@ -108,7 +108,7 @@ def main():
             preview_button = wait.until(lambda d: next((b for b in d.find_elements(By.TAG_NAME, "button")
                                                         if b.text == "Preview"), False))
             preview_button.click()
-            wait.until(lambda d: d.find_element(By.ID, "preview-body").text.startswith("Synthetic"))
+            wait.until(lambda d: d.find_element(By.ID, "preview-body").text.startswith("alpha"))
             browser.execute_script("""const b=document.getElementById('preview-body'),t=b.firstChild;
                 const r=document.createRange();r.setStart(t,0);r.setEnd(t,Math.min(10,t.length));
                 const s=getSelection();s.removeAllRanges();s.addRange(r);""")
@@ -129,7 +129,7 @@ def main():
             rows = browser.find_elements(By.CLASS_NAME, "collection-row")
             rows[0].find_element(By.XPATH, ".//button[.='Move down']").click()
             excerpts = browser.execute_script("return [...document.querySelectorAll('.collection-row pre')].map(x=>x.textContent)")
-            assert excerpts[0].startswith("Synthetic evidence alpha passage") and excerpts[1].startswith("Synthetic")
+            assert excerpts[0].startswith("alpha passage") and excerpts[1].startswith("alpha")
             assert not browser.execute_script("return window.__evidencePwned===true")
 
             browser.find_element(By.ID, "collection-close").click()
@@ -209,7 +209,7 @@ def main():
             browser.find_element(By.ID, "collection-check").click()
             wait.until(lambda d: "changed/current version differs" in d.execute_script("return document.getElementById('collection-list').textContent"))
             excerpts = browser.execute_script("return [...document.querySelectorAll('.collection-row pre')].map(x=>x.textContent)")
-            assert excerpts[0].startswith("Synthetic evidence alpha passage") and excerpts[1].startswith("Synthetic")
+            assert excerpts[0].startswith("alpha passage") and excerpts[1].startswith("alpha")
 
             def gate_response(fragment, flow=None):
                 # Match the request's semantic caller, never an arbitrary Nth poll.
