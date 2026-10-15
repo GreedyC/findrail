@@ -30,6 +30,13 @@ prefix, not arbitrary substring. Literal title filtering is case-sensitive.
 Unicode whitespace separates atoms. NUL and control characters are rejected;
 CR/LF inside a quoted phrase is rejected. Lower-case `or` is a normal term.
 
+In current schema-8 source builds, a long matching document can be browsed in
+bounded passage windows. Literal search remains unchanged; the user can move to
+the matching window, select an exact quote, and save its offset with a named
+collection. The window is an indexed snapshot, bounded to 65,536 Unicode code
+points and 256 KiB of UTF-8; it does not read an arbitrary source path. This
+candidate behavior is not in published alpha.4, whose schema is 7.
+
 The server filters `--format all|text|pdf|docx`, `--path-prefix` (relative,
 forward-slash indexed path with segment boundary), and `--title-contains`
 (literal case-sensitive substring) are ANDed with query and optional single

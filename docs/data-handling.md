@@ -14,8 +14,10 @@
 - In writable `start`, explicitly saved named evidence collections add selected
   passages, provenance, ordering and user notes to the same local SQLite data
   directory. This plaintext is included in a stopped full-directory backup, but
-  not in portable source exports. Published alpha.3 uses schema 6; published
-  alpha.4 uses schema 7.
+   not in portable source exports. Published alpha.3 uses schema 6; published
+   alpha.4 uses schema 7. Current alpha.5 source candidates use schema 8, which
+   stores passage-window offsets; this source behavior is not part of the alpha.4
+   download.
 - Runtime local search does not call a hosted model, analytics service, or source API.
 - The explicit **Diagnostics** action reads a bounded whitelist of application
   version, runtime platform, schema compatibility and aggregate policy/source

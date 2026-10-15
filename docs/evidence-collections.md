@@ -19,6 +19,13 @@ entry key and derives provenance from the current indexed document; the browser
 cannot submit a URI, hash, title, source identity or page as authoritative data.
 Exact source/document/content-hash/page/passage duplicates are rejected.
 
+Current schema-8 source candidates also retain the start offset for a selected
+window in a long indexed document. Existing schema-7 collections migrate with
+offset zero, preserving their saved prefix evidence, note and order. A new
+windowed citation remains bound to the same indexed document identity and full
+content hash; it is not an offset into the live original file. These offsets are
+not available in the published alpha.4 binary (schema 7).
+
 Stored entries are immutable historical evidence snapshots. A rescan with changed
 content does not rewrite their passage/hash. **Open current indexed evidence** is a
 separate action and may show the new version or report that it is unavailable.

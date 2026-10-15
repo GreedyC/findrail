@@ -50,6 +50,9 @@ Python are only development tools.
 > with desktop launchers, optional original-file opening and saved collections.
 > [What's new](#new-in-alpha4) · [Verified release](docs/release-alpha4-verification.md).
 > Upgrading an existing index? [Stop and back up the whole data directory first](build/package/INSTALL.txt).
+> Schema-8 passage windows are being verified in an unpublished alpha.5 source
+> candidate; they are not in the alpha.4 downloads. Do not expect alpha.4 to open
+> a data directory already migrated by a candidate.
 
 ## A path back to your documents
 
