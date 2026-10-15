@@ -12,13 +12,14 @@ import tempfile
 import urllib.request
 
 from selenium import webdriver
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
-from smoke import docx_fixture
+from smoke import docx_fixture, pdf_fixture
 
 
 def main():
@@ -30,7 +31,7 @@ def main():
         text_quote, word_quote = "needletextlate exact text quote", "needledocxlate exact Word quote"
         (notes / "late.md").write_text("padding " * 10000 + text_quote + " 😀e\u0301\n", encoding="utf-8")
         (notes / "late.docx").write_bytes(docx_fixture("padding " * 10000 + word_quote + " 😀e\u0301"))
-        subprocess.run([str(binary), "index", "--data-dir", str(data), str(notes)], check=True, capture_output=True, timeout=30)
+        (notes / "runbook.pdf").write_bytes(pdf_fixture(["first page filler", "secondpage page2journey unique beta"]))
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
@@ -39,6 +40,7 @@ def main():
         options.binary_location = os.environ.get("FINDRAIL_CHROME") or shutil.which("chromium") or shutil.which("google-chrome") or ""
         for flag in ("--headless=new", "--no-sandbox", "--disable-dev-shm-usage"):
             options.add_argument(flag)
+        options.add_experimental_option("prefs", {"download.default_directory": str(root), "download.prompt_for_download": False})
         driver = os.environ.get("FINDRAIL_CHROMEDRIVER") or shutil.which("chromedriver")
         browser = server = None
 
@@ -55,10 +57,10 @@ def main():
                     server.kill()
                     server.communicate(timeout=3)
 
-        def launch(mode="start"):
+        def launch(mode="desktop"):
             nonlocal browser, server
             args = [str(binary), mode, "--data-dir", str(data), "--addr", f"127.0.0.1:{port}"]
-            if mode == "start":
+            if mode in ("start", "desktop"):
                 args += ["--no-open", "--sync-interval", "1s"]
             server = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
             def ready(_):
@@ -66,13 +68,14 @@ def main():
                     raise AssertionError("passage server exited: " + server.stderr.read())
                 try:
                     with urllib.request.urlopen(url + "/api/v1/capabilities", timeout=1) as response:
-                        return json.load(response).get("passage_preview") is True
+                        capabilities = json.load(response)
+                        return capabilities.get("passage_preview") is True and (mode == "serve" or (capabilities.get("management") is True and capabilities.get("desktop") is True))
                 except OSError:
                     return False
             WebDriverWait(None, 20).until(ready)
             browser = webdriver.Chrome(service=Service(executable_path=driver) if driver else Service(), options=options)
             browser.get(url + "/")
-            if mode == "start":
+            if mode in ("start", "desktop"):
                 WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "collection-save").get_attribute("hidden"))
             else:
                 WebDriverWait(browser, 20).until(lambda d: d.find_element(By.ID, "management").get_property("hidden"))
@@ -111,8 +114,11 @@ def main():
             raise AssertionError("Shift+Tab order did not reach " + label)
 
         def focused_result(document_id):
-            active = browser.switch_to.active_element
-            return active if "result-preview" in (active.get_attribute("class") or "") and active.get_attribute("data-document-id") == document_id else False
+            try:
+                active = browser.switch_to.active_element
+                return active if "result-preview" in (active.get_attribute("class") or "") and active.get_attribute("data-document-id") == document_id else False
+            except StaleElementReferenceException:
+                return False
 
         def verify_refresh_focus(document_id, quote):
             old = browser.switch_to.active_element
@@ -182,7 +188,7 @@ def main():
                 WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "submit").get_property("disabled"))
                 button = tab_until(lambda element: "result-preview" in (element.get_attribute("class") or ""), "result Preview")
                 document_id = button.get_attribute("data-document-id")
-                button.send_keys(Keys.ENTER)
+                ActionChains(browser).send_keys(Keys.ENTER).perform()
                 wait_for_quote(query)
                 return document_id
             browser.find_element(By.ID, "submit").click()
@@ -215,6 +221,35 @@ def main():
 
         try:
             launch()
+            WebDriverWait(browser, 15).until(lambda d: not d.find_element(By.ID, "empty").get_attribute("hidden"))
+            browser.find_element(By.ID, "add-folder-open").click()
+            browser.find_element(By.ID, "folder-path").send_keys(str(notes.resolve()))
+            browser.find_element(By.ID, "folder-form").submit()
+            WebDriverWait(browser, 30).until(lambda d: "succeeded" in d.find_element(By.ID, "management-status").text.lower())
+            WebDriverWait(browser, 20).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".source-card")) == 1)
+            # The browser downloads the report produced by this real schema-8 index.
+            browser.find_element(By.ID, "diagnostics-open").click()
+            WebDriverWait(browser, 15).until(lambda d: not d.find_element(By.ID, "diagnostics-download").get_attribute("disabled"))
+            diagnostic = json.loads(browser.find_element(By.ID, "diagnostics-result").text)
+            assert diagnostic["index_schema"] == diagnostic["current_write_schema"] == 8, diagnostic
+            browser.find_element(By.ID, "diagnostics-download").click()
+            downloaded = root / "findrail-diagnostics.json"
+            WebDriverWait(browser, 15).until(lambda _: downloaded.exists())
+            assert json.loads(downloaded.read_text(encoding="utf-8"))["index_schema"] == 8
+            browser.find_element(By.ID, "diagnostics-close").click()
+
+            # Preserve the PDF page-2 citation and the Advanced title-only fallback.
+            Select(browser.find_element(By.ID, "format")).select_by_value("pdf")
+            open_result("page2journey")
+            WebDriverWait(browser, 20).until(lambda d: d.find_element(By.ID, "page-label").text == "Page 2 / 2")
+            browser.find_element(By.ID, "close-preview").click()
+            Select(browser.find_element(By.ID, "mode")).select_by_value("advanced")
+            open_result("runbook")
+            WebDriverWait(browser, 20).until(lambda d: d.find_element(By.ID, "page-label").text == "Title match · page not determined")
+            browser.find_element(By.ID, "close-preview").click()
+            Select(browser.find_element(By.ID, "mode")).select_by_value("literal")
+            Select(browser.find_element(By.ID, "format")).select_by_value("all")
+
             verify_dialog_escapes()
             browser.find_element(By.ID, "collection-open").click()
             browser.find_element(By.ID, "collection-new").click()
@@ -317,6 +352,11 @@ def main():
                 except StaleElementReferenceException:
                     return False
             WebDriverWait(browser, 20).until(inspect_restored)
+            # Dialog Escape returns keyboard focus to its opener.
+            browser.find_element(By.ID, "collection-close").send_keys("\ue00c")
+            WebDriverWait(browser, 10).until(lambda d: not d.find_element(By.ID, "evidence-collection").get_attribute("open"))
+            assert browser.switch_to.active_element.get_attribute("id") == "collection-open"
+            browser.find_element(By.ID, "collection-open").click()
             browser.find_element(By.ID, "collection-check").click()
             WebDriverWait(browser, 20).until(lambda d: d.find_element(By.ID, "collection-list").text.count("unchanged at last check") == 2)
             browser.execute_script("const original=URL.createObjectURL;URL.createObjectURL=function(blob){window.__passageDownload=blob.text();return original.call(this,blob)}")
@@ -347,7 +387,23 @@ def main():
             WebDriverWait(browser, 20).until(lambda d: "0 matching documents" in d.find_element(By.ID, "status").text)
             assert browser.switch_to.active_element.get_attribute("id") == "query"
             assert not browser.find_elements(By.CSS_SELECTOR, ".result-preview")
-            print("Passage browser journey passed: late text/DOCX, keyboard focus across refresh, read-only keyboard search, exact selection, note/order, restart, Markdown and changed short document.")
+            stop()
+            launch("desktop")
+            # Forget the only source, verify collection evidence is purged, then
+            # exercise the protected desktop Quit control and owner cleanup.
+            browser.find_element(By.XPATH, ".//article[contains(@class,'source-card')]//button[.='Remove from index']").click()
+            browser.find_element(By.ID, "confirm-remove").click()
+            WebDriverWait(browser, 20).until(lambda d: not d.find_elements(By.CSS_SELECTOR, ".source-card"))
+            browser.find_element(By.ID, "collection-open").click()
+            WebDriverWait(browser, 15).until(lambda d: d.execute_script("return window.localEvidenceCollection.entries.length") == 0)
+            assert "purged" in browser.find_element(By.ID, "collection-status").text.lower()
+            browser.find_element(By.ID, "collection-close").click()
+            browser.execute_script("window.confirm=()=>true")
+            browser.find_element(By.XPATH, "//button[.='Quit Findrail']").click()
+            server.communicate(timeout=12)
+            assert server.returncode == 0
+            assert not (data / ".desktop-instance.json").exists()
+            print("Extracted desktop browser journey passed: fresh start, UI folder, schema-8 diagnostics download, PDF page 2/Advanced fallback, late text/DOCX exact quote, named collection note/order/export/restart, keyboard focus across refresh, read-only serve, changed evidence, Forget purge and protected Quit/drain.")
         finally:
             stop()
 

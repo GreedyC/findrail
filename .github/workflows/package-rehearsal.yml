@@ -123,7 +123,25 @@ jobs:
       - name: Rehearse alpha.2 and published alpha.3 upgrades and stopped-backup restores
         if: matrix.target == 'linux-amd64'
         shell: bash
-        run: python3 scripts/upgrade_smoke.py "$RUNNER_TEMP/install 📦/findrail_${CANDIDATE_VERSION}_linux-amd64/findrail" --alpha3-binary "$RUNNER_TEMP/alpha3-reference/findrail_0.1.0-alpha.3_linux-amd64/findrail"
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/findrail_0.1.0-alpha.4_linux-amd64.tar.gz"
+          curl --proto '=https' --proto-redir '=https' --fail --location --silent --show-error \
+            https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.4/findrail_0.1.0-alpha.4_linux-amd64.tar.gz -o "$archive"
+          echo '41f91c62b618a64dc083f7a63403f7f4fcc6f8b13ffb613acfee6704927f6a1a  '"$archive" | sha256sum --check --status
+          python3 - "$archive" "$RUNNER_TEMP/alpha4-reference" <<'PY'
+          import pathlib, sys
+          sys.path.insert(0, 'scripts')
+          import package
+          archive, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+          package.verify_archive(archive, 'linux-amd64', '0.1.0-alpha.4', 7)
+          package.extract_verified(archive, out)
+          PY
+          ALPHA4_BINARY="$RUNNER_TEMP/alpha4-reference/findrail_0.1.0-alpha.4_linux-amd64/findrail"
+          test -x "$ALPHA4_BINARY"
+          python3 scripts/upgrade_smoke.py "$RUNNER_TEMP/install 📦/findrail_${CANDIDATE_VERSION}_linux-amd64/findrail" \
+            --alpha3-binary "$RUNNER_TEMP/alpha3-reference/findrail_0.1.0-alpha.3_linux-amd64/findrail" \
+            --alpha4-binary "$ALPHA4_BINARY"
       - name: Save candidate archive and verification report
         if: always()
         shell: bash
@@ -140,7 +158,7 @@ jobs:
           import package
           p=pathlib.Path(os.environ['RUNNER_TEMP'])/'release-evidence'/'verification.json'
           checks=['archive_checksum','archive_contents','exact_build_info','executable_version','cli','search','browser_api','mcp','portable_snapshot','diagnostics','desktop_single_owner','launcher_pdf_child']
-          if '${{ matrix.target }}' == 'linux-amd64': checks.append('upgrade_and_rollback')
+          if '${{ matrix.target }}' == 'linux-amd64': checks.extend(['alpha2_schema2_upgrade_restore','alpha3_schema6_upgrade_restore','published_alpha4_schema7_to_schema8_saved_collection_restore_rollback'])
           p.write_text(json.dumps({'candidate_sha': os.environ['CANDIDATE_SHA'], 'candidate_version':os.environ['CANDIDATE_VERSION'], 'schema_version':package.schema_version(), 'target':'${{ matrix.target }}', 'source_clean':os.environ['JOB_STATUS']=='success', 'status':os.environ['JOB_STATUS'],'checks':checks if os.environ['JOB_STATUS']=='success' else []}, sort_keys=True, indent=2)+'\n')
           PY
       - uses: actions/upload-artifact@v4

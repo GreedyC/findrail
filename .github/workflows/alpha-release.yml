@@ -140,6 +140,7 @@ jobs:
           fi
           "$PY" scripts/desktop_launch_smoke.py "$BINARY"
           if [[ '${{ matrix.target }}' == linux-amd64 ]]; then
+            FINDRAIL_MCP_TEST_BINARY="$BINARY" go test -count=1 -v ./internal/cli -run '^TestGeneratedMCPConfigSDKJourney$'
             REFERENCE="$RUNNER_TEMP/alpha3-reference"
             ALPHA3_ARCHIVE="$RUNNER_TEMP/findrail_0.1.0-alpha.3_linux-amd64.tar.gz"
             curl --proto '=https' --proto-redir '=https' --fail --location --silent --show-error \
@@ -153,7 +154,26 @@ jobs:
           package.verify_archive(archive, 'linux-amd64', '0.1.0-alpha.3', 6)
           package.extract_verified(archive, out)
           PY
-            "$PY" scripts/upgrade_smoke.py "$BINARY" --alpha3-binary "$REFERENCE/findrail_0.1.0-alpha.3_linux-amd64/findrail"
+            ALPHA4_ARCHIVE="$RUNNER_TEMP/findrail_0.1.0-alpha.4_linux-amd64.tar.gz"
+            curl --proto '=https' --proto-redir '=https' --fail --location --silent --show-error \
+              https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.4/findrail_0.1.0-alpha.4_linux-amd64.tar.gz -o "$ALPHA4_ARCHIVE"
+            echo '41f91c62b618a64dc083f7a63403f7f4fcc6f8b13ffb613acfee6704927f6a1a  '"$ALPHA4_ARCHIVE" | sha256sum --check --status
+            "$PY" - "$ALPHA4_ARCHIVE" "$RUNNER_TEMP/alpha4-reference" <<'PY'
+          import pathlib, sys
+          sys.path.insert(0, 'scripts')
+          import package
+          archive, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+          package.verify_archive(archive, 'linux-amd64', '0.1.0-alpha.4', 7)
+          package.extract_verified(archive, out)
+          PY
+            "$PY" scripts/upgrade_smoke.py "$BINARY" \
+              --alpha3-binary "$REFERENCE/findrail_0.1.0-alpha.3_linux-amd64/findrail" \
+              --alpha4-binary "$RUNNER_TEMP/alpha4-reference/findrail_0.1.0-alpha.4_linux-amd64/findrail"
+            "$PY" scripts/search_resource_check.py \
+              --binary "$BINARY" \
+              --compare "$RUNNER_TEMP/alpha4-reference/findrail_0.1.0-alpha.4_linux-amd64/findrail" \
+              --documents 100 --seed 42 --queries 2 \
+              --report "$RUNNER_TEMP/alpha5-resource-comparison.json"
           fi
       - name: Save verification result and archive
         if: always()
@@ -169,13 +189,16 @@ jobs:
           if [[ -d "$RUNNER_TEMP/candidate" ]]; then
             find "$RUNNER_TEMP/candidate" -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp {} "$RUNNER_TEMP/release-evidence/" \;
           fi
+          if [[ -f "$RUNNER_TEMP/alpha5-resource-comparison.json" ]]; then
+            cp "$RUNNER_TEMP/alpha5-resource-comparison.json" "$RUNNER_TEMP/release-evidence/"
+          fi
           python3 - <<'PY'
           import json, os, pathlib, sys
           sys.path.insert(0, 'scripts')
           import package
           out=pathlib.Path(os.environ['RUNNER_TEMP'])/'release-evidence'/'verification.json'
           checks=['archive_checksum','archive_contents','exact_build_info','executable_version','cli','search','browser_api','mcp','portable_snapshot','diagnostics','desktop_single_owner','launcher_pdf_child']
-          if os.environ['TARGET']=='linux-amd64': checks.append('upgrade_and_rollback')
+          if os.environ['TARGET']=='linux-amd64': checks.extend(['generated_mcp_configs_sdk_against_extracted_candidate','alpha2_schema2_upgrade_restore','alpha3_schema6_upgrade_restore','published_alpha4_schema7_to_schema8_saved_collection_restore_rollback','alpha4_same_host_resource_comparison'])
           out.write_text(json.dumps({'candidate_sha':os.environ['CANDIDATE_SHA'],'candidate_version':os.environ['VERSION'],'schema_version':package.schema_version(),'target':os.environ['TARGET'],'source_clean':os.environ['JOB_STATUS']=='success','status':os.environ['JOB_STATUS'],'checks':checks if os.environ['JOB_STATUS']=='success' else []}, sort_keys=True, indent=2)+'\n')
           PY
       - uses: actions/upload-artifact@v4
@@ -308,6 +331,23 @@ jobs:
           with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
               env.write(f'ALPHA3_BINARY={root / "findrail"}\n')
           PY
+      - name: Fetch pinned published alpha.4 for the schema-7 restore/migration check
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/findrail_0.1.0-alpha.4_linux-amd64.tar.gz"
+          curl --proto '=https' --proto-redir '=https' --fail --location --silent --show-error \
+            https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.4/findrail_0.1.0-alpha.4_linux-amd64.tar.gz -o "$archive"
+          echo '41f91c62b618a64dc083f7a63403f7f4fcc6f8b13ffb613acfee6704927f6a1a  '"$archive" | sha256sum --check --status
+          python3 - "$archive" "$RUNNER_TEMP/alpha4-reference" <<'PY'
+          import os, pathlib, sys
+          sys.path.insert(0, 'scripts')
+          import package
+          archive, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+          package.verify_archive(archive, 'linux-amd64', '0.1.0-alpha.4', 7)
+          root = package.extract_verified(archive, out)
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+              env.write(f'ALPHA4_BINARY={root / "findrail"}\n')
+          PY
       - name: Install pinned matched Chromium and driver
         run: |
           python3 -m pip install --disable-pip-version-check 'selenium==4.35.0'
@@ -318,7 +358,7 @@ jobs:
         env:
           FINDRAIL_CHROME: ${{ runner.temp }}/chrome-for-testing/chrome/linux-139.0.7258.66/chrome-linux64/chrome
           FINDRAIL_CHROMEDRIVER: ${{ runner.temp }}/chrome-for-testing/chromedriver/linux-139.0.7258.66/chromedriver-linux64/chromedriver
-        run: python3 scripts/packaged_journey.py "$CANDIDATE_DIR/findrail" --candidate-sha "$CANDIDATE_SHA" --candidate-version "$CANDIDATE_VERSION" --alpha3-binary "$ALPHA3_BINARY" --report "$RUNNER_TEMP/packaged-journey-report.json"
+        run: python3 scripts/packaged_journey.py "$CANDIDATE_DIR/findrail" --candidate-sha "$CANDIDATE_SHA" --candidate-version "$CANDIDATE_VERSION" --alpha3-binary "$ALPHA3_BINARY" --alpha4-binary "$ALPHA4_BINARY" --report "$RUNNER_TEMP/packaged-journey-report.json"
       - uses: actions/upload-artifact@v4
         with:
           name: release-browser-journey-${{ env.CANDIDATE_SHA }}
@@ -357,7 +397,14 @@ jobs:
           import json, pathlib, sys
           sys.path.insert(0, 'scripts')
           import package
-          pathlib.Path(sys.argv[1]).write_text(json.dumps({'candidate_sha':'${{ needs.validate-source.outputs.candidate_sha }}','candidate_version':'${{ needs.validate-source.outputs.version }}','schema_version':package.schema_version(),'source_clean':True,'status':'passed'}, sort_keys=True, indent=2)+'\n')
+          pathlib.Path(sys.argv[1]).write_text(json.dumps({
+            'candidate_sha':'${{ needs.validate-source.outputs.candidate_sha }}',
+            'candidate_version':'${{ needs.validate-source.outputs.version }}',
+            'schema_version':package.schema_version(), 'targets':package.TARGETS,
+            'source_clean':True, 'status':'passed',
+            'checks':['exact_eight_installable_asset_set','archive_and_vsix_checksums','manifest_identity_and_schema',
+                      'archive_safe_extraction_member_modes_and_license_inventory','all_target_build_info_revision_version_schema_cleanliness']
+          }, sort_keys=True, indent=2)+'\n')
           PY
       - uses: actions/upload-artifact@v4
         with:
@@ -381,7 +428,9 @@ jobs:
       candidate_version: ${{ needs.validate-source.outputs.version }}
   release-state:
     needs: [validate-source, reusable-final-verification]
-    if: needs.validate-source.outputs.publish == 'true'
+    # Run the existing-release no-op check on previews too. Its token is
+    # read-only; PR publication remains false and the publisher stays skipped.
+    if: needs.validate-source.outputs.publish == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise packaged alpha.2 schema-2 and published-alpha.3 schema-6 upgrades."""
+"""Exercise packaged alpha.2, alpha.3, and alpha.4 upgrade/restore paths."""
 import argparse
 import hashlib
 import json
@@ -47,9 +47,12 @@ def directory_digest(directory):
     return digest.hexdigest()
 
 
-def invoke(binary, args):
+def invoke(binary, args, *, ok=True):
     cwd = pathlib.Path(args[args.index('--data-dir') + 1]).parent
-    return subprocess.run([str(binary), *args], text=True, capture_output=True, timeout=20, check=True, cwd=cwd)
+    result = subprocess.run([str(binary), *args], text=True, capture_output=True, timeout=20, check=False, cwd=cwd)
+    if (result.returncode == 0) != ok:
+        raise RuntimeError(f'command {args!r} exit={result.returncode}: {result.stdout}\n{result.stderr}')
+    return result
 
 
 def free_port():
@@ -249,10 +252,169 @@ def upgrade_alpha3_schema6(candidate, published_alpha3, root, source_root):
     print(f'Synthetic alpha.3 schema-6 fixture migrated to schema 8 with search, source/document provenance, indexing report, and collection tables; stopped backup restored and opened read-only by the published alpha.3 binary; new collection {collection_id!r} restored after candidate restart. No downgrade attempted.')
 
 
+def upgrade_alpha4_schema7(candidate, published_alpha4, root):
+    """Migrate a real alpha.4-created index and prove its stopped backup is restorable."""
+    if published_alpha4 is None:
+        raise SystemExit('published alpha.4 binary required to verify schema-7 backup restore')
+    import socket
+    import urllib.error
+    import urllib.request
+
+    data = root / 'alpha4-schema7-data'
+    source_root = root / 'published alpha4 synthetic originals'
+    source_root.mkdir()
+    (source_root / 'first.md').write_text('published alpha4 legacyfirst passage', encoding='utf-8')
+    (source_root / 'second.md').write_text('published alpha4 legacysecond passage', encoding='utf-8')
+    indexed = json.loads(invoke(published_alpha4, ['index', '--data-dir', str(data), '--report', '--json', str(source_root)]).stdout)
+    source_id = indexed['source']['id']
+    if indexed.get('report', {}).get('committed') is not True:
+        raise SystemExit('published alpha.4 did not commit its synthetic indexing report')
+    baseline = sqlite3.connect(data / 'findrail.db')
+    if baseline.execute('PRAGMA user_version').fetchone()[0] != 7:
+        raise SystemExit('published alpha.4 did not create a schema-7 index')
+    report_count = baseline.execute('SELECT COUNT(*) FROM indexing_reports WHERE source_id=?', (source_id,)).fetchone()[0]
+    baseline.close()
+    if report_count < 1:
+        raise SystemExit('published alpha.4 index has no committed diagnostics report')
+
+    # Create and save a real collection through the published alpha.4 API.
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0)); port = probe.getsockname()[1]
+    authority, base = f'127.0.0.1:{port}', f'http://127.0.0.1:{port}'
+    server = subprocess.Popen([str(published_alpha4), 'start', '--data-dir', str(data), '--no-open', '--addr', authority],
+                              cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+
+    def request(path, *, method='GET', payload=None, token=None):
+        headers = {'Origin': base}
+        body = None
+        if payload is not None:
+            body = json.dumps(payload).encode()
+            headers['Content-Type'] = 'application/json'
+        if token:
+            headers.update({'X-Findrail-Token': token, 'Sec-Fetch-Site': 'same-origin'})
+        req = urllib.request.Request(base + path, data=body, method=method, headers=headers)
+        with urllib.request.urlopen(req, timeout=4) as response:
+            return json.load(response)
+
+    try:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if server.poll() is not None:
+                raise RuntimeError('published alpha.4 server exited: ' + server.stderr.read())
+            try:
+                session = request('/api/v1/session')
+                break
+            except (OSError, urllib.error.URLError):
+                time.sleep(.05)
+        else:
+            raise RuntimeError('published alpha.4 did not start for schema-7 collection fixture')
+        token = session['token']
+        collection = request('/api/v1/collections', method='POST', payload={'title': 'Published alpha.4 saved evidence'}, token=token)
+        collection_id = collection['id']
+        entries = []
+        for term in ('legacyfirst', 'legacysecond'):
+            result = json.loads(invoke(published_alpha4, ['search', '--data-dir', str(data), '--source', source_id, '--json', term]).stdout)
+            evidence = result['results'][0]
+            excerpt = 'published alpha4 ' + term + ' passage'
+            pinned = request(f"/api/v1/collections/{collection_id}/entries", method='POST', token=token,
+                payload={'revision': collection['revision'], 'document_id': evidence['id'], 'page': 0,
+                         'excerpt': excerpt, 'whole_preview': True, 'original_identity': evidence['original_identity']})
+            collection = pinned
+            entry = collection['entries'][-1]
+            entries.append({'key': entry['key'], 'note': 'saved alpha.4 note for ' + term,
+                'document_id': evidence['id'], 'page': 0, 'excerpt': excerpt, 'whole_preview': True,
+                'original_identity': evidence['original_identity']})
+        saved = request('/api/v1/collections/' + collection_id, method='PUT', token=token,
+            payload={'revision': collection['revision'], 'title': collection['title'], 'entries': list(reversed(entries))})
+        if [entry['note'] for entry in saved['entries']] != ['saved alpha.4 note for legacysecond', 'saved alpha.4 note for legacyfirst']:
+            raise SystemExit('published alpha.4 collection note/order setup failed')
+    finally:
+        if server.poll() is None:
+            server.terminate()
+        try:
+            server.communicate(timeout=8)
+        except subprocess.TimeoutExpired:
+            server.kill(); server.communicate(timeout=3)
+
+    backup = root / 'stopped-alpha4-schema7-backup'
+    shutil.copytree(data, backup)
+    backup_fingerprint = directory_digest(backup)
+    def stored_state(db):
+        return {
+            'sources': db.execute('SELECT id,kind,name,root FROM sources ORDER BY id').fetchall(),
+            'documents': db.execute('SELECT id,source_id,title,uri,path,content_hash FROM documents ORDER BY id').fetchall(),
+            'report': db.execute('SELECT report_id,report_json,indexed_documents FROM indexing_reports WHERE source_id=?', (source_id,)).fetchall(),
+            'collection': db.execute('SELECT c.id,c.title,c.revision,e.entry_id,e.ordinal,e.source_id,e.document_id,e.snapshot_json FROM evidence_collections c JOIN evidence_collection_entries e ON e.collection_id=c.id WHERE c.id=? ORDER BY e.ordinal', (collection_id,)).fetchall(),
+        }
+
+    baseline = sqlite3.connect(backup / 'findrail.db')
+    before = stored_state(baseline)
+    baseline.close()
+    if len(before['documents']) != 2 or len(before['collection']) != 2:
+        raise SystemExit('schema-7 fixture is missing real documents or saved collection entries')
+
+    # The candidate migrates the original. The separate stopped copy remains for
+    # a real alpha.4 open/search fingerprint check after migration.
+    listing = json.loads(invoke(candidate, ['sources', '--data-dir', str(data), '--json']).stdout)
+    if len(listing['sources']) != 1 or listing['sources'][0]['id'] != source_id:
+        raise SystemExit('schema-7 migration lost source provenance')
+    for term in ('legacyfirst', 'legacysecond'):
+        result = json.loads(invoke(candidate, ['search', '--data-dir', str(data), '--source', source_id, '--json', term]).stdout)
+        if result['total'] != 1:
+            raise SystemExit('schema-7 migration lost searchable content: ' + term)
+    report = json.loads(invoke(candidate, ['source-report', '--data-dir', str(data), '--source', source_id, '--json']).stdout)
+    if report.get('available') is not True or report.get('report', {}).get('indexed_documents') != 2:
+        raise SystemExit('schema-7 migration lost its committed indexing report')
+    upgraded = sqlite3.connect(data / 'findrail.db')
+    if upgraded.execute('PRAGMA user_version').fetchone()[0] != 8:
+        raise SystemExit('schema-7 index did not migrate to schema 8')
+    start_values = upgraded.execute('SELECT preview_start_char FROM evidence_collection_entries WHERE collection_id=? ORDER BY ordinal', (collection_id,)).fetchall()
+    after = stored_state(upgraded)
+    upgraded.close()
+    if start_values != [(0,), (0,)]:
+        raise SystemExit('schema-7 collection did not migrate with legacy start=0')
+    changed = [key for key in before if after[key] != before[key]]
+    if changed:
+        raise SystemExit('schema-7 migration changed saved state: ' + ', '.join(changed))
+
+    # A schema-8 candidate must refuse the actual published alpha.4 binary; no
+    # downgrade is attempted and rejection must not mutate the candidate index.
+    schema8_fingerprint = directory_digest(data)
+    rejected = invoke(published_alpha4, ['sources', '--data-dir', str(data), '--json'], ok=False)
+    if 'unsupported index schema 8' not in rejected.stderr.lower():
+        raise SystemExit('published alpha.4 failed for a reason other than unsupported schema 8: ' + rejected.stderr)
+    if directory_digest(data) != schema8_fingerprint:
+        raise SystemExit('published alpha.4 changed the schema-8 candidate data directory while rejecting it')
+
+    restored = root / 'restored-alpha4-schema7-backup'
+    shutil.copytree(backup, restored)
+    if directory_digest(restored) != backup_fingerprint:
+        raise SystemExit('stopped alpha.4 backup restore changed bytes')
+    restored_list = json.loads(invoke(published_alpha4, ['sources', '--data-dir', str(restored), '--json']).stdout)
+    restored_search = json.loads(invoke(published_alpha4, ['search', '--data-dir', str(restored), '--source', source_id, '--json', 'legacysecond']).stdout)
+    if len(restored_list['sources']) != 1 or restored_search['total'] != 1 or directory_digest(restored) != backup_fingerprint:
+        raise SystemExit('published alpha.4 did not read its unchanged restored schema-7 backup')
+
+    # Force migration 008 to fail after an otherwise valid schema-7 fixture.
+    failed = root / 'failed-alpha4-schema7-migration'
+    shutil.copytree(backup, failed)
+    failed_db = sqlite3.connect(failed / 'findrail.db')
+    failed_db.execute('ALTER TABLE evidence_collection_entries ADD COLUMN preview_start_char INTEGER NOT NULL DEFAULT 0')
+    failed_db.commit(); failed_db.close()
+    failure_before = directory_digest(failed)
+    rejected = invoke(candidate, ['sources', '--data-dir', str(failed), '--json'], ok=False)
+    if 'duplicate column' not in rejected.stderr.lower() or 'preview_start_char' not in rejected.stderr:
+        raise SystemExit('schema-8 migration failed for an unexpected reason: ' + rejected.stderr)
+    if directory_digest(failed) != failure_before:
+        raise SystemExit('failed schema-8 migration was not an atomic rollback')
+    print(f'Published alpha.4 schema-7 index migrated to candidate schema 8: source/search/report and two saved ordered notes preserved with legacy start=0; full stopped backup restored and read by real alpha.4; real alpha.4 rejected schema 8 without mutation; induced migration failure rolled back atomically. Collection {collection_id!r}.')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary', type=pathlib.Path)
     parser.add_argument('--alpha3-binary', type=pathlib.Path)
+    parser.add_argument('--alpha4-binary', type=pathlib.Path)
     args = parser.parse_args()
     binary = args.binary.resolve()
     with tempfile.TemporaryDirectory(prefix='findrail-upgrade-') as temp:
@@ -317,6 +479,7 @@ def main():
             raise SystemExit('rollback did not preserve the original schema-2 fixture')
         print(f'Packaged alpha.2 schema-2 upgrade passed: source inventory, FTS/PDF page, schema-{expected_schema} disabled DOCX default, unavailable pre-scan diagnostics, Configure/index/restart, stopped full-directory rollback including sidecars; restored schema remains 2. No reverse migration was attempted.')
         upgrade_alpha3_schema6(binary, args.alpha3_binary.resolve() if args.alpha3_binary else None, root, source_root)
+        upgrade_alpha4_schema7(binary, args.alpha4_binary.resolve() if args.alpha4_binary else None, root)
 
 
 if __name__ == '__main__': main()

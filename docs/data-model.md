@@ -1,5 +1,8 @@
 # Data model
 
+> Schema 8 describes the current source candidate after migration 008; it is not
+> the published alpha.4 format. Published alpha.4 archives remain on schema 7.
+
 ## Implemented schema 8
 
 Migration 008 adds `preview_start_char` to evidence collection entries, defaulting
@@ -49,6 +52,12 @@ Migration 8 adds the nonnegative `preview_start_char` column; existing entries
 start at zero. Window-aware citations preserve their indexed offset while keeping
 the full document content hash and URI provenance unchanged.
 See [upgrade instructions](local-alpha.md#upgrade).
+
+An alpha.5 source/CI candidate migrates schema 7 forward transactionally. Back up
+the complete data directory while all Findrail processes are stopped. The
+published alpha.4 binary cannot open schema 8; rollback means restoring a separate
+complete schema-7 backup and opening that copy with alpha.4, never downgrading the
+upgraded database in place.
 
 ## Future entities
 

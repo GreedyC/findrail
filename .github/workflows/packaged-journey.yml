@@ -95,6 +95,23 @@ jobs:
           with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
               env.write(f'ALPHA3_BINARY={root / "findrail"}\n')
           PY
+      - name: Fetch pinned published alpha.4 for schema-7 restore
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/findrail_0.1.0-alpha.4_linux-amd64.tar.gz"
+          curl --proto '=https' --proto-redir '=https' --fail --location --silent --show-error \
+            https://github.com/Lephiziel/findrail/releases/download/v0.1.0-alpha.4/findrail_0.1.0-alpha.4_linux-amd64.tar.gz -o "$archive"
+          echo '41f91c62b618a64dc083f7a63403f7f4fcc6f8b13ffb613acfee6704927f6a1a  '"$archive" | sha256sum --check --status
+          python - "$archive" "$RUNNER_TEMP/alpha4-reference" <<'PY'
+          import os, pathlib, sys
+          sys.path.insert(0, 'scripts')
+          import package
+          archive, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+          package.verify_archive(archive, 'linux-amd64', '0.1.0-alpha.4', 7)
+          root = package.extract_verified(archive, out)
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+              env.write(f'ALPHA4_BINARY={root / "findrail"}\n')
+          PY
       - name: Install pinned matched Chromium and driver
         run: |
           python -m pip install --disable-pip-version-check 'selenium==4.35.0'
@@ -107,7 +124,7 @@ jobs:
           FINDRAIL_CHROMEDRIVER: ${{ runner.temp }}/chrome-for-testing/chromedriver/linux-139.0.7258.66/chromedriver-linux64/chromedriver
         run: |
           python scripts/diagnostics_browser_smoke.py "$CANDIDATE_DIR/findrail"
-          python scripts/packaged_journey.py "$CANDIDATE_DIR/findrail" --candidate-sha "$CANDIDATE_SHA" --candidate-version "$CANDIDATE_VERSION" --alpha3-binary "$ALPHA3_BINARY" --report "$RUNNER_TEMP/packaged-journey-report.json"
+          python scripts/packaged_journey.py "$CANDIDATE_DIR/findrail" --candidate-sha "$CANDIDATE_SHA" --candidate-version "$CANDIDATE_VERSION" --alpha3-binary "$ALPHA3_BINARY" --alpha4-binary "$ALPHA4_BINARY" --report "$RUNNER_TEMP/packaged-journey-report.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

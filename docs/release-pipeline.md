@@ -12,6 +12,8 @@ restricted to the canonical repository's main push or explicit main dispatch;
 PR and fork previews have read-only permissions. Alpha.4
 archives include native desktop launchers and target-specific install
 resources; these are archive members, not additional release assets.
+Current source schema is 8 after migration 008; the public alpha.4 remains
+schema 7 until the owner decides to publish another release.
 
 ## Preview rehearsal
 
@@ -26,9 +28,20 @@ Unicode. All five native targets exercise first/second desktop launch and PDF
 child extraction through the packaged launcher using a
 controlled native executable adapter on each target OS; these are lifecycle
 checks, not manual viewer demonstrations. macOS uses the packaged app entrypoint;
-Windows uses the GUI executable. Linux additionally migrates a synthetic schema-6
-alpha.3 index, checks a stopped backup with the real published alpha.3 binary,
-and retains the schema-2 upgrade path. The packaged browser journey tests native
+Windows uses the GUI executable. Linux additionally migrates synthetic schema-2
+alpha.2 and schema-6 alpha.3 indexes. The restored schema-2 fixture is checked
+through SQLite; the restored schema-6 backup is opened by the published alpha.3
+binary. It also creates a schema-7 index using the
+published alpha.4 binary, including a committed indexing report and an actual
+saved collection with notes and order. Candidate migration checks search,
+provenance, report retention, and legacy passage start zero. A complete stopped
+backup is opened by the same alpha.4 binary; alpha.4 must reject schema 8 without
+modifying it. An induced failed migration must roll back byte-for-byte. Linux
+also runs a small, same-host synthetic resource comparison against published
+alpha.4; this is not a search-quality claim. The native Linux job also runs the
+generated-config SDK integration against the extracted candidate executable via
+`FINDRAIL_MCP_TEST_BINARY`; it does not substitute a freshly rebuilt source CLI.
+The packaged browser journey tests native
 original/folder actions through controlled local executable adapters and verifies
 named collection restoration only after the candidate process stops and restarts.
 It cannot
@@ -115,8 +128,9 @@ allowlists for the CLI, desktop launcher, that target's install resources, build
 metadata, product notices and bounded license inventory; historical alpha.3
 retains its original archive member set. Extraction rejects traversal,
 duplicate/conflicting paths, links and special files; launcher executable modes
-are checked. Linux additionally runs upgrade and browser/API smokes. The Linux
-browser job consumes that exact native archive, starts an
+are checked. Linux additionally runs schema-2, schema-6, and published schema-7
+upgrade/restore checks, plus a same-host resource comparison against alpha.4.
+The Linux browser job consumes that exact native archive, starts an
 empty index, adds a folder in the UI, checks selected text/PDF-page citations
 and Markdown download, and checks reload/restart. The installed client job runs
 extension tests and compiled-server integration, then installs the actual VSIX
@@ -153,9 +167,18 @@ PR and main-source checks package alpha.5 while `VERSION` remains alpha.4. The
 candidate schema is read from the checked-out source; alpha.3 and alpha.4 retain
 their historical schemas 6 and 7. These alpha.5 checks do not publish: the
 publisher still requires the candidate version to equal `VERSION`, and the
-read-only release-state gate verifies the existing alpha.4 release as a no-op.
+PR and main-push read-only release-state gate checks alpha.4 against its
+historical tag SHA and exact existing assets, returns `noop` even though source
+HEAD is newer. On a PR, preview publish is false and the publisher is skipped;
+on a main push, the candidate alpha.5 does not equal `VERSION` alpha.4 and the
+publisher is also skipped.
 Dispatch rehearsals require the exact current main SHA and `publish=false` for
 preparation. Alpha.5 is not accepted as an existing published-release contract.
+At the current source schema 8, alpha.5 remains an unpublished preview and does
+not redefine the alpha.4 schema-7 release contract. The migration checks pin the
+published alpha.4 Linux amd64 archive to SHA-256
+`41f91c62b618a64dc083f7a63403f7f4fcc6f8b13ffb613acfee6704927f6a1a`; mismatch
+fails closed rather than updating the reference silently.
 
 After the new release exists, [verify the public downloads](release-smoke-alpha4.md#publication-after-acceptance)
 before switching README download links and announcing it. A future source
