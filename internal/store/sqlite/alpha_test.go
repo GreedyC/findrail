@@ -723,6 +723,7 @@ func TestSearchReadsPreviousSnapshotDuringWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer canceled.Rollback()
 	if _, err := canceled.Upsert(context.Background(), connector.Document{ID: "canceled", SourceID: conn.Source().ID, Title: "canceled", Path: "canceled.txt", URI: "file:///canceled.txt", Content: "canceled generation", Hash: "canceled"}); err != nil {
 		_ = canceled.Rollback()
 		t.Fatal(err)

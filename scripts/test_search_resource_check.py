@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 import importlib.util
 import json
+import os
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -18,6 +21,7 @@ class GeneratorTests(unittest.TestCase):
             root = Path(temp) / "source"
             root.mkdir()
             total = resource_check.generate(root, 100, seed, 9999999999)
+            self.assertGreater(max(p.stat().st_size for p in root.glob("*.md")), 65536)
             return resource_check.digest_file_manifest(root), total, len(list(root.iterdir()))
 
     def test_seed_identity_and_unicode_formats(self):
@@ -43,6 +47,51 @@ class GeneratorTests(unittest.TestCase):
             data = json.loads(report.read_text(encoding="utf-8"))
             self.assertEqual(data["status"], "failed")
             self.assertNotIn(str(root), report.read_text(encoding="utf-8"))
+            self.assertNotIn(str(root), result.stderr.decode())
+
+    def test_percentiles_and_lifecycle_file_sizes(self):
+        self.assertEqual(resource_check.latency_summary([100, 1, 3, 2]), {"p50": 2.5, "p95": 100})
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "findrail.db").write_bytes(b"db")
+            (root / "findrail.db-wal").write_bytes(b"wal")
+            self.assertEqual(resource_check.database_sizes(root), {"findrail.db": 2, "findrail.db-wal": 3, "findrail.db-shm": 0})
+
+    @unittest.skipUnless(os.name == "posix", "requires catchable POSIX SIGTERM")
+    def test_cancel_stops_child_and_cleans_owned_directories(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            marker, report = root / "started", root / "report.json"
+            script = Path(__file__).with_name("search_resource_check.py").resolve()
+            # Replace only the index command with a controlled long-lived child;
+            # exercise the real cancellation, subprocess and directory cleanup.
+            child_code = f"import os,time,pathlib;pathlib.Path({str(marker)!r}).write_text(str(os.getpid()));time.sleep(60)"
+            code = ("import importlib.util,signal,sys;"
+                    f"s=importlib.util.spec_from_file_location('harness',{str(script)!r});"
+                    "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
+                    "original=m.run;"
+                    f"m.run=lambda argv,timeout:original([sys.executable,'-c',{child_code!r}],timeout);"
+                    "signal.signal(signal.SIGTERM,m.canceled);sys.exit(m.main())")
+            env = dict(os.environ, TMPDIR=str(root), TEMP=str(root), TMP=str(root))
+            child = subprocess.Popen([sys.executable, "-c", code, "--binary", sys.executable, "--documents", "100", "--seed", "8", "--queries", "1", "--report", str(report)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                deadline = time.monotonic() + 10
+                while not marker.exists() and child.poll() is None and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(marker.exists(), "controlled index child did not start")
+                pid = int(marker.read_text())
+                child.send_signal(signal.SIGTERM)
+                _, stderr = child.communicate(timeout=10)
+                self.assertEqual(child.returncode, 1)
+                self.assertEqual(json.loads(report.read_text())["status"], "failed")
+                self.assertEqual(list(root.glob("findrail-resource-*")), [])
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+                self.assertNotIn(str(root), stderr.decode())
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.communicate()
 
 
 if __name__ == "__main__":

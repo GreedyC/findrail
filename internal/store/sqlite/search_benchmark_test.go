@@ -49,6 +49,7 @@ func BenchmarkSearch(b *testing.B) {
 					b.Fatal(err)
 				}
 			}
+			b.StopTimer()
 		})
 	}
 }

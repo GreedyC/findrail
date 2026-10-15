@@ -14,11 +14,13 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Lephiziel/findrail/internal/desktop"
+	"github.com/Lephiziel/findrail/internal/diagnostics"
 	"github.com/Lephiziel/findrail/internal/originals"
 	"github.com/Lephiziel/findrail/internal/search"
 	"github.com/Lephiziel/findrail/internal/sourceapp"
@@ -52,6 +54,7 @@ type options struct {
 	token        string
 	desktop      *desktop.Record
 	quit         func()
+	appVersion   string
 }
 
 // WithDesktop enables identity verification and explicit application shutdown.
@@ -69,6 +72,8 @@ type collectionBackend interface {
 }
 
 type Option func(*options)
+
+func WithDiagnostics(version string) Option { return func(o *options) { o.appVersion = version } }
 
 type OriginalResolver interface {
 	ResolveOriginal(context.Context, string, string) (sqlite.OriginalTarget, error)
@@ -106,6 +111,37 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 		config.management = nil
 	}
 	collections, hasCollections := backend.(collectionBackend)
+	diagnosticReader, hasDiagnostics := backend.(interface {
+		DiagnosticSummary(context.Context) (sqlite.DiagnosticSummary, error)
+		SchemaInfo() sqlite.SchemaInfo
+	})
+	hasDiagnostics = hasDiagnostics && config.appVersion != ""
+	if hasDiagnostics {
+		mux.HandleFunc("GET /api/v1/diagnostics", func(w http.ResponseWriter, r *http.Request) {
+			info := diagnosticReader.SchemaInfo()
+			actual := info.IndexSchema
+			status, code := "ok", "schema_supported"
+			if actual > info.CurrentWriteSchema {
+				status, code = "error", "schema_unsupported"
+			}
+			if actual < info.CurrentWriteSchema {
+				status, code = "warning", "schema_upgrade_needed"
+			}
+			counts := map[string]int64{}
+			summary, err := diagnosticReader.DiagnosticSummary(r.Context())
+			if err != nil {
+				status, code = "error", "index_unreadable"
+			} else {
+				counts = map[string]int64{"sources": int64(summary.Sources), "filesystem_sources": int64(summary.FilesystemSources), "github_sources": int64(summary.GitHubSources), "archive_sources": int64(summary.ArchiveSources), "other_sources": int64(summary.OtherSources), "custom_text_limits": int64(summary.CustomTextLimits), "pdf_enabled": int64(summary.PDFEnabled), "docx_enabled": int64(summary.DOCXEnabled), "docx_disabled": int64(summary.DOCXDisabled)}
+			}
+			report, buildErr := diagnostics.BuildSupportReport(config.appVersion, runtime.Version(), runtime.GOOS, runtime.GOARCH, &actual, info.CurrentWriteSchema, []diagnostics.SupportCheck{{ID: "schema", Status: status, Code: code}}, counts)
+			if buildErr != nil {
+				writeError(w, 500, "diagnostics unavailable")
+				return
+			}
+			writeJSON(w, 200, report)
+		})
+	}
 	if config.management != nil && hasCollections {
 		mux.HandleFunc("GET /api/v1/collections", func(w http.ResponseWriter, r *http.Request) {
 			if !collectionReadAllowed(w, r, config) {
@@ -364,6 +400,7 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 			"search_modes":            []string{"literal", "advanced"},
 			"search_filters":          []string{"source", "format", "path_prefix", "title_contains"},
 			"pdf_title_only_evidence": true,
+			"diagnostics":             hasDiagnostics,
 		})
 	})
 	if config.originals != nil {

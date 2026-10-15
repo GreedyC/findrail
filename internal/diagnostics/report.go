@@ -5,12 +5,53 @@ package diagnostics
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 )
+
+const SupportReportMaxBytes = 16 << 10
+
+// SupportReport is a strict whitelist of content-free diagnostic facts.
+type SupportReport struct {
+	ReportVersion      int              `json:"report_version"`
+	Version            string           `json:"version"`
+	GoVersion          string           `json:"go_version"`
+	GOOS               string           `json:"goos"`
+	GOARCH             string           `json:"goarch"`
+	IndexSchema        *int             `json:"index_schema,omitempty"`
+	CurrentWriteSchema int              `json:"current_write_schema"`
+	Checks             []SupportCheck   `json:"checks"`
+	Counts             map[string]int64 `json:"counts"`
+}
+
+type SupportCheck struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	Code   string `json:"code"`
+}
+
+// BuildSupportReport returns a bounded report containing only caller-approved facts.
+func BuildSupportReport(version, goVersion, goos, goarch string, actual *int, current int, checks []SupportCheck, counts map[string]int64) (SupportReport, error) {
+	if len(checks) > 16 || len(counts) > 32 {
+		return SupportReport{}, errors.New("diagnostics report exceeds limit")
+	}
+	r := SupportReport{ReportVersion: 1, Version: version, GoVersion: goVersion, GOOS: goos, GOARCH: goarch, IndexSchema: actual, CurrentWriteSchema: current, Checks: append([]SupportCheck(nil), checks...), Counts: make(map[string]int64, len(counts))}
+	for k, v := range counts {
+		if k == "" || len(k) > 48 || v < 0 {
+			return SupportReport{}, errors.New("invalid diagnostic count")
+		}
+		r.Counts[k] = v
+	}
+	b, err := json.Marshal(r)
+	if err != nil || len(b) > SupportReportMaxBytes {
+		return SupportReport{}, fmt.Errorf("diagnostics report exceeds limit")
+	}
+	return r, nil
+}
 
 const (
 	FormatVersion      = 1

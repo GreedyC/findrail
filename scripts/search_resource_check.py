@@ -3,19 +3,22 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 import platform
 import random
+import signal
 import socket
 import sqlite3
 import subprocess
 import tempfile
 import time
+import sys
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
-FIXTURE_VERSION = 1
+FIXTURE_VERSION = 2
 MAX_BYTES = 256 * 1024 * 1024
 MAX_SECONDS = 1800
 QUERIES = {"common": "commonmark", "rare": "raretoken"}
@@ -71,7 +74,9 @@ def generate(root, count, seed, deadline):
         # Controlled frequency distribution; every document remains bounded.
         token = "commonmark" if i % 2 == 0 else "ordinary"
         rare = " raretoken" if i % 97 == 0 else ""
-        body = f"Synthetic fixture v{FIXTURE_VERSION} документ Ω\npackage sample\n{token}{rare} item{i} " + ("longtext " * (1 + rng.randrange(24)))
+        # Include a long document of each format even in the 100-file smoke.
+        words = 8192 if i % 1000 < 4 else 1 + rng.randrange(24)
+        body = f"Synthetic fixture v{FIXTURE_VERSION} документ Ω\npackage sample\n{token}{rare} item{i} " + ("longtext " * words)
         data = body.encode() if kind in ("txt", "go") else make_docx(body) if kind == "docx" else pdf_bytes(body)
         total += len(body.encode())
         written += len(data)
@@ -83,8 +88,50 @@ def generate(root, count, seed, deadline):
 
 
 def run(argv, timeout):
-    return subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          text=True, timeout=timeout, check=True, shell=False)
+    child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, shell=False)
+    try:
+        stdout, stderr = child.communicate(timeout=timeout)
+        if child.returncode:
+            raise subprocess.CalledProcessError(child.returncode, argv)
+        return subprocess.CompletedProcess(argv, child.returncode, stdout, stderr)
+    finally:
+        stop_process(child)
+
+
+def stop_process(child):
+    if child.poll() is None:
+        child.terminate()
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait(timeout=5)
+
+
+def latency_summary(samples):
+    ordered = sorted(samples)
+    middle = len(ordered) // 2
+    median = ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+    return {"p50": round(median, 3), "p95": round(ordered[math.ceil(len(ordered) * .95) - 1], 3)}
+
+
+def database_sizes(data_dir):
+    return {name: (data_dir / name).stat().st_size if (data_dir / name).exists() else 0
+            for name in ("findrail.db", "findrail.db-wal", "findrail.db-shm")}
+
+
+def server_rss_bytes(pid):
+    # Observe only the actual server child; never report Python's RSS as its own.
+    if platform.system() == "Linux":
+        try:
+            with Path(f"/proc/{pid}/status").open(encoding="ascii") as status:
+                for line in status:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1]) * 1024
+        except (OSError, ValueError):
+            pass
+    return None
 
 
 def remaining_timeout(deadline, maximum):
@@ -110,12 +157,12 @@ def main():
     deadline = time.monotonic() + min(MAX_SECONDS, 300 if a.documents <= 1000 else MAX_SECONDS)
     report = {"schema": 1, "fixture": {"version": FIXTURE_VERSION, "seed": a.seed, "documents_requested": a.documents},
               "binary": {"sha256": digest_file(binary)}, "environment": {"os": platform.system(), "arch": platform.machine(), "python": platform.python_version()},
-              "metrics": {}, "errors": [], "unavailable": ["child_process_rss: no portable supported API configured"]}
+              "metrics": {}, "errors": [], "unavailable": ["index_peak_rss: not measured"]}
     try:
         with tempfile.TemporaryDirectory(prefix="findrail-resource-") as temp:
             base = Path(temp); source = base / "source"; data_dir = base / "data"; source.mkdir(); data_dir.mkdir()
             extracted_bytes = generate(source, a.documents, a.seed, deadline)
-            report["fixture"].update(extracted_text_bytes=extracted_bytes, corpus_sha256=digest_file_manifest(source))
+            report["fixture"].update(generated_text_input_bytes=extracted_bytes, corpus_sha256=digest_file_manifest(source))
             t = time.perf_counter()
             indexed = run([str(binary), "index", "--json", "--data-dir", str(data_dir), "--max-bytes", str(1<<20), "--max-pdf-bytes", str(1<<20), str(source)], remaining_timeout(deadline, MAX_SECONDS))
             index_json = json.loads(indexed.stdout)
@@ -123,14 +170,22 @@ def main():
             if report["workload"]["indexed_documents"] != a.documents:
                 raise RuntimeError("incomplete indexed corpus; baseline rejected")
             report["metrics"]["index_wall_ms"] = round((time.perf_counter()-t)*1000, 3)
-            t = time.perf_counter()
+            # Capture these files at the stated lifecycle point, before doctor
+            # and any additional SQLite connection can affect WAL/SHM files.
+            sizes = database_sizes(data_dir)
+            report["metrics"]["database_files_after_index_bytes"] = sizes
+            report["metrics"]["database_bytes_after_index_before_search"] = sum(sizes.values())
             ver = run([str(binary), "doctor", "--json", "--data-dir", str(data_dir)], remaining_timeout(deadline, 10))
             doctor = json.loads(ver.stdout)
             report["binary"].update(version=str(doctor.get("version", "unknown"))[:80], revision=str(doctor.get("revision", "unknown"))[:80], go_version=str(doctor.get("go_version", "unknown"))[:40])
-            with sqlite3.connect(f"file:{data_dir / 'findrail.db'}?mode=ro", uri=True) as db:
+            with sqlite3.connect((data_dir / "findrail.db").as_uri() + "?mode=ro", uri=True) as db:
                 report["binary"]["schema"] = int(db.execute("PRAGMA user_version").fetchone()[0])
+                report["workload"]["extracted_text_bytes"] = int(db.execute("SELECT coalesce(sum(length(CAST(content AS BLOB))), 0) FROM documents").fetchone()[0])
             latencies = []
             result_counts = []
+            rss_samples = []
+            expected_counts = {"common": a.documents // 2, "rare": (a.documents - 1) // 97 + 1}
+            per_query = {}
             with socket.socket() as sock:
                 sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]
             base_url = f"http://127.0.0.1:{port}"
@@ -148,16 +203,29 @@ def main():
                         if time.monotonic() >= deadline_ready: raise TimeoutError("loopback server startup timed out")
                 report["metrics"]["server_startup_ms"] = round((time.perf_counter()-startup)*1000, 3)
                 for qid, query in QUERIES.items():
-                    for n in range(a.queries):
+                    query_latencies = []
+                    # The first request for each query warms it; it is excluded
+                    # from the subsequent --queries warm latency samples.
+                    for n in range(a.queries + 1):
                         url = base_url + "/api/v1/search?" + urllib.parse.urlencode({"q": query, "limit": "5"})
                         t = time.perf_counter()
                         with urllib.request.urlopen(url, timeout=remaining_timeout(deadline, 60)) as response:
                             output = response.read(1 << 20)
                             if len(output) >= (1 << 20): raise RuntimeError("search response exceeded harness read bound")
-                        latencies.append((time.perf_counter()-t)*1000)
-                        obj = json.loads(output); result_counts.append(int(obj.get("total", 0)))
+                        latency = (time.perf_counter()-t)*1000
+                        if n > 0:
+                            query_latencies.append(latency)
+                            latencies.append(latency)
+                        obj = json.loads(output)
+                        count = int(obj.get("total", 0))
+                        result_counts.append(count)
+                        if count != expected_counts[qid] or len(obj.get("results", [])) != min(5, count):
+                            raise RuntimeError("synthetic query returned an unexpected result shape")
+                        rss = server_rss_bytes(server.pid)
+                        if rss is not None:
+                            rss_samples.append(rss)
                         if n == 0 and qid == "common":
-                            report["metrics"]["first_query_after_server_start_ms"] = round(latencies[-1], 3)
+                            report["metrics"]["first_query_after_server_start_ms"] = round(latency, 3)
                             report["metrics"]["bounded_search_response_bytes"] = len(output)
                             results = obj.get("results", [])
                             if results:
@@ -168,15 +236,16 @@ def main():
                                 report["metrics"]["bounded_evidence_response_bytes"] = len(evidence_body)
                             else:
                                 raise RuntimeError("synthetic common query produced no evidence")
+                    per_query[qid] = {"repeats": len(query_latencies), "latency_ms": latency_summary(query_latencies)}
             finally:
-                server.terminate()
-                try: server.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    server.kill(); server.wait(timeout=10)
-            latencies.sort()
-            report["metrics"].update(search_repeats=len(latencies), warm_http_request_latency_ms={"p50": round(latencies[len(latencies)//2],3), "p95": round(latencies[min(len(latencies)-1, int(len(latencies)*.95))],3)}, synthetic_query_ids=list(QUERIES), known_result_shape=bool(result_counts and all(x > 0 for x in result_counts)), result_count_min=min(result_counts), result_count_max=max(result_counts))
-            report["metrics"]["database_bytes_after_index_before_search"] = sum((data_dir / name).stat().st_size for name in ("findrail.db", "findrail.db-wal", "findrail.db-shm") if (data_dir/name).exists())
-            report["lifecycle"] = {"database_size": "after index, before server startup; DB+WAL+SHM existing files", "startup": "fresh loopback server process until health endpoint responds", "first_query": "first HTTP query after server startup; not a cold OS cache", "latency": "repeated requests to one persistent loopback server; later queries can benefit from OS cache", "response_bytes": "bounded HTTP search and evidence JSON payloads, read with a 1 MiB cap"}
+                stop_process(server)
+            report["metrics"].update(search_repeats=len(latencies), warm_http_request_latency_ms=latency_summary(latencies), warm_queries=per_query, synthetic_query_ids=list(QUERIES), known_result_shape=bool(result_counts and all(x > 0 for x in result_counts)), result_count_min=min(result_counts), result_count_max=max(result_counts))
+            if rss_samples:
+                report["metrics"]["max_sampled_server_rss_bytes"] = max(rss_samples)
+                report["metrics"]["server_rss_sample_count"] = len(rss_samples)
+            else:
+                report["unavailable"].append("server_rss: Linux procfs unavailable or unsupported platform")
+            report["lifecycle"] = {"database_size": "immediately after index process exit, before doctor and server startup; separate DB+WAL+SHM file sizes", "startup": "fresh loopback server process until health endpoint responds", "first_query": "first HTTP query after server startup; not a cold OS cache", "latency": "--queries requests per query after one excluded warmup per query; one persistent loopback server", "rss": "Linux /proc/server-pid/status VmRSS after each query; sampled maximum, not process peak or index/PDF-worker RSS", "response_bytes": "bounded HTTP search and evidence JSON payloads, read with a 1 MiB cap"}
         if a.compare:
             other = a.compare.resolve(strict=True)
             with tempfile.TemporaryDirectory(prefix="findrail-resource-compare-") as temp:
@@ -191,7 +260,8 @@ def main():
         report["status"] = "failed"
         reason = str(exc)[:160] if isinstance(exc, (RuntimeError, ValueError, TimeoutError)) else "operation failed; command details are intentionally omitted"
         report["errors"] = [type(exc).__name__ + ": " + reason]
-        raise
+        print("Resource check failed; see the content-free report for its status.", file=sys.stderr)
+        return 1
     finally:
         a.report.parent.mkdir(parents=True, exist_ok=True)
         a.report.write_text(json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
@@ -206,4 +276,10 @@ def digest_file_manifest(root):
     return h.hexdigest()
 
 
-if __name__ == "__main__": main()
+def canceled(signum, frame):
+    raise KeyboardInterrupt("harness canceled")
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, canceled)
+    sys.exit(main())

@@ -26,13 +26,13 @@ import (
 
 // runStart composes the existing index and server workflows. Browser launching
 // is injected so tests and headless clients never launch desktop applications.
-func runStart(ctx context.Context, args []string, out, stderr io.Writer, open func(string) error) error {
-	return runStartWithManagement(ctx, args, out, stderr, open, true)
+func runStart(ctx context.Context, args []string, out, stderr io.Writer, open func(string) error, version ...string) error {
+	return runStartWithManagement(ctx, args, out, stderr, open, true, nil, version...)
 }
-func runStartReadOnly(ctx context.Context, args []string, out, stderr io.Writer, open func(string) error) error {
-	return runStartWithManagement(ctx, args, out, stderr, open, false)
+func runStartReadOnly(ctx context.Context, args []string, out, stderr io.Writer, open func(string) error, version ...string) error {
+	return runStartWithManagement(ctx, args, out, stderr, open, false, nil, version...)
 }
-func runStartWithManagement(ctx context.Context, args []string, out, stderr io.Writer, open func(string) error, management bool, desktopLocks ...*desktop.Lock) error {
+func runStartWithManagement(ctx context.Context, args []string, out, stderr io.Writer, open func(string) error, management bool, desktopLock *desktop.Lock, versions ...string) error {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
@@ -41,9 +41,7 @@ func runStartWithManagement(ctx context.Context, args []string, out, stderr io.W
 	}
 	dataDir := fs.String("data-dir", "", "directory for Findrail's private index")
 	defaultAddr := "127.0.0.1:7766"
-	var desktopLock *desktop.Lock
-	if len(desktopLocks) > 0 {
-		desktopLock = desktopLocks[0]
+	if desktopLock != nil {
 		defaultAddr = "127.0.0.1:0"
 	}
 	if desktopLock != nil {
@@ -154,6 +152,9 @@ func runStartWithManagement(ctx context.Context, args []string, out, stderr io.W
 	defer func() { cancel(); <-done }()
 	var opts []transport.Option
 	opts = append(opts, transport.WithSyncStatus(true, manager.Status))
+	if len(versions) > 0 {
+		opts = append(opts, transport.WithDiagnostics(versions[0]))
+	}
 	var app *sourceapp.App
 	if management {
 		app = sourceapp.NewWithCoordinator(child, store, dir, executable, coordinator)
