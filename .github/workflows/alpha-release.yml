@@ -13,7 +13,7 @@ on:
       candidate_version:
         description: Preview package version (ignored for main push; must match VERSION to publish)
         required: true
-        default: 0.1.0-alpha.4
+        default: 0.1.0-alpha.5
         type: string
       publish:
         description: Publish only if every gate passes (normally leave false for preparation)
@@ -56,10 +56,7 @@ jobs:
           fi
           RELEASE_VERSION=$(cat build/package/VERSION)
           VERSION="$RELEASE_VERSION"
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then VERSION=0.1.0-alpha.4; fi
-          # While VERSION still selects immutable alpha.3, verify new source as
-          # an unpublished alpha.4 candidate; the release gate still checks alpha.3.
-          if [[ "$GITHUB_EVENT_NAME" == push && "$RELEASE_VERSION" == 0.1.0-alpha.3 ]]; then VERSION=0.1.0-alpha.4; fi
+          if [[ "$GITHUB_EVENT_NAME" == pull_request || "$GITHUB_EVENT_NAME" == push ]]; then VERSION=0.1.0-alpha.5; fi
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then VERSION="$INPUT_VERSION"; fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]
           PUBLISH=false
@@ -173,11 +170,13 @@ jobs:
             find "$RUNNER_TEMP/candidate" -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp {} "$RUNNER_TEMP/release-evidence/" \;
           fi
           python3 - <<'PY'
-          import json, os, pathlib
+          import json, os, pathlib, sys
+          sys.path.insert(0, 'scripts')
+          import package
           out=pathlib.Path(os.environ['RUNNER_TEMP'])/'release-evidence'/'verification.json'
           checks=['archive_checksum','archive_contents','exact_build_info','executable_version','cli','search','browser_api','mcp','portable_snapshot','diagnostics','desktop_single_owner','launcher_pdf_child']
           if os.environ['TARGET']=='linux-amd64': checks.append('upgrade_and_rollback')
-          out.write_text(json.dumps({'candidate_sha':os.environ['CANDIDATE_SHA'],'candidate_version':os.environ['VERSION'],'target':os.environ['TARGET'],'status':os.environ['JOB_STATUS'],'checks':checks if os.environ['JOB_STATUS']=='success' else []}, sort_keys=True, indent=2)+'\n')
+          out.write_text(json.dumps({'candidate_sha':os.environ['CANDIDATE_SHA'],'candidate_version':os.environ['VERSION'],'schema_version':package.schema_version(),'target':os.environ['TARGET'],'source_clean':os.environ['JOB_STATUS']=='success','status':os.environ['JOB_STATUS'],'checks':checks if os.environ['JOB_STATUS']=='success' else []}, sort_keys=True, indent=2)+'\n')
           PY
       - uses: actions/upload-artifact@v4
         if: always()
@@ -356,7 +355,9 @@ jobs:
           python3 scripts/release_assets.py verify --directory "$RUNNER_TEMP/release-assets" --version "$VERSION" --revision "$CANDIDATE_SHA"
           python3 - "$RUNNER_TEMP/verification-summary.json" <<'PY'
           import json, pathlib, sys
-          pathlib.Path(sys.argv[1]).write_text(json.dumps({'candidate_sha':'${{ needs.validate-source.outputs.candidate_sha }}','candidate_version':'${{ needs.validate-source.outputs.version }}','status':'passed'}, sort_keys=True, indent=2)+'\n')
+          sys.path.insert(0, 'scripts')
+          import package
+          pathlib.Path(sys.argv[1]).write_text(json.dumps({'candidate_sha':'${{ needs.validate-source.outputs.candidate_sha }}','candidate_version':'${{ needs.validate-source.outputs.version }}','schema_version':package.schema_version(),'source_clean':True,'status':'passed'}, sort_keys=True, indent=2)+'\n')
           PY
       - uses: actions/upload-artifact@v4
         with:

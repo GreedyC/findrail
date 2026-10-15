@@ -11,14 +11,14 @@ on:
       candidate_version:
         description: Explicit unpublished candidate version
         required: true
-        default: 0.1.0-alpha.4
+        default: 0.1.0-alpha.5
         type: string
 permissions:
   contents: read
 jobs:
   packaged-native:
     env:
-      CANDIDATE_VERSION: ${{ github.event_name == 'pull_request' && '0.1.0-alpha.4' || inputs.candidate_version }}
+      CANDIDATE_VERSION: ${{ github.event_name == 'pull_request' && '0.1.0-alpha.5' || inputs.candidate_version }}
     strategy:
       fail-fast: false
       matrix:
@@ -52,7 +52,12 @@ jobs:
           if [[ '${{ runner.os }}' == Windows ]]; then PYTHON=python; fi
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           VERSION="$CANDIDATE_VERSION"
-          test "$VERSION" = 0.1.0-alpha.4 -o "$GITHUB_EVENT_NAME" = pull_request
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            test "$VERSION" = 0.1.0-alpha.5
+            MAIN_SHA=$(git ls-remote https://github.com/Lephiziel/findrail.git refs/heads/main | cut -f1)
+            test "$CANDIDATE_SHA" = "$MAIN_SHA"
+          fi
+          test "$VERSION" = 0.1.0-alpha.5
           "$PYTHON" scripts/package.py --version "$VERSION" --require-clean --target '${{ matrix.target }}' --output "$RUNNER_TEMP/findrail-candidate"
       - name: Verify candidate checksum manifest
         shell: bash
@@ -130,11 +135,13 @@ jobs:
           if [[ -d "$RUNNER_TEMP/findrail-candidate" ]]; then cp "$RUNNER_TEMP/findrail-candidate"/* "$RUNNER_TEMP/release-evidence/" 2>/dev/null || true; fi
           PYTHON=python3; if [[ '${{ runner.os }}' == Windows ]]; then PYTHON=python; fi
           "$PYTHON" - <<'PY'
-          import json, os, pathlib
+          import json, os, pathlib, sys
+          sys.path.insert(0, 'scripts')
+          import package
           p=pathlib.Path(os.environ['RUNNER_TEMP'])/'release-evidence'/'verification.json'
           checks=['archive_checksum','archive_contents','exact_build_info','executable_version','cli','search','browser_api','mcp','portable_snapshot','diagnostics','desktop_single_owner','launcher_pdf_child']
           if '${{ matrix.target }}' == 'linux-amd64': checks.append('upgrade_and_rollback')
-          p.write_text(json.dumps({'candidate_sha': os.environ['CANDIDATE_SHA'], 'candidate_version':os.environ['CANDIDATE_VERSION'], 'target':'${{ matrix.target }}', 'status':os.environ['JOB_STATUS'],'checks':checks if os.environ['JOB_STATUS']=='success' else []}, sort_keys=True, indent=2)+'\n')
+          p.write_text(json.dumps({'candidate_sha': os.environ['CANDIDATE_SHA'], 'candidate_version':os.environ['CANDIDATE_VERSION'], 'schema_version':package.schema_version(), 'target':'${{ matrix.target }}', 'source_clean':os.environ['JOB_STATUS']=='success', 'status':os.environ['JOB_STATUS'],'checks':checks if os.environ['JOB_STATUS']=='success' else []}, sort_keys=True, indent=2)+'\n')
           PY
       - uses: actions/upload-artifact@v4
         if: always()

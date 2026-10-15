@@ -71,7 +71,7 @@ class ReleaseGateTests(unittest.TestCase):
             release_gate.existing_release_decision('0.1.0-alpha.5', '1' * 40, sha, release, [])
 
     def alpha4_release(self):
-        sha = 'b' * 40
+        sha = '1d47f9d54ff81ab566fcf3f8c0c6bf9af86a33f7'
         names = {f'findrail_0.1.0-alpha.4_{target}' + ('.zip' if target.startswith('windows-') else '.tar.gz')
                  for target in release_assets.TARGETS}
         names.add(release_assets.VSIX)
@@ -84,7 +84,12 @@ class ReleaseGateTests(unittest.TestCase):
     def test_alpha4_complete_release_is_noop_after_main_moves(self):
         sha, release, assets = self.alpha4_release()
         self.assertEqual(release_gate.existing_release_decision(
-            '0.1.0-alpha.4', 'c' * 40, sha, release, assets), 'noop')
+            '0.1.0-alpha.4', 'db1c088470db1e5fd189d1d17f060fc265eb1976', sha, release, assets), 'noop')
+
+    def test_alpha5_is_not_an_existing_published_release_contract(self):
+        sha, release, assets = self.alpha4_release()
+        with self.assertRaisesRegex(ValueError, 'unknown published'):
+            release_gate.existing_release_decision('0.1.0-alpha.5', 'c' * 40, sha, release, assets)
 
     def test_alpha4_rejects_wrong_schema_revision_and_incomplete_assets(self):
         sha, release, assets = self.alpha4_release()
