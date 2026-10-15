@@ -395,7 +395,6 @@ def main():
             launch("desktop")
             # Forget the only source, verify collection evidence is purged, then
             # exercise the protected desktop Quit control and owner cleanup.
-            browser.find_element(By.ID, "collection-close").click()
             browser.find_element(By.XPATH, ".//article[contains(@class,'source-card')]//button[.='Remove from index']").click()
             browser.find_element(By.ID, "confirm-remove").click()
             WebDriverWait(browser, 20).until(lambda d: not d.find_elements(By.CSS_SELECTOR, ".source-card"))
