@@ -135,10 +135,10 @@ jobs:
           import package
           archive, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
           package.verify_archive(archive, 'linux-amd64', '0.1.0-alpha.4', 7)
-          root = package.extract_verified(archive, out)
-          with open(__import__('os').environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
-              env.write(f'ALPHA4_BINARY={root / "findrail"}\n')
+          package.extract_verified(archive, out)
           PY
+          ALPHA4_BINARY="$RUNNER_TEMP/alpha4-reference/findrail_0.1.0-alpha.4_linux-amd64/findrail"
+          test -x "$ALPHA4_BINARY"
           python3 scripts/upgrade_smoke.py "$RUNNER_TEMP/install 📦/findrail_${CANDIDATE_VERSION}_linux-amd64/findrail" \
             --alpha3-binary "$RUNNER_TEMP/alpha3-reference/findrail_0.1.0-alpha.3_linux-amd64/findrail" \
             --alpha4-binary "$ALPHA4_BINARY"
