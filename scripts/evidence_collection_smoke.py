@@ -109,7 +109,8 @@ def main():
                                                         if b.text == "Preview"), False))
             preview_button.click()
             wait.until(lambda d: d.find_element(By.ID, "preview-body").text.startswith("alpha"))
-            browser.execute_script("""const b=document.getElementById('preview-body'),t=b.firstChild;
+            browser.execute_script("""const b=document.getElementById('preview-body'),w=document.createTreeWalker(b,NodeFilter.SHOW_TEXT);
+                let t=w.nextNode();while(t&&t.length===0)t=w.nextNode();
                 const r=document.createRange();r.setStart(t,0);r.setEnd(t,Math.min(10,t.length));
                 const s=getSelection();s.removeAllRanges();s.addRange(r);""")
             browser.find_element(By.ID, "add-evidence").click()
