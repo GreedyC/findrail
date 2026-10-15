@@ -15,6 +15,7 @@ from selenium import webdriver
 from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
 from smoke import docx_fixture
@@ -73,10 +74,87 @@ def main():
         def wait_for_quote(quote):
             WebDriverWait(browser, 20).until(lambda d: quote in d.find_element(By.ID, "preview-body").text)
 
-        def open_result(query):
+        def collection_note(index):
+            try:
+                return browser.find_elements(By.CSS_SELECTOR, ".collection-row")[index].find_element(By.TAG_NAME, "textarea").get_attribute("value")
+            except (IndexError, StaleElementReferenceException):
+                return None
+
+        def collection_note_enabled(index):
+            try:
+                rows = browser.find_elements(By.CSS_SELECTOR, ".collection-row")
+                return len(rows) == 2 and not rows[index].find_element(By.TAG_NAME, "textarea").get_property("disabled")
+            except (IndexError, StaleElementReferenceException):
+                return False
+
+        def tab_until(predicate, label, limit=40):
+            for _ in range(limit):
+                active = browser.switch_to.active_element
+                if predicate(active):
+                    return active
+                active.send_keys(Keys.TAB)
+            raise AssertionError("Tab order did not reach " + label)
+
+        def shift_tab_until(predicate, label, limit=50):
+            for _ in range(limit):
+                active = browser.switch_to.active_element
+                if predicate(active):
+                    return active
+                active.send_keys(Keys.SHIFT, Keys.TAB)
+            raise AssertionError("Shift+Tab order did not reach " + label)
+
+        def verify_dialog_escapes():
+            diagnostics = browser.find_element(By.ID, "diagnostics-open")
+            diagnostics.click()
+            dialog = browser.find_element(By.ID, "diagnostics-dialog")
+            WebDriverWait(browser, 20).until(lambda d: dialog.get_property("open"))
+            assert dialog.get_attribute("aria-labelledby") == "diagnostics-title"
+            assert dialog.get_attribute("aria-describedby") == "diagnostics-description"
+            browser.switch_to.active_element.send_keys(Keys.ESCAPE)
+            WebDriverWait(browser, 20).until(lambda d: not dialog.get_property("open"))
+            assert browser.switch_to.active_element.get_attribute("id") == "diagnostics-open"
+
+            configure = browser.find_element(By.CSS_SELECTOR, ".source-card button[title*='Change DOCX policy']")
+            configure.click()
+            dialog = browser.find_element(By.ID, "configure-source")
+            assert dialog.get_attribute("aria-labelledby") == "configure-title"
+            assert dialog.get_attribute("aria-describedby") == "configure-description"
+            browser.switch_to.active_element.send_keys(Keys.ESCAPE)
+            WebDriverWait(browser, 20).until(lambda d: not dialog.get_property("open"))
+
+            browser.find_element(By.CSS_SELECTOR, ".source-card button[title*='Removes only']").click()
+            dialog = browser.find_element(By.ID, "remove-confirm")
+            assert dialog.get_attribute("aria-describedby") == "remove-description"
+            browser.switch_to.active_element.send_keys(Keys.ESCAPE)
+            WebDriverWait(browser, 20).until(lambda d: not dialog.get_property("open"))
+            assert len(browser.find_elements(By.CSS_SELECTOR, ".source-card")) == 1, "Escape unexpectedly removed the source"
+
+        def open_result(query, keyboard=False):
             field = browser.find_element(By.ID, "query")
             field.clear()
             field.send_keys(query)
+            if keyboard:
+                field.send_keys("/")
+                assert field.get_attribute("value") == query + "/", "slash was intercepted while editing Search"
+                field.send_keys(Keys.BACKSPACE)
+                field.send_keys(Keys.ENTER)
+                WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "submit").get_property("disabled"))
+                result = tab_until(lambda element: "result-preview" in (element.get_attribute("class") or ""), "result Preview")
+                # Both documented shortcuts return from a real result control
+                # without changing the query; Enter remains normal form submit.
+                result.send_keys(Keys.CONTROL, "k")
+                assert browser.switch_to.active_element.get_attribute("id") == "query"
+                browser.switch_to.active_element.send_keys(Keys.ENTER)
+                WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "submit").get_property("disabled"))
+                result = tab_until(lambda element: "result-preview" in (element.get_attribute("class") or ""), "result Preview")
+                result.send_keys("/")
+                assert browser.switch_to.active_element.get_attribute("id") == "query"
+                browser.switch_to.active_element.send_keys(Keys.ENTER)
+                WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "submit").get_property("disabled"))
+                button = tab_until(lambda element: "result-preview" in (element.get_attribute("class") or ""), "result Preview")
+                button.send_keys(Keys.ENTER)
+                wait_for_quote(query)
+                return
             browser.find_element(By.ID, "submit").click()
             def click_matching(d):
                 try:
@@ -107,6 +185,7 @@ def main():
 
         try:
             launch()
+            verify_dialog_escapes()
             browser.find_element(By.ID, "collection-open").click()
             browser.find_element(By.ID, "collection-new").click()
             title = browser.find_element(By.ID, "collection-title")
@@ -114,7 +193,7 @@ def main():
             title.send_keys("Late windows")
             browser.find_element(By.ID, "collection-close").click()
             for count, (query, quote) in enumerate((("needletextlate", text_quote), ("needledocxlate", word_quote)), 1):
-                open_result(query)
+                open_result(query, keyboard=count == 1)
                 wait_for_quote(quote)
                 notice = browser.find_element(By.ID, "preview-notice").text
                 assert "indexed characters 80000" in notice, notice
@@ -127,14 +206,56 @@ def main():
                 else:
                     assert "page numbers are unavailable" in notice
                 select_quote(quote)
-                browser.find_element(By.ID, "add-evidence").click()
+                if count == 1:
+                    # Use actual Tab/Enter after creating an exact selection;
+                    # keyboard focus must not discard the captured excerpt.
+                    add = tab_until(lambda element: element.get_attribute("id") == "add-evidence", "Add evidence")
+                    add.send_keys(Keys.ENTER)
+                else:
+                    browser.find_element(By.ID, "add-evidence").click()
                 WebDriverWait(browser, 20).until(lambda d: d.find_element(By.ID, "collection-count").text == str(count))
-                browser.find_element(By.ID, "close-preview").click()
+                if count == 1:
+                    browser.switch_to.active_element.send_keys(Keys.ESCAPE)
+                    WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "preview").get_property("open"))
+                    returned = WebDriverWait(browser, 5).until(lambda d: d.switch_to.active_element if (d.switch_to.active_element.get_attribute("id") == "query" or "result-preview" in (d.switch_to.active_element.get_attribute("class") or "")) else False)
+                    if "result-preview" in (returned.get_attribute("class") or ""):
+                        assert returned.get_attribute("data-document-id"), "focus returned to a result without identity"
+                        # From the restored result, use the documented shortcut.
+                        returned.send_keys("/")
+                        assert browser.switch_to.active_element.get_attribute("id") == "query"
+                    else:
+                        assert returned.get_attribute("id") == "query", "focus did not return to the result or Search fallback"
+                    # Native reverse tab order opens the evidence collection.
+                    collection_button = shift_tab_until(lambda element: element.get_attribute("id") == "collection-open", "Evidence collection")
+                    collection_button.send_keys(Keys.ENTER)
+                    WebDriverWait(browser, 20).until(lambda d: d.find_element(By.ID, "evidence-collection").get_property("open"))
+                    note = tab_until(lambda element: element.tag_name == "textarea" and (element.get_attribute("aria-label") or "").startswith("Personal note for"), "personal note")
+                    note.send_keys("/Late text note")
+                    browser.switch_to.active_element.send_keys(Keys.ESCAPE)
+                    WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "evidence-collection").get_property("open"))
+                    with sqlite3.connect((data / "findrail.db").as_uri() + "?mode=ro", uri=True) as db:
+                        assert db.execute("SELECT count(*) FROM evidence_collections").fetchone()[0] == 0, "Escape silently saved the collection"
+                    browser.switch_to.active_element.send_keys(Keys.ENTER)
+                    WebDriverWait(browser, 20).until(lambda d: d.find_element(By.ID, "evidence-collection").get_property("open"))
+                    note = tab_until(lambda element: element.tag_name == "textarea" and (element.get_attribute("aria-label") or "").startswith("Personal note for"), "restored personal note")
+                    assert note.get_attribute("value") == "/Late text note", "Escape discarded the unsaved note"
+                    save = tab_until(lambda element: element.get_attribute("id") == "collection-save", "Save collection", limit=50)
+                    save.send_keys(Keys.ENTER)
+                    WebDriverWait(browser, 20).until(lambda d: "saved" in d.find_element(By.ID, "collection-status").text.lower() and not d.find_element(By.ID, "collection-save").get_property("disabled"))
+                    browser.switch_to.active_element.send_keys(Keys.ESCAPE)
+                    WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "evidence-collection").get_property("open"))
+                else:
+                    browser.find_element(By.ID, "close-preview").click()
             browser.find_element(By.ID, "collection-open").click()
             rows = browser.find_elements(By.CSS_SELECTOR, ".collection-row")
-            rows[0].find_element(By.TAG_NAME, "textarea").send_keys("Late text note")
+            rows[0].find_element(By.TAG_NAME, "textarea").clear()
+            rows[0].find_element(By.TAG_NAME, "textarea").send_keys("/Late text note")
+            WebDriverWait(browser, 20).until(lambda d: collection_note(0) == "/Late text note")
+            WebDriverWait(browser, 20).until(lambda d: collection_note_enabled(1))
+            rows = browser.find_elements(By.CSS_SELECTOR, ".collection-row")
             rows[1].find_element(By.TAG_NAME, "textarea").send_keys("Late Word note")
-            rows[0].find_element(By.XPATH, ".//button[.='Move down']").click()
+            WebDriverWait(browser, 20).until(lambda d: collection_note(1) == "Late Word note")
+            browser.find_elements(By.CSS_SELECTOR, ".collection-row")[0].find_element(By.XPATH, ".//button[.='Move down']").click()
             browser.find_element(By.ID, "collection-save").click()
             WebDriverWait(browser, 20).until(lambda d: "saved" in d.find_element(By.ID, "collection-status").text.lower() and not d.find_element(By.ID, "collection-save").get_attribute("disabled"))
             collection_id = browser.find_element(By.ID, "collection-picker").get_attribute("value")
@@ -144,7 +265,7 @@ def main():
                 assert db.execute("PRAGMA user_version").fetchone()[0] == 8
                 saved = [(start, json.loads(raw)) for start, raw in db.execute("SELECT preview_start_char,snapshot_json FROM evidence_collection_entries WHERE collection_id=? ORDER BY ordinal", (collection_id,))]
             assert [entry["excerpt"] for _, entry in saved] == [word_quote, text_quote]
-            assert [entry["note"] for _, entry in saved] == ["Late Word note", "Late text note"]
+            assert [entry["note"] for _, entry in saved] == ["Late Word note", "/Late text note"], [entry["note"] for _, entry in saved]
             for start, entry in saved:
                 assert start == entry["evidence"]["text_start_char"] == 80000
                 assert entry["evidence"]["truncated"] is True
@@ -169,7 +290,7 @@ def main():
             browser.find_element(By.ID, "collection-download").click()
             WebDriverWait(browser, 20).until(lambda d: d.execute_script("return !!window.__passageDownload"))
             markdown = browser.execute_async_script("const done=arguments[0];window.__passageDownload.then(done)")
-            assert all(value in markdown for value in (text_quote, word_quote, "Late text note", "Late Word note", (notes / "late.md").as_uri(), (notes / "late.docx").as_uri()))
+            assert all(value in markdown for value in (text_quote, word_quote, "/Late text note", "Late Word note", (notes / "late.md").as_uri(), (notes / "late.docx").as_uri()))
             (notes / "late.md").write_text("Replacement short text with a different snapshot.", encoding="utf-8")
             old = saved[1][1]["evidence"]
             def changed(_):
