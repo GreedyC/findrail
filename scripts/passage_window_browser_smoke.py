@@ -178,7 +178,7 @@ def main():
             WebDriverWait(browser, 20).until(changed)
             browser.find_element(By.ID, "collection-check").click()
             WebDriverWait(browser, 20).until(lambda d: "changed/current version differs" in d.find_element(By.ID, "collection-list").text)
-            assert text_quote in browser.find_element(By.ID, "collection-list").text
+            WebDriverWait(browser, 20).until(inspect_restored)
             print("Passage browser journey passed: late text/DOCX, manual windows, exact selection, note/order, process restart, Markdown and changed short document.")
         finally:
             stop()

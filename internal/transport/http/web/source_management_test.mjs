@@ -275,3 +275,13 @@ test('collection current-evidence bridge keeps PDF pages and saved text windows'
  h.resolveEvidence(lateEvidence);await flush();
  assert.equal(h.element('text-range').textContent,'80000–80011 / 80011');
 });
+
+test('opening a changed collection document starts from its current beginning',async()=>{
+ const h=harness([{id:'source-a',name:'Synthetic',documents:1}],{passage_preview:true});await flush();
+ h.context.window.findrailPreview('doc-a',0,'source-a','text/plain',80000,'old-hash');await flush();
+ h.resolveEvidence({...lateEvidence,text:'Current beginning',text_start_char:0});await flush();
+ const manual=new URL(h.documentURLs.at(-1),'http://localhost');
+ assert.equal(manual.searchParams.get('start_char'),'0');
+ h.resolveEvidence({...lateEvidence,text:'Current beginning',text_start_char:0});await flush();
+ assert.match(h.element('preview-notice').textContent,/Document changed; showing the beginning/);
+});
