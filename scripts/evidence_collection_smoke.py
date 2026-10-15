@@ -357,7 +357,7 @@ def main():
             browser.execute_script("window.dispatchEvent(new Event('sources-changed'))")
             browser.find_element(By.ID, "collection-close").click()
             search_preview("alpha", source_filter=source_id)
-            wait.until(lambda d: d.find_element(By.ID, "preview-body").text.startswith("Restored alpha"))
+            wait.until(lambda d: d.find_element(By.ID, "preview-body").text.startswith("alpha evidence"))
             browser.find_element(By.ID, "add-evidence").click()
             assert "added" in browser.execute_script("return document.getElementById('collection-status').textContent"), browser.execute_script("return document.getElementById('collection-status').textContent")
             browser.find_element(By.ID, "close-preview").click()
