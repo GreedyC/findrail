@@ -12,6 +12,7 @@ import tempfile
 import urllib.request
 
 from selenium import webdriver
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -187,7 +188,7 @@ def main():
                 WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "submit").get_property("disabled"))
                 button = tab_until(lambda element: "result-preview" in (element.get_attribute("class") or ""), "result Preview")
                 document_id = button.get_attribute("data-document-id")
-                button.send_keys(Keys.ENTER)
+                ActionChains(browser).send_keys(Keys.ENTER).perform()
                 wait_for_quote(query)
                 return document_id
             browser.find_element(By.ID, "submit").click()
