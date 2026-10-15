@@ -427,7 +427,9 @@ jobs:
       candidate_version: ${{ needs.validate-source.outputs.version }}
   release-state:
     needs: [validate-source, reusable-final-verification]
-    if: needs.validate-source.outputs.publish == 'true'
+    # Run the existing-release no-op check on previews too. Its token is
+    # read-only; PR publication remains false and the publisher stays skipped.
+    if: needs.validate-source.outputs.publish == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read

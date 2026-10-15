@@ -163,11 +163,11 @@ PR and main-source checks package alpha.5 while `VERSION` remains alpha.4. The
 candidate schema is read from the checked-out source; alpha.3 and alpha.4 retain
 their historical schemas 6 and 7. These alpha.5 checks do not publish: the
 publisher still requires the candidate version to equal `VERSION`, and the
-PR release-state/publisher jobs are skipped because preview publish is false.
-On a main push, the read-only release-state gate checks alpha.4 against its
+PR and main-push read-only release-state gate checks alpha.4 against its
 historical tag SHA and exact existing assets, returns `noop` even though source
-HEAD is newer, and causes the publisher to be skipped (candidate alpha.5 does
-not equal `VERSION` alpha.4).
+HEAD is newer. On a PR, preview publish is false and the publisher is skipped;
+on a main push, the candidate alpha.5 does not equal `VERSION` alpha.4 and the
+publisher is also skipped.
 Dispatch rehearsals require the exact current main SHA and `publish=false` for
 preparation. Alpha.5 is not accepted as an existing published-release contract.
 At the current source schema 8, alpha.5 remains an unpublished preview and does
