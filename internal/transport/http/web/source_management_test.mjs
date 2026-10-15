@@ -10,10 +10,10 @@ const managementScript = [...html.matchAll(/<script type="module">([\s\S]*?)<\/s
   .replace(/^import .*;$/m, '');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-function harness(sourcePayload = []) {
+function harness(sourcePayload = [], capabilities = {management:true}) {
   const elements = new Map(), handlers = new Map(), timers = new Map();
   let nextTimer = 0, requests = 0, pendingEvidence;
-  const pendingSearches = [], searchURLs = [], pendingReports=[],reportURLs=[];
+  const pendingSearches = [], searchURLs = [], pendingReports=[],reportURLs=[],documentURLs=[];
   function element(id) {
     if (!elements.has(id)) elements.set(id, {
       value: '', textContent: '', hidden: false, disabled: false, open: false,isConnected:true,
@@ -50,9 +50,9 @@ function harness(sourcePayload = []) {
       }
       if(url.includes('/api/v1/sources/')&&url.includes('/report?')){reportURLs.push(url);return new Promise(resolve=>pendingReports.push(data=>resolve({ok:true,json:async()=>data})));}
       if (url.startsWith('/api/v1/documents/')) return new Promise(resolve => {
-        pendingEvidence = data => resolve({ok: true, json: async () => data});
+        documentURLs.push(url);pendingEvidence = (data,status=200) => resolve({ok: status===200,status, json: async () => data});
       });
-      if(url.endsWith('/capabilities'))return {ok:true,json:async()=>({management:true})};
+      if(url.endsWith('/capabilities'))return {ok:true,json:async()=>capabilities};
       if(url.endsWith('/session'))return {ok:true,json:async()=>({token:'synthetic-capability'})};
       return {ok: true, json: async () => url.includes('/sync')
         ? {enabled: true, sources: []} : {sources: sourcePayload}};
@@ -62,8 +62,8 @@ function harness(sourcePayload = []) {
   return {context, timers, element, document, handlers,
     notify: (type, detail) => handlers.get(`window:${type}`)?.({detail}),
     get requests() { return requests; },
-    resolveEvidence: data => pendingEvidence(data),
-    resolveSearch: (index, data) => pendingSearches[index](data),resolveReport:(index,data)=>pendingReports[index](data), searchURLs,reportURLs};
+    resolveEvidence: (data,status) => pendingEvidence(data,status),
+    resolveSearch: (index, data) => pendingSearches[index](data),resolveReport:(index,data)=>pendingReports[index](data), searchURLs,reportURLs,documentURLs};
 }
 
 test('inventory notifications retain one poll and pause in a hidden tab', async () => {
@@ -221,4 +221,67 @@ test('filter reset issues a new server request from a coherent form snapshot', a
   assert.equal(reset.get('format'),'all');assert.equal(reset.has('path_prefix'),false);
   assert.equal(reset.has('title_contains'),false);assert.equal(h.element('query').value,'retry');
   assert.equal(h.element('active-filters').textContent,'');
+});
+
+const lateEvidence={id:'doc-a',source_id:'source-a',source_name:'Synthetic',source_kind:'filesystem',title:'Late note',path:'late.md',uri:'file:///synthetic/late.md',media_type:'text/plain',content_hash:'same-hash',original_identity:'snapshot-a',modified_at:'2026-10-15T00:00:00Z',page:0,page_count:0,text:'needle tail',text_start_char:80000,text_total_chars:80011,truncated:true,match_kind:'literal_body'};
+
+test('late preview and manual navigation keep the result identity and code-point bounds',async()=>{
+ const h=harness([{id:'source-a',name:'Synthetic',documents:1}],{passage_preview:true});await flush();
+ vm.runInContext("preview('doc-a',0,'source-a','text/plain',null,'snapshot-a',{query:'needle',mode:'literal'})",h.context);await flush();
+ assert.equal(new URL(h.documentURLs[0],'http://localhost').searchParams.get('original_identity'),'snapshot-a');
+ assert.equal(new URL(h.documentURLs[0],'http://localhost').searchParams.get('q'),'needle');
+ h.resolveEvidence(lateEvidence);await flush();
+ assert.equal(h.element('previous-text').disabled,false);
+ assert.equal(h.element('next-text').disabled,true,'a truncated tail has no next window');
+ h.handlers.get('previous-text:click')();await flush();
+ const previous=new URL(h.documentURLs[1],'http://localhost');
+ assert.equal(previous.searchParams.get('start_char'),'14464');
+ assert.equal(previous.searchParams.get('original_identity'),'snapshot-a');
+ assert.equal(previous.searchParams.has('q'),false);
+});
+
+test('changed passage identity fails closed without falling back to a newer prefix',async()=>{
+ const h=harness([{id:'source-a',name:'Synthetic',documents:1}],{passage_preview:true});await flush();
+ vm.runInContext("preview('doc-a',0,'source-a','text/plain',null,'snapshot-a',{query:'needle',mode:'literal'})",h.context);await flush();
+ h.resolveEvidence({error:'indexed snapshot changed'},409);await flush();
+ assert.equal(h.documentURLs.length,1);
+ assert.equal(h.element('add-evidence').disabled,true);
+ assert.match(h.element('preview-body').textContent,/snapshot changed/);
+});
+
+test('changing query invalidates a delayed passage response',async()=>{
+ const h=harness([{id:'source-a',name:'Synthetic',documents:1}],{passage_preview:true});await flush();
+ vm.runInContext("preview('doc-a',0,'source-a','text/plain',null,'snapshot-a',{query:'needle',mode:'literal',source:'',format:'all',path_prefix:'',title_contains:''})",h.context);await flush();
+ vm.runInContext("search({query:'different',mode:'literal',source:'',format:'all',path_prefix:'',title_contains:''})",h.context);
+ h.resolveEvidence(lateEvidence);await flush();
+ assert.equal(h.element('preview').open,false);
+ assert.equal(h.element('add-evidence').disabled,true);
+ assert.equal(vm.runInContext('currentEvidence',h.context),null);
+});
+
+test('collection current-evidence bridge keeps PDF pages and saved text windows',async()=>{
+ const h=harness([{id:'source-a',name:'Synthetic',documents:1}],{passage_preview:true});await flush();
+ h.context.window.findrailPreview('doc-a',2,'source-a','application/pdf');await flush();
+ assert.equal(h.documentURLs[0],'/api/v1/documents/doc-a?page=2');
+ h.resolveEvidence({...lateEvidence,media_type:'application/pdf',page:2,page_count:2,text:'PDF page two'});await flush();
+ assert.equal(h.element('page-label').textContent,'Page 2 / 2');
+ h.element('preview').close();
+ h.context.window.findrailPreview('doc-a',0,'source-a','text/plain',80000);await flush();
+ h.resolveEvidence({...lateEvidence,text:'prefix',text_start_char:0});await flush();
+ const manual=new URL(h.documentURLs.at(-1),'http://localhost');
+ assert.equal(manual.searchParams.get('start_char'),'80000');
+ assert.equal(manual.searchParams.get('original_identity'),'snapshot-a');
+ assert.equal(manual.searchParams.has('q'),false);
+ h.resolveEvidence(lateEvidence);await flush();
+ assert.equal(h.element('text-range').textContent,'80000–80011 / 80011');
+});
+
+test('opening a changed collection document starts from its current beginning',async()=>{
+ const h=harness([{id:'source-a',name:'Synthetic',documents:1}],{passage_preview:true});await flush();
+ h.context.window.findrailPreview('doc-a',0,'source-a','text/plain',80000,'old-hash');await flush();
+ h.resolveEvidence({...lateEvidence,text:'Current beginning',text_start_char:0});await flush();
+ const manual=new URL(h.documentURLs.at(-1),'http://localhost');
+ assert.equal(manual.searchParams.get('start_char'),'0');
+ h.resolveEvidence({...lateEvidence,text:'Current beginning',text_start_char:0});await flush();
+ assert.match(h.element('preview-notice').textContent,/Document changed; showing the beginning/);
 });

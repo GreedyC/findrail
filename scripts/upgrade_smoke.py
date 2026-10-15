@@ -177,7 +177,7 @@ def upgrade_alpha3_schema6(candidate, published_alpha3, root, source_root):
     }
     collection_tables = upgraded.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('evidence_collections','evidence_collection_entries') ORDER BY name").fetchall()
     upgraded.close()
-    if schema != 7 or before != after or len(collection_tables) != 2:
+    if schema != 8 or before != after or len(collection_tables) != 2:
         raise SystemExit(f'published alpha.3 upgrade was not additive/preserved (schema={schema}, before={before}, after={after})')
 
     # Persist a named collection through a real candidate server restart.
@@ -190,7 +190,7 @@ def upgrade_alpha3_schema6(candidate, published_alpha3, root, source_root):
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if process.poll() is not None:
-                raise RuntimeError('schema-7 candidate server exited: ' + process.stderr.read())
+                raise RuntimeError('schema-8 candidate server exited: ' + process.stderr.read())
             try:
                 with urllib.request.urlopen(base + '/api/v1/capabilities', timeout=1) as response:
                     if json.load(response).get('collection_persistence'):
@@ -198,7 +198,7 @@ def upgrade_alpha3_schema6(candidate, published_alpha3, root, source_root):
             except (OSError, urllib.error.URLError):
                 time.sleep(.05)
         else:
-            raise RuntimeError('schema-7 candidate collections did not become available')
+            raise RuntimeError('schema-8 candidate collections did not become available')
         with urllib.request.urlopen(urllib.request.Request(base + '/api/v1/session', headers={'Origin': base}), timeout=3) as response:
             token = json.load(response)['token']
         headers = {'Origin': base, 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'same-origin', 'X-Findrail-Token': token}
@@ -227,7 +227,7 @@ def upgrade_alpha3_schema6(candidate, published_alpha3, root, source_root):
         with urllib.request.urlopen(request, timeout=3) as response:
             restored_collection = json.load(response)
         if restored_collection.get('title') != 'Alpha.3 upgrade journey':
-            raise SystemExit('schema-7 collection did not restore after candidate process restart')
+            raise SystemExit('schema-8 collection did not restore after candidate process restart')
     finally:
         process.terminate(); process.communicate(timeout=8)
     restored = root / 'restored-alpha3-backup'
@@ -246,7 +246,7 @@ def upgrade_alpha3_schema6(candidate, published_alpha3, root, source_root):
         raise SystemExit('published alpha.3 did not read its restored schema-6 backup unchanged')
     if directory_digest(restored) != stopped_digest:
         raise SystemExit('published alpha.3 changed its restored stopped backup')
-    print(f'Synthetic alpha.3 schema-6 fixture migrated to schema 7 with search, source/document provenance, indexing report, and collection tables; stopped backup restored and opened read-only by the published alpha.3 binary; new collection {collection_id!r} restored after candidate restart. No downgrade attempted.')
+    print(f'Synthetic alpha.3 schema-6 fixture migrated to schema 8 with search, source/document provenance, indexing report, and collection tables; stopped backup restored and opened read-only by the published alpha.3 binary; new collection {collection_id!r} restored after candidate restart. No downgrade attempted.')
 
 
 def main():

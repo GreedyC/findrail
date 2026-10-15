@@ -108,8 +108,9 @@ def main():
             preview_button = wait.until(lambda d: next((b for b in d.find_elements(By.TAG_NAME, "button")
                                                         if b.text == "Preview"), False))
             preview_button.click()
-            wait.until(lambda d: d.find_element(By.ID, "preview-body").text.startswith("Synthetic"))
-            browser.execute_script("""const b=document.getElementById('preview-body'),t=b.firstChild;
+            wait.until(lambda d: d.find_element(By.ID, "preview-body").text.startswith("alpha"))
+            browser.execute_script("""const b=document.getElementById('preview-body'),w=document.createTreeWalker(b,NodeFilter.SHOW_TEXT);
+                let t=w.nextNode();while(t&&t.length===0)t=w.nextNode();
                 const r=document.createRange();r.setStart(t,0);r.setEnd(t,Math.min(10,t.length));
                 const s=getSelection();s.removeAllRanges();s.addRange(r);""")
             browser.find_element(By.ID, "add-evidence").click()
@@ -129,7 +130,7 @@ def main():
             rows = browser.find_elements(By.CLASS_NAME, "collection-row")
             rows[0].find_element(By.XPATH, ".//button[.='Move down']").click()
             excerpts = browser.execute_script("return [...document.querySelectorAll('.collection-row pre')].map(x=>x.textContent)")
-            assert excerpts[0].startswith("Synthetic evidence alpha passage") and excerpts[1].startswith("Synthetic")
+            assert excerpts[0].startswith("alpha passage") and excerpts[1].startswith("alpha")
             assert not browser.execute_script("return window.__evidencePwned===true")
 
             browser.find_element(By.ID, "collection-close").click()
@@ -209,7 +210,7 @@ def main():
             browser.find_element(By.ID, "collection-check").click()
             wait.until(lambda d: "changed/current version differs" in d.execute_script("return document.getElementById('collection-list').textContent"))
             excerpts = browser.execute_script("return [...document.querySelectorAll('.collection-row pre')].map(x=>x.textContent)")
-            assert excerpts[0].startswith("Synthetic evidence alpha passage") and excerpts[1].startswith("Synthetic")
+            assert excerpts[0].startswith("alpha passage") and excerpts[1].startswith("alpha")
 
             def gate_response(fragment, flow=None):
                 # Match the request's semantic caller, never an arbitrary Nth poll.
@@ -356,7 +357,7 @@ def main():
             browser.execute_script("window.dispatchEvent(new Event('sources-changed'))")
             browser.find_element(By.ID, "collection-close").click()
             search_preview("alpha", source_filter=source_id)
-            wait.until(lambda d: d.find_element(By.ID, "preview-body").text.startswith("Restored alpha"))
+            wait.until(lambda d: d.find_element(By.ID, "preview-body").text.startswith("alpha evidence"))
             browser.find_element(By.ID, "add-evidence").click()
             assert "added" in browser.execute_script("return document.getElementById('collection-status').textContent"), browser.execute_script("return document.getElementById('collection-status').textContent")
             browser.find_element(By.ID, "close-preview").click()

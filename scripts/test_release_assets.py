@@ -64,7 +64,8 @@ class ReleaseAssetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp); source, revision = self.candidate(root); output = root / 'release'
             manifest = release.assemble(source, output, '0.1.0-alpha.4', revision)
-            self.assertEqual(manifest['schema_version'], release.package.schema_version())
+            # Alpha.4 remains a pinned schema-7 release after the source moves to schema 8.
+            self.assertEqual(manifest['schema_version'], release.contract_schema('0.1.0-alpha.4'))
             self.assertEqual(len(manifest['assets']), 6)
             self.assertEqual(release.verify(output, '0.1.0-alpha.4', revision), manifest)
 

@@ -50,6 +50,9 @@ var reportSchema string
 //go:embed migrations/007_evidence_collections.sql
 var collectionsSchema string
 
+//go:embed migrations/008_evidence_windows.sql
+var evidenceWindowsSchema string
+
 type Store struct {
 	db, readers   *sql.DB
 	schemaVersion int
@@ -64,7 +67,7 @@ func (s *Store) SchemaInfo() SchemaInfo {
 
 var ErrArchiveFrozen = errors.New("archive_snapshot_frozen: imported archive sources cannot be scanned or refreshed")
 
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 
 // SchemaInfo reports only SQLite metadata; inspection never reads application
 // tables and never creates, repairs, or migrates an index.
@@ -320,7 +323,12 @@ func (s *Store) initialize(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx, collectionsSchema); err != nil {
 			return fmt.Errorf("migrate evidence collections: %w", err)
 		}
+		fallthrough
 	case 7:
+		if _, err := tx.ExecContext(ctx, evidenceWindowsSchema); err != nil {
+			return fmt.Errorf("migrate evidence windows: %w", err)
+		}
+	case 8:
 	default:
 		return fmt.Errorf("unsupported index schema %d; use a compatible Findrail version", version)
 	}
@@ -1439,6 +1447,188 @@ func (s *Store) EvidenceForSource(ctx context.Context, sourceID, id string, page
 		return search.Evidence{}, search.ErrNotFound
 	}
 	return s.evidence(ctx, sourceID, id, page)
+}
+
+// Passage returns a bounded Unicode-code-point window from the indexed text.
+// Literal anchors are obtained from the same FTS expression used by search.
+func (s *Store) Passage(ctx context.Context, id, query, expected string, start int) (search.Evidence, error) {
+	var e search.Evidence
+	if start < 0 || (query != "" && start != 0) {
+		return e, search.ErrPage
+	}
+	tx, err := s.readers.BeginTx(ctx, nil)
+	if err != nil {
+		return e, err
+	}
+	defer tx.Rollback()
+	var token string
+	var revision int64
+	err = tx.QueryRowContext(ctx, `SELECT d.id,d.title,d.uri,d.path,d.source_id,s.name,s.kind,d.media_type,d.content_hash,d.modified_at,d.page_count,s.registration_token,s.revision FROM documents d JOIN sources s ON s.id=d.source_id WHERE d.id=?`, id).Scan(&e.ID, &e.Title, &e.URI, &e.Path, &e.SourceID, &e.SourceName, &e.SourceKind, &e.MediaType, &e.ContentHash, &e.ModifiedAt, &e.PageCount, &token, &revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return e, search.ErrNotFound
+	}
+	if err != nil {
+		return e, err
+	}
+	e.OriginalIdentity = originals.Identity(token, revision, e.ContentHash, e.SourceID, e.ID)
+	if expected == "" || expected != e.OriginalIdentity {
+		return e, originals.ErrSnapshotChanged
+	}
+	if e.PageCount > 0 || e.MediaType == "application/pdf" {
+		return e, search.ErrPage
+	}
+	var totalChars, bodyBytes int
+	if err = tx.QueryRowContext(ctx, "SELECT length(content),length(CAST(content AS BLOB)) FROM documents WHERE id=?", id).Scan(&totalChars, &bodyBytes); err != nil {
+		return e, err
+	}
+	e.TextTotalChars = totalChars
+	e.MatchKind = "window"
+	var body string
+	loadedFull := false
+	if query != "" {
+		expr, x := search.Expression(query)
+		if x != nil {
+			return e, x
+		}
+		bodyHit, hitErr := literalBodyHit(ctx, tx, id, query)
+		if hitErr != nil {
+			return e, hitErr
+		}
+		if bodyBytes > 1<<20 {
+			var found, titleHit int
+			x = tx.QueryRowContext(ctx, `SELECT 1 FROM documents_fts WHERE documents_fts MATCH ? AND rowid=(SELECT rowid FROM documents WHERE id=?)`, expr, id).Scan(&found)
+			if x != nil {
+				return e, search.ErrQuery
+			}
+			if bodyHit {
+				e.MatchKind = "anchor_unavailable"
+			} else {
+				x = tx.QueryRowContext(ctx, `SELECT 1 FROM documents_fts WHERE documents_fts MATCH ? AND rowid=(SELECT rowid FROM documents WHERE id=?)`, "title : ("+expr+")", id).Scan(&titleHit)
+				if x == nil {
+					e.MatchKind = "title_only"
+				} else {
+					e.MatchKind = "anchor_unavailable"
+				}
+			}
+		} else {
+			if err = tx.QueryRowContext(ctx, "SELECT content FROM documents WHERE id=?", id).Scan(&body); err != nil {
+				return e, err
+			}
+			loadedFull = true
+			if !utf8.ValidString(body) {
+				return e, errors.New("indexed text is invalid UTF-8")
+			}
+			open, close, markerErr := passageMarkers(ctx, body, e.Title)
+			if markerErr != nil {
+				return e, markerErr
+			}
+			var marked string
+			x = tx.QueryRowContext(ctx, `SELECT highlight(documents_fts,1,?,?) FROM documents_fts JOIN documents d ON d.rowid=documents_fts.rowid WHERE documents_fts MATCH ? AND d.id=?`, open, close, expr, id).Scan(&marked)
+			if x == nil {
+				plain := strings.ReplaceAll(strings.ReplaceAll(marked, open, ""), close, "")
+				if plain == body {
+					at := strings.Index(marked, open)
+					if at >= 0 {
+						prefix := strings.ReplaceAll(strings.ReplaceAll(marked[:at], open, ""), close, "")
+						start = utf8.RuneCountInString(prefix)
+						e.MatchKind = "literal_body"
+					}
+				}
+			}
+			if e.MatchKind != "literal_body" {
+				var found, titleHit int
+				x = tx.QueryRowContext(ctx, `SELECT 1 FROM documents_fts WHERE documents_fts MATCH ? AND rowid=(SELECT rowid FROM documents WHERE id=?)`, expr, id).Scan(&found)
+				if x != nil {
+					return e, search.ErrQuery
+				}
+				if bodyHit {
+					e.MatchKind = "anchor_unavailable"
+				} else {
+					x = tx.QueryRowContext(ctx, `SELECT 1 FROM documents_fts WHERE documents_fts MATCH ? AND rowid=(SELECT rowid FROM documents WHERE id=?)`, "title : ("+expr+")", id).Scan(&titleHit)
+					if x == nil {
+						e.MatchKind = "title_only"
+					} else {
+						e.MatchKind = "anchor_unavailable"
+					}
+				}
+			}
+		}
+	}
+	windowStart, localStart := start, start
+	if !loadedFull {
+		if start > totalChars {
+			return e, search.ErrPage
+		}
+		localStart = 0
+		if err = tx.QueryRowContext(ctx, "SELECT substr(content,?,65536) FROM documents WHERE id=?", start+1, id).Scan(&body); err != nil {
+			return e, err
+		}
+	}
+	if !utf8.ValidString(body) {
+		return e, errors.New("indexed text is invalid UTF-8")
+	}
+	runes := []rune(body)
+	if start > totalChars {
+		return e, search.ErrPage
+	}
+	const maxRunes = 65536
+	const maxBytes = 256 << 10
+	if localStart > len(runes) {
+		return e, search.ErrPage
+	}
+	end := localStart
+	size := 0
+	for end < len(runes) && end-localStart < maxRunes {
+		n := utf8.RuneLen(runes[end])
+		if size+n > maxBytes {
+			break
+		}
+		size += n
+		end++
+	}
+	e.Text = string(runes[localStart:end])
+	e.TextStartChar = windowStart
+	e.Truncated = windowStart > 0 || windowStart+(end-localStart) < totalChars
+	return e, nil
+}
+
+// Fixed-size, collision-checked markers keep both collision work and highlight
+// expansion bounded, including for hostile marker-like indexed text.
+func passageMarkers(ctx context.Context, body, title string) (string, string, error) {
+	for attempt := 0; attempt < 8; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
+		var nonce [8]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return "", "", err
+		}
+		key := hex.EncodeToString(nonce[:])
+		open, close := "\x01"+key+"\x02", "\x03"+key+"\x04"
+		if !strings.Contains(body, open) && !strings.Contains(body, close) && !strings.Contains(title, open) && !strings.Contains(title, close) {
+			return open, close, nil
+		}
+	}
+	return "", "", errors.New("passage markers unavailable")
+}
+
+func literalBodyHit(ctx context.Context, tx *sql.Tx, id, query string) (bool, error) {
+	terms := strings.FieldsFunc(query, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsNumber(r) })
+	for _, term := range terms {
+		expr, err := search.Expression(term)
+		if err != nil {
+			return false, err
+		}
+		var found int
+		err = tx.QueryRowContext(ctx, `SELECT 1 FROM documents_fts WHERE documents_fts MATCH ? AND rowid=(SELECT rowid FROM documents WHERE id=?)`, "content : ("+expr+")", id).Scan(&found)
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return false, err
+		}
+	}
+	return false, nil
 }
 
 func (s *Store) evidence(ctx context.Context, sourceID, id string, page int) (search.Evidence, error) {

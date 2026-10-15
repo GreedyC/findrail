@@ -122,7 +122,7 @@ and its compatibility text representation. Evidence reports `truncated` and
 
 The result is an indexed snapshot, not a fresh read of the original file.
 Findrail does not claim that the snapshot is current when the original changes.
-The server opens an existing supported current index read-only (schema 7 in this
+The server opens an existing supported current index read-only (schema 8 in this
 source candidate) and does not migrate, create, or modify it. MCP and
 `mcp-config` both use the ordinary current-schema read-only profile. The special
 legacy schema-5 profile belongs to the source-report command, not MCP; it does

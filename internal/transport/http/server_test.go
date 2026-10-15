@@ -426,6 +426,27 @@ func TestNativeOriginalRequiresTokenAndResolvesRegisteredDocument(t *testing.T) 
 	if resp.StatusCode != 200 || session.Token == "" {
 		t.Fatalf("session status %d", resp.StatusCode)
 	}
+	passageURL := base + "/api/v1/documents/" + found.Results[0].ID + "/passage?q=original&mode=literal&original_identity=" + url.QueryEscape(found.Results[0].OriginalIdentity)
+	passageResponse, err := client.Get(passageURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var passage search.Evidence
+	if err = json.NewDecoder(passageResponse.Body).Decode(&passage); err != nil {
+		t.Fatal(err)
+	}
+	passageResponse.Body.Close()
+	if passageResponse.StatusCode != 200 || passage.MatchKind != "literal_body" || !strings.Contains(passage.Text, "original") {
+		t.Fatalf("passage status=%d evidence=%+v", passageResponse.StatusCode, passage)
+	}
+	badResponse, err := client.Get(base + "/api/v1/documents/" + found.Results[0].ID + "/passage?start_char=0&start_char=1&original_identity=" + url.QueryEscape(found.Results[0].OriginalIdentity))
+	if err != nil {
+		t.Fatal(err)
+	}
+	badResponse.Body.Close()
+	if badResponse.StatusCode != 400 {
+		t.Fatalf("duplicate offset status=%d", badResponse.StatusCode)
+	}
 	for _, path := range []string{"/api/v1/search?q=original", "/api/v1/documents/" + found.Results[0].ID} {
 		get, e := client.Get(base + path)
 		if e != nil {

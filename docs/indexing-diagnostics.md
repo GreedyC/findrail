@@ -1,7 +1,7 @@
 # Indexing diagnostics (source builds)
 
 Schema 6 introduced storage for only the most recent successful, committed source
-report; schema 7 retains that contract. The report is written in the same SQLite
+report; schema 8 retains that contract. The report is written in the same SQLite
 transaction as the source inventory, metadata and pruning. Failed scans do not
 replace it. An older schema-5 index has no report
 until a successful scan; migration does not rescan files. Failed-attempt and

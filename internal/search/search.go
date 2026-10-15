@@ -285,6 +285,9 @@ type Evidence struct {
 	PageCount        int    `json:"page_count,omitempty"`
 	Text             string `json:"text"`
 	Truncated        bool   `json:"truncated"`
+	TextStartChar    int    `json:"text_start_char"`
+	TextTotalChars   int    `json:"text_total_chars"`
+	MatchKind        string `json:"match_kind,omitempty"`
 }
 
 type Response struct {
