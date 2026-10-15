@@ -389,7 +389,11 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 		writeJSON(w, 200, evidence)
 	})
 	mux.HandleFunc("GET /api/v1/documents/{id}/passage", func(w http.ResponseWriter, r *http.Request) {
-		values := r.URL.Query()
+		values, parseErr := url.ParseQuery(r.URL.RawQuery)
+		if parseErr != nil {
+			writeError(w, 400, "invalid passage parameters")
+			return
+		}
 		for key, vals := range values {
 			if key != "q" && key != "start_char" && key != "mode" && key != "original_identity" || len(vals) != 1 {
 				writeError(w, 400, "invalid or repeated passage parameter")
@@ -404,7 +408,7 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 			writeError(w, 400, "identity and exactly one of q or start_char are required")
 			return
 		}
-		if q != "" && values.Get("mode") != "" && values.Get("mode") != "literal" {
+		if hasMode && values.Get("mode") != "literal" {
 			writeError(w, 400, "passage supports literal mode only")
 			return
 		}
@@ -444,7 +448,14 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 			}
 			return
 		}
-		writeJSON(w, 200, ev)
+		encoded, encodeErr := json.Marshal(ev)
+		if encodeErr != nil || len(encoded)+1 > 512<<10 {
+			writeError(w, 500, "passage exceeds response limit")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write(append(encoded, '\n'))
 	})
 	mux.HandleFunc("GET /api/v1/sync", func(w http.ResponseWriter, r *http.Request) {
 		statuses := []syncer.Status{}

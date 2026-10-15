@@ -189,6 +189,7 @@ paths:
     get:
       operationId: getDocumentPassage
       summary: Read a bounded window of indexed text using an identity-bound literal anchor or code-point offset
+      description: Requires exactly one of q or start_char. mode=literal is allowed only with q. Unknown, duplicate and malformed query parameters are rejected. PDF uses the existing page-based document endpoint. Windows contain at most 65536 Unicode code points and 256 KiB UTF-8; the full JSON response is at most 512 KiB. Bodies larger than 1 MiB report anchor_unavailable and support manual windows.
       parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
       - {name: original_identity, in: query, required: true, schema: {type: string}}
@@ -196,10 +197,15 @@ paths:
       - {name: start_char, in: query, schema: {type: integer, minimum: 0}}
       - {name: mode, in: query, schema: {type: string, enum: [literal]}}
       responses:
-        '200': {description: Indexed text passage with full-content hash, provenance, start/total code-point offsets and match kind}
+        '200':
+          description: Indexed text passage with full-content hash and canonical provenance
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PassageEvidence'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '404': {description: Indexed document not found}
         '409': {description: Snapshot identity changed}
+        '500': {description: Passage unavailable or response exceeds its bound}
   /api/v1/diagnostics:
     get:
       operationId: getDiagnostics
@@ -272,6 +278,7 @@ paths:
                       page: {type: integer, minimum: 0}
                       excerpt: {type: string, maxLength: 262144}
                       whole_preview: {type: boolean}
+                      text_start_char: {type: integer, minimum: 0, default: 0, description: Unicode code-point start of the visible text window; zero for PDF}
       responses:
         '200': {description: Updated collection and incremented revision}
         '409': {description: Stale revision or indexed identity; reload before retrying}
@@ -302,6 +309,7 @@ paths:
                 page: {type: integer, minimum: 0}
                 excerpt: {type: string, maxLength: 262144}
                 whole_preview: {type: boolean}
+                text_start_char: {type: integer, minimum: 0, default: 0, description: Unicode code-point start of the visible text window; zero for PDF}
       responses:
         '200': {description: Collection with immutable server-verified snapshot}
         '404': {description: Collection or indexed document not found}
@@ -855,6 +863,16 @@ components:
           maxLength: 65536
         truncated:
           type: boolean
+    PassageEvidence:
+      allOf:
+      - {$ref: '#/components/schemas/Evidence'}
+      - type: object
+        required: [original_identity, text_start_char, text_total_chars, match_kind]
+        properties:
+          text_start_char: {type: integer, minimum: 0}
+          text_total_chars: {type: integer, minimum: 0}
+          match_kind: {type: string, enum: [literal_body, title_only, window, anchor_unavailable]}
+          truncated: {type: boolean, description: True whenever the window omits any part of the indexed body, including a missing prefix}
     SyncStatus:
       type: object
       required:

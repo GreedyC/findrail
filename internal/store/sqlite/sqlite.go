@@ -1518,10 +1518,9 @@ func (s *Store) Passage(ctx context.Context, id, query, expected string, start i
 			if !utf8.ValidString(body) {
 				return e, errors.New("indexed text is invalid UTF-8")
 			}
-			open, close := "\x01findrail-open\x02", "\x01findrail-close\x02"
-			for strings.Contains(body, open) || strings.Contains(body, close) || strings.Contains(e.Title, open) || strings.Contains(e.Title, close) {
-				open += "x"
-				close += "x"
+			open, close, markerErr := passageMarkers(ctx, body, e.Title)
+			if markerErr != nil {
+				return e, markerErr
 			}
 			var marked string
 			x = tx.QueryRowContext(ctx, `SELECT highlight(documents_fts,1,?,?) FROM documents_fts JOIN documents d ON d.rowid=documents_fts.rowid WHERE documents_fts MATCH ? AND d.id=?`, open, close, expr, id).Scan(&marked)
@@ -1589,8 +1588,28 @@ func (s *Store) Passage(ctx context.Context, id, query, expected string, start i
 	}
 	e.Text = string(runes[localStart:end])
 	e.TextStartChar = windowStart
-	e.Truncated = windowStart+(end-localStart) < totalChars
+	e.Truncated = windowStart > 0 || windowStart+(end-localStart) < totalChars
 	return e, nil
+}
+
+// Fixed-size, collision-checked markers keep both collision work and highlight
+// expansion bounded, including for hostile marker-like indexed text.
+func passageMarkers(ctx context.Context, body, title string) (string, string, error) {
+	for attempt := 0; attempt < 8; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
+		var nonce [8]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return "", "", err
+		}
+		key := hex.EncodeToString(nonce[:])
+		open, close := "\x01"+key+"\x02", "\x03"+key+"\x04"
+		if !strings.Contains(body, open) && !strings.Contains(body, close) && !strings.Contains(title, open) && !strings.Contains(title, close) {
+			return open, close, nil
+		}
+	}
+	return "", "", errors.New("passage markers unavailable")
 }
 
 func literalBodyHit(ctx context.Context, tx *sql.Tx, id, query string) (bool, error) {

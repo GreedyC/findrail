@@ -606,7 +606,7 @@ func evidenceInWriteTxAt(ctx context.Context, tx *sql.Tx, id string, page int, s
 			v.Text = string(rs[:end])
 			v.TextStartChar = start
 			v.TextTotalChars = total
-			v.Truncated = start+end < total
+			v.Truncated = start > 0 || start+end < total
 		}
 	}
 	return v, e
