@@ -167,6 +167,7 @@ def main():
             WebDriverWait(browser, 20).until(lambda d: d.find_element(By.ID, "collection-list").text.count("unchanged at last check") == 2)
             browser.execute_script("const original=URL.createObjectURL;URL.createObjectURL=function(blob){window.__passageDownload=blob.text();return original.call(this,blob)}")
             browser.find_element(By.ID, "collection-download").click()
+            WebDriverWait(browser, 20).until(lambda d: d.execute_script("return !!window.__passageDownload"))
             markdown = browser.execute_async_script("const done=arguments[0];window.__passageDownload.then(done)")
             assert all(value in markdown for value in (text_quote, word_quote, "Late text note", "Late Word note", (notes / "late.md").as_uri(), (notes / "late.docx").as_uri()))
             (notes / "late.md").write_text("Replacement short text with a different snapshot.", encoding="utf-8")

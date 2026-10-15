@@ -95,8 +95,8 @@ export function compareCurrentSnapshot(saved, current) {
       !['id','source_id','title','uri','path','source_name','source_kind','media_type','content_hash','modified_at','text'].every(key=>typeof current[key]==='string') ||
       typeof current.truncated!=='boolean' || !Number.isInteger(current.page??0) || !Number.isInteger(current.page_count??0) ||
       (current.page??0)<0 || (current.page_count??0)<0) return 'unavailable';
-  if(current.id!==saved.id||current.source_id!==saved.source_id||(current.page??0)!==saved.page)return 'unavailable';
-  const same=['content_hash','title','uri','path','source_name','source_kind','media_type','modified_at'].every(key=>current[key]===saved[key]) && current.truncated===saved.truncated && (current.page_count??0)===saved.page_count;
+  if(current.id!==saved.id||current.source_id!==saved.source_id||(current.page??0)!==(saved.page??0))return 'unavailable';
+  const same=['content_hash','title','uri','path','source_name','source_kind','media_type','modified_at'].every(key=>current[key]===saved[key]) && current.truncated===saved.truncated && (current.page_count??0)===(saved.page_count??0);
   if((current.text_start_char??0)!==(saved.text_start_char??0))return 'changed/current version differs';
   return same?'unchanged at last check':'changed/current version differs';
 }
