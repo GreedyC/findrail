@@ -169,12 +169,13 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [management, desktop, open_originals, collection_persistence, client_api_version, search_modes, search_filters, pdf_title_only_evidence]
+                required: [management, desktop, open_originals, collection_persistence, diagnostics, client_api_version, search_modes, search_filters, pdf_title_only_evidence]
                 properties:
                   management: {type: boolean}
                   desktop: {type: boolean, description: Explicit desktop quit is available only in the desktop composition}
                   open_originals: {type: boolean}
                   collection_persistence: {type: boolean, description: "True only for writable start composition"}
+                  diagnostics: {type: boolean, description: "True when the opened backend exposes a bounded content-free support report"}
                   client_api_version: {type: integer, const: 1}
                   search_modes:
                     type: array
@@ -183,6 +184,19 @@ paths:
                     type: array
                     items: {type: string, enum: [source, format, path_prefix, title_contains]}
                   pdf_title_only_evidence: {type: boolean, const: true}
+  /api/v1/diagnostics:
+    get:
+      operationId: getDiagnostics
+      summary: Read a bounded, content-free local support report
+      description: No paths, source/document identities, names, document text, queries, tokens, environment, arguments, logs, or raw database errors are included. The report is generated locally and is never uploaded.
+      responses:
+        '200':
+          description: Whitelisted support facts; JSON body is at most 16 KiB
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DiagnosticsReport'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/Unavailable'}
   /api/v1/collections:
     get:
       operationId: listEvidenceCollections
@@ -551,6 +565,28 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    DiagnosticsReport:
+      type: object
+      required: [report_version, version, go_version, goos, goarch, current_write_schema, checks, counts]
+      properties:
+        report_version: {type: integer, const: 1}
+        version: {type: string}
+        go_version: {type: string}
+        goos: {type: string}
+        goarch: {type: string}
+        index_schema: {type: integer, minimum: 0}
+        current_write_schema: {type: integer, minimum: 1}
+        checks:
+          type: array
+          maxItems: 16
+          items:
+            type: object
+            required: [id, status, code]
+            properties:
+              id: {type: string}
+              status: {type: string, enum: [ok, warning, error]}
+              code: {type: string}
+        counts: {type: object, additionalProperties: {type: integer, minimum: 0}, maxProperties: 32}
     Error:
       type: object
       required:

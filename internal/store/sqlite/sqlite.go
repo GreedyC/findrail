@@ -55,9 +55,102 @@ type Store struct {
 	schemaVersion int
 }
 
+func (s *Store) SchemaInfo() SchemaInfo {
+	if s == nil {
+		return SchemaInfo{CurrentWriteSchema: currentSchemaVersion}
+	}
+	return SchemaInfo{IndexSchema: s.schemaVersion, CurrentWriteSchema: currentSchemaVersion}
+}
+
 var ErrArchiveFrozen = errors.New("archive_snapshot_frozen: imported archive sources cannot be scanned or refreshed")
 
 const currentSchemaVersion = 7
+
+// SchemaInfo reports only SQLite metadata; inspection never reads application
+// tables and never creates, repairs, or migrates an index.
+type SchemaInfo struct {
+	IndexSchema        int `json:"index_schema"`
+	CurrentWriteSchema int `json:"current_write_schema"`
+}
+
+func CurrentWriteSchema() int { return currentSchemaVersion }
+
+type SchemaInspectionCode string
+
+const (
+	SchemaPathMissing  SchemaInspectionCode = "not_initialized"
+	SchemaNotDirectory SchemaInspectionCode = "data_directory_not_directory"
+	SchemaFileInvalid  SchemaInspectionCode = "index_unreadable"
+	SchemaBusy         SchemaInspectionCode = "index_busy"
+	SchemaCorrupt      SchemaInspectionCode = "index_unreadable"
+	SchemaCanceled     SchemaInspectionCode = "inspection_canceled"
+)
+
+type SchemaInspectionError struct {
+	Code SchemaInspectionCode
+}
+
+func (e *SchemaInspectionError) Error() string { return string(e.Code) }
+func (e *SchemaInspectionError) Is(target error) bool {
+	other, ok := target.(*SchemaInspectionError)
+	return ok && e.Code == other.Code
+}
+
+// InspectSchema reads only PRAGMA user_version through a read-only connection.
+// It is safe for unknown/future formats because it does not query their tables.
+func InspectSchema(ctx context.Context, dataDir string) (SchemaInfo, error) {
+	info := SchemaInfo{CurrentWriteSchema: currentSchemaVersion}
+	if err := ctx.Err(); err != nil {
+		return info, &SchemaInspectionError{Code: SchemaCanceled}
+	}
+	dataDir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return info, &SchemaInspectionError{Code: SchemaFileInvalid}
+	}
+	dir, err := os.Stat(dataDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return info, &SchemaInspectionError{Code: SchemaPathMissing}
+	}
+	if err != nil {
+		return info, &SchemaInspectionError{Code: SchemaFileInvalid}
+	}
+	if !dir.IsDir() {
+		return info, &SchemaInspectionError{Code: SchemaNotDirectory}
+	}
+	path := filepath.Join(dataDir, "findrail.db")
+	file, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return info, &SchemaInspectionError{Code: SchemaPathMissing}
+	}
+	if err != nil || !file.Mode().IsRegular() {
+		return info, &SchemaInspectionError{Code: SchemaFileInvalid}
+	}
+	u := sqliteFileURL(path)
+	q := u.Query()
+	q.Set("mode", "ro")
+	q.Add("_pragma", "busy_timeout(5000)")
+	u.RawQuery = q.Encode()
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return info, &SchemaInspectionError{Code: SchemaCorrupt}
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	var version int
+	err = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return info, &SchemaInspectionError{Code: SchemaCanceled}
+		}
+		lower := strings.ToLower(err.Error())
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || strings.Contains(lower, "busy") || strings.Contains(lower, "locked") {
+			return info, &SchemaInspectionError{Code: SchemaBusy}
+		}
+		return info, &SchemaInspectionError{Code: SchemaCorrupt}
+	}
+	info.IndexSchema = version
+	return info, nil
+}
 
 func Open(ctx context.Context, dataDir string) (*Store, error) {
 	dataDir, err := filepath.Abs(dataDir)
@@ -94,6 +187,7 @@ func Open(ctx context.Context, dataDir string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	s.schemaVersion = currentSchemaVersion
 	q.Add("_pragma", "query_only(1)")
 	u.RawQuery = q.Encode()
 	s.readers, err = sql.Open("sqlite", u.String())

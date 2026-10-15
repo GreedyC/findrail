@@ -13,7 +13,7 @@ import (
 	"github.com/Lephiziel/findrail/internal/desktop"
 )
 
-func runDesktop(ctx context.Context, args []string, out, stderr io.Writer, open func(string) error) error {
+func runDesktop(ctx context.Context, args []string, out, stderr io.Writer, open func(string) error, version ...string) error {
 	dataArg := ""
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--data-dir" && i+1 < len(args) {
@@ -54,5 +54,5 @@ func runDesktop(ctx context.Context, args []string, out, stderr io.Writer, open 
 	if err != nil {
 		return err
 	}
-	return runStartWithManagement(ctx, args, out, stderr, open, true, lock)
+	return runStartWithManagement(ctx, args, out, stderr, open, true, lock, version...)
 }
