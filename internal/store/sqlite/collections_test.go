@@ -27,7 +27,11 @@ func TestPersistentCollectionSnapshotRevisionAndDocumentRemoval(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer s.Close()
+	defer func() {
+		if s != nil {
+			_ = s.Close()
+		}
+	}()
 	conn, e := filesystem.New(root, 1<<20)
 	if e != nil {
 		t.Fatal(e)
@@ -105,6 +109,77 @@ func TestPersistentCollectionSnapshotRevisionAndDocumentRemoval(t *testing.T) {
 	}
 	if e = s.DeleteCollection(ctx, c.ID, after.Revision); e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestPassageAnchorsLateLiteralAndPinsCanonicalWindow(t *testing.T) {
+	ctx := context.Background()
+	data, root := t.TempDir(), t.TempDir()
+	content := strings.Repeat("padding ", 10000) + "needlelatebody tail"
+	if err := os.WriteFile(filepath.Join(root, "late.md"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if s != nil {
+			_ = s.Close()
+		}
+	}()
+	conn, err := filesystem.New(root, 2<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, s, conn); err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	if err = s.readers.QueryRowContext(ctx, "SELECT id FROM documents").Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	ev, err := s.Evidence(ctx, id, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	passage, err := s.Passage(ctx, id, "needlelatebody", ev.OriginalIdentity, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if passage.MatchKind != "literal_body" || passage.TextStartChar < 80000 || !strings.Contains(passage.Text, "needlelatebody") || passage.TextTotalChars != len([]rune(content)) {
+		t.Fatalf("passage=%+v", passage)
+	}
+	c, err := s.CreateCollection(ctx, "Late quote")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _,err=s.PinCollectionEntryAt(ctx,c.ID,c.Revision,id,0,"needlelatebody",false,ev.OriginalIdentity,0);err==nil{t.Fatal("accepted an excerpt outside the canonical prefix window")}
+	unchanged,err:=s.LoadCollection(ctx,c.ID);if err!=nil||unchanged.Revision!=c.Revision||len(unchanged.Entries)!=0{t.Fatalf("partial failed pin: %+v err=%v",unchanged,err)}
+	saved, err := s.PinCollectionEntryAt(ctx, c.ID, c.Revision, id, 0, "needlelatebody", false, ev.OriginalIdentity, passage.TextStartChar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := saved.Entries[0]; got.Evidence.TextStartChar != passage.TextStartChar || !strings.Contains(got.Evidence.Text, "needlelatebody") {
+		t.Fatalf("saved=%+v", got)
+	}
+	var column int
+	if err = s.readers.QueryRowContext(ctx, "SELECT preview_start_char FROM evidence_collection_entries WHERE collection_id=?", c.ID).Scan(&column); err != nil || column != passage.TextStartChar {
+		t.Fatalf("column=%d err=%v", column, err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := s.LoadCollection(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Entries[0].Evidence.TextStartChar != passage.TextStartChar || restored.Entries[0].Excerpt != "needlelatebody" {
+		t.Fatalf("restored=%+v", restored.Entries[0])
 	}
 }
 
@@ -350,7 +425,7 @@ func TestSchemaSixMigrationAndRollback(t *testing.T) {
 		t.Fatal(e)
 	}
 	var version int
-	if e = s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); e != nil || version != 7 {
+	if e = s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); e != nil || version != 8 {
 		t.Fatalf("version=%d err=%v", version, e)
 	}
 	if sources, err := s.Sources(ctx); err != nil || len(sources) != 1 || sources[0].Documents != 1 {

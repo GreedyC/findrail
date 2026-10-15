@@ -1,6 +1,13 @@
 # Data model
 
-## Implemented schema 7
+## Implemented schema 8
+
+Migration 008 adds `preview_start_char` to evidence collection entries, defaulting
+legacy citations to the prefix (0). Stored citation JSON and the column retain
+the same window start. Passage windows contain no more than 65,536 Unicode code
+points or 256 KiB UTF-8; automatic FTS anchoring reads at most 1 MiB of indexed
+text. A larger body reports an unavailable automatic anchor rather than claiming
+that no match exists.
 
 | Entity | Identity | Stored fields |
 |---|---|---|
@@ -38,6 +45,9 @@ Migration 7 adds persistent named collections. Collection writes are bounded to
 4 MiB. Entry rows cascade on source/document deletion and retain historical snapshots across
 same-ID content refresh; revision checks prevent stale tab writes. Source snapshot
 v1 remains source-only and does not export collection data.
+Migration 8 adds the nonnegative `preview_start_char` column; existing entries
+start at zero. Window-aware citations preserve their indexed offset while keeping
+the full document content hash and URI provenance unchanged.
 See [upgrade instructions](local-alpha.md#upgrade).
 
 ## Future entities

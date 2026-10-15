@@ -169,7 +169,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [management, desktop, open_originals, collection_persistence, diagnostics, client_api_version, search_modes, search_filters, pdf_title_only_evidence]
+                required: [management, desktop, open_originals, collection_persistence, diagnostics, client_api_version, search_modes, search_filters, pdf_title_only_evidence, passage_preview]
                 properties:
                   management: {type: boolean}
                   desktop: {type: boolean, description: Explicit desktop quit is available only in the desktop composition}
@@ -184,6 +184,22 @@ paths:
                     type: array
                     items: {type: string, enum: [source, format, path_prefix, title_contains]}
                   pdf_title_only_evidence: {type: boolean, const: true}
+                  passage_preview: {type: boolean, description: True when indexed text windows are supported}
+  /api/v1/documents/{id}/passage:
+    get:
+      operationId: getDocumentPassage
+      summary: Read a bounded window of indexed text using an identity-bound literal anchor or code-point offset
+      parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: original_identity, in: query, required: true, schema: {type: string}}
+      - {name: q, in: query, schema: {type: string, maxLength: 256}}
+      - {name: start_char, in: query, schema: {type: integer, minimum: 0}}
+      - {name: mode, in: query, schema: {type: string, enum: [literal]}}
+      responses:
+        '200': {description: Indexed text passage with full-content hash, provenance, start/total code-point offsets and match kind}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {description: Indexed document not found}
+        '409': {description: Snapshot identity changed}
   /api/v1/diagnostics:
     get:
       operationId: getDiagnostics

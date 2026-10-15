@@ -47,7 +47,7 @@ export class EvidenceCollection {
     if (!passage.trim() || !text.includes(passage)) throw new TypeError('Choose a non-empty exact passage from the visible preview.');
     if (bytes(text) > LIMITS.preview) throw new RangeError('Preview exceeds the 256 KiB per-entry limit.');
     formatCitation({...evidence,text,truncated:evidence.truncated===true,page:evidence.page??0},{excerpt:passage});
-    const snapshot = { id:evidence.id, source_id:evidence.source_id, source_name:evidence.source_name, source_kind:evidence.source_kind, title:evidence.title, path:evidence.path, uri:evidence.uri, media_type:evidence.media_type, content_hash:evidence.content_hash, modified_at:evidence.modified_at, page:evidence.page ?? 0, page_count:evidence.page_count ?? 0, text, truncated:evidence.truncated === true, excerpt:passage, whole_preview:options.wholePreview===true, note:'', collected_at:new Date().toISOString(), status:'not checked' };
+    const snapshot = { id:evidence.id, source_id:evidence.source_id, source_name:evidence.source_name, source_kind:evidence.source_kind, title:evidence.title, path:evidence.path, uri:evidence.uri, media_type:evidence.media_type, content_hash:evidence.content_hash, modified_at:evidence.modified_at, page:evidence.page ?? 0, page_count:evidence.page_count ?? 0, text_start_char:evidence.text_start_char ?? 0, text_total_chars:evidence.text_total_chars ?? 0, text, truncated:evidence.truncated === true, excerpt:passage, whole_preview:options.wholePreview===true, note:'', collected_at:new Date().toISOString(), status:'not checked' };
     snapshot.original_identity=evidence.original_identity || "";
     snapshot.key=crypto.randomUUID();
     const metadata={...snapshot,text:'',excerpt:'',note:''};
@@ -97,5 +97,6 @@ export function compareCurrentSnapshot(saved, current) {
       (current.page??0)<0 || (current.page_count??0)<0) return 'unavailable';
   if(current.id!==saved.id||current.source_id!==saved.source_id||(current.page??0)!==saved.page)return 'unavailable';
   const same=['content_hash','title','uri','path','source_name','source_kind','media_type','modified_at'].every(key=>current[key]===saved[key]) && current.truncated===saved.truncated && (current.page_count??0)===saved.page_count;
+  if((current.text_start_char??0)!==(saved.text_start_char??0))return 'changed/current version differs';
   return same?'unchanged at last check':'changed/current version differs';
 }

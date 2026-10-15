@@ -45,6 +45,7 @@ type CollectionEdit struct {
 	Excerpt          string `json:"excerpt"`
 	WholePreview     bool   `json:"whole_preview"`
 	OriginalIdentity string `json:"original_identity"`
+	TextStartChar    int    `json:"text_start_char,omitempty"`
 }
 type Collection struct {
 	ID         string            `json:"id"`
@@ -177,6 +178,10 @@ func (s *Store) CreateCollection(ctx context.Context, title string) (Collection,
 
 // PinCollectionEntry accepts only a document ID, page and selected passage. All provenance is read from the indexed database inside the same writer transaction.
 func (s *Store) PinCollectionEntry(ctx context.Context, id string, rev int64, docID string, page int, excerpt string, whole bool, expected string) (Collection, error) {
+	return s.PinCollectionEntryAt(ctx, id, rev, docID, page, excerpt, whole, expected, 0)
+}
+
+func (s *Store) PinCollectionEntryAt(ctx context.Context, id string, rev int64, docID string, page int, excerpt string, whole bool, expected string, start int) (Collection, error) {
 	var out Collection
 	if s.db == nil {
 		return out, errors.New("index is read-only")
@@ -199,7 +204,7 @@ func (s *Store) PinCollectionEntry(ctx context.Context, id string, rev int64, do
 	if current != rev {
 		return out, ErrCollectionConflict
 	}
-	v, e := evidenceInWriteTx(ctx, tx, docID, page)
+	v, e := evidenceInWriteTxAt(ctx, tx, docID, page, start)
 	if e != nil {
 		return out, e
 	}
@@ -283,7 +288,7 @@ func (s *Store) PinCollectionEntry(ctx context.Context, id string, rev int64, do
 	if _, e = tx.ExecContext(ctx, "UPDATE evidence_collections SET revision=revision+1,updated_at=? WHERE id=? AND revision=?", now, id, rev); e != nil {
 		return out, e
 	}
-	if _, e = tx.ExecContext(ctx, "INSERT INTO evidence_collection_entries VALUES(?,?,?,?,?,?)", id, key, n, v.SourceID, v.ID, string(raw)); e != nil {
+	if _, e = tx.ExecContext(ctx, "INSERT INTO evidence_collection_entries(collection_id,entry_id,ordinal,source_id,document_id,snapshot_json,preview_start_char) VALUES(?,?,?,?,?,?,?)", id, key, n, v.SourceID, v.ID, string(raw), start); e != nil {
 		return out, e
 	}
 	if e = tx.Commit(); e != nil {
@@ -386,7 +391,7 @@ func (s *Store) UpdateCollection(ctx context.Context, id string, rev int64, titl
 		return out, e
 	}
 	for i, x := range entries {
-		if _, e = tx.ExecContext(ctx, "INSERT INTO evidence_collection_entries VALUES(?,?,?,?,?,?)", id, x.Key, i, x.Evidence.SourceID, x.Evidence.ID, raws[i]); e != nil {
+		if _, e = tx.ExecContext(ctx, "INSERT INTO evidence_collection_entries(collection_id,entry_id,ordinal,source_id,document_id,snapshot_json,preview_start_char) VALUES(?,?,?,?,?,?,?)", id, x.Key, i, x.Evidence.SourceID, x.Evidence.ID, raws[i], x.Evidence.TextStartChar); e != nil {
 			return out, e
 		}
 	}
@@ -469,7 +474,7 @@ func (s *Store) SaveCollection(ctx context.Context, id string, rev int64, title 
 			if edit.DocumentID == "" || edit.Page < 0 || strings.TrimSpace(edit.Excerpt) == "" || len(edit.Excerpt) > 256<<10 || !utf8.ValidString(edit.Excerpt) {
 				return out, errors.New("invalid new evidence passage")
 			}
-			ev, err := evidenceInWriteTx(ctx, tx, edit.DocumentID, edit.Page)
+			ev, err := evidenceInWriteTxAt(ctx, tx, edit.DocumentID, edit.Page, edit.TextStartChar)
 			if err != nil {
 				return out, err
 			}
@@ -534,7 +539,7 @@ func (s *Store) SaveCollection(ctx context.Context, id string, rev int64, title 
 		if err != nil {
 			return out, err
 		}
-		if _, e = tx.ExecContext(ctx, "INSERT INTO evidence_collection_entries VALUES(?,?,?,?,?,?)", id, x.Key, i, x.Evidence.SourceID, x.Evidence.ID, string(raw)); e != nil {
+		if _, e = tx.ExecContext(ctx, "INSERT INTO evidence_collection_entries(collection_id,entry_id,ordinal,source_id,document_id,snapshot_json,preview_start_char) VALUES(?,?,?,?,?,?,?)", id, x.Key, i, x.Evidence.SourceID, x.Evidence.ID, string(raw), x.Evidence.TextStartChar); e != nil {
 			return out, e
 		}
 	}
@@ -552,8 +557,11 @@ func (s *Store) SaveCollection(ctx context.Context, id string, rev int64, title 
 }
 
 func evidenceInWriteTx(ctx context.Context, tx *sql.Tx, id string, page int) (search.Evidence, error) {
+	return evidenceInWriteTxAt(ctx, tx, id, page, 0)
+}
+func evidenceInWriteTxAt(ctx context.Context, tx *sql.Tx, id string, page int, start int) (search.Evidence, error) {
 	var v search.Evidence
-	if page < 0 {
+	if page < 0 || start < 0 {
 		return v, search.ErrPage
 	}
 	var registration string
@@ -567,6 +575,9 @@ func evidenceInWriteTx(ctx context.Context, tx *sql.Tx, id string, page int) (se
 	}
 	v.OriginalIdentity = originals.Identity(registration, revision, v.ContentHash, v.SourceID, v.ID)
 	if v.PageCount > 0 {
+		if start != 0 {
+			return v, search.ErrPage
+		}
 		if page == 0 {
 			e = tx.QueryRowContext(ctx, "SELECT substr(content,1,65536),length(content)>65536 FROM documents WHERE id=?", id).Scan(&v.Text, &v.Truncated)
 		} else if page <= v.PageCount {
@@ -580,7 +591,23 @@ func evidenceInWriteTx(ctx context.Context, tx *sql.Tx, id string, page int) (se
 		if page != 0 {
 			return v, search.ErrPage
 		}
-		e = tx.QueryRowContext(ctx, "SELECT substr(content,1,65536),length(content)>65536 FROM documents WHERE id=?", id).Scan(&v.Text, &v.Truncated)
+		var window string
+		var total int
+		e = tx.QueryRowContext(ctx, "SELECT length(content),substr(content,?,65536) FROM documents WHERE id=?", start+1, id).Scan(&total, &window)
+		if e == nil {
+			if start > total {
+				return v, search.ErrPage
+			}
+			rs := []rune(window)
+			end := len(rs)
+			for end > 0 && len(string(rs[:end])) > 256<<10 {
+				end--
+			}
+			v.Text = string(rs[:end])
+			v.TextStartChar = start
+			v.TextTotalChars = total
+			v.Truncated = start+end < total
+		}
 	}
 	return v, e
 }

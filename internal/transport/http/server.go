@@ -67,6 +67,7 @@ type collectionBackend interface {
 	CreateCollection(context.Context, string) (sqlite.Collection, error)
 	LoadCollection(context.Context, string) (sqlite.Collection, error)
 	PinCollectionEntry(context.Context, string, int64, string, int, string, bool, string) (sqlite.Collection, error)
+	PinCollectionEntryAt(context.Context, string, int64, string, int, string, bool, string, int) (sqlite.Collection, error)
 	SaveCollection(context.Context, string, int64, string, []sqlite.CollectionEdit) (sqlite.Collection, error)
 	DeleteCollection(context.Context, string, int64) error
 }
@@ -111,6 +112,9 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 		config.management = nil
 	}
 	collections, hasCollections := backend.(collectionBackend)
+	_, hasPassage := backend.(interface {
+		Passage(context.Context, string, string, string, int) (search.Evidence, error)
+	})
 	diagnosticReader, hasDiagnostics := backend.(interface {
 		DiagnosticSummary(context.Context) (sqlite.DiagnosticSummary, error)
 		SchemaInfo() sqlite.SchemaInfo
@@ -193,12 +197,13 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 				Excerpt    string `json:"excerpt"`
 				Whole      bool   `json:"whole_preview"`
 				Identity   string `json:"original_identity"`
+				TextStart  int    `json:"text_start_char"`
 			}
 			if !mutationAllowed(w, r, config) || !decodeCollectionMutation(w, r, &b) {
 				return
 			}
 			s := collections
-			v, e := s.PinCollectionEntry(r.Context(), r.PathValue("id"), b.Revision, b.DocumentID, b.Page, b.Excerpt, b.Whole, b.Identity)
+			v, e := s.PinCollectionEntryAt(r.Context(), r.PathValue("id"), b.Revision, b.DocumentID, b.Page, b.Excerpt, b.Whole, b.Identity, b.TextStart)
 			if e != nil {
 				writeCollectionError(w, e)
 				return
@@ -383,6 +388,64 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 		}
 		writeJSON(w, 200, evidence)
 	})
+	mux.HandleFunc("GET /api/v1/documents/{id}/passage", func(w http.ResponseWriter, r *http.Request) {
+		values := r.URL.Query()
+		for key, vals := range values {
+			if key != "q" && key != "start_char" && key != "mode" && key != "original_identity" || len(vals) != 1 {
+				writeError(w, 400, "invalid or repeated passage parameter")
+				return
+			}
+		}
+		q, startRaw, identity := values.Get("q"), values.Get("start_char"), values.Get("original_identity")
+		_, hasQ := values["q"]
+		_, hasStart := values["start_char"]
+		_, hasMode := values["mode"]
+		if identity == "" || hasQ == hasStart || (hasQ && q == "") || (hasStart && hasMode) {
+			writeError(w, 400, "identity and exactly one of q or start_char are required")
+			return
+		}
+		if q != "" && values.Get("mode") != "" && values.Get("mode") != "literal" {
+			writeError(w, 400, "passage supports literal mode only")
+			return
+		}
+		start := 0
+		if hasStart {
+			for _, digit := range startRaw {
+				if digit < '0' || digit > '9' {
+					writeError(w, 400, "invalid start_char")
+					return
+				}
+			}
+			n, err := strconv.ParseInt(startRaw, 10, 32)
+			if err != nil || n < 0 {
+				writeError(w, 400, "invalid start_char")
+				return
+			}
+			start = int(n)
+		}
+		reader, ok := backend.(interface {
+			Passage(context.Context, string, string, string, int) (search.Evidence, error)
+		})
+		if !ok {
+			writeError(w, 404, "passage preview unavailable")
+			return
+		}
+		ev, err := reader.Passage(r.Context(), r.PathValue("id"), q, identity, start)
+		if err != nil {
+			switch {
+			case errors.Is(err, search.ErrNotFound):
+				writeError(w, 404, "indexed document not found")
+			case errors.Is(err, originals.ErrSnapshotChanged):
+				writeError(w, 409, "indexed snapshot changed")
+			case errors.Is(err, search.ErrPage), errors.Is(err, search.ErrQuery):
+				writeError(w, 400, "invalid passage request")
+			default:
+				writeError(w, 500, "passage unavailable")
+			}
+			return
+		}
+		writeJSON(w, 200, ev)
+	})
 	mux.HandleFunc("GET /api/v1/sync", func(w http.ResponseWriter, r *http.Request) {
 		statuses := []syncer.Status{}
 		if config.syncStatus != nil {
@@ -400,6 +463,7 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 			"search_modes":            []string{"literal", "advanced"},
 			"search_filters":          []string{"source", "format", "path_prefix", "title_contains"},
 			"pdf_title_only_evidence": true,
+			"passage_preview":         hasPassage,
 			"diagnostics":             hasDiagnostics,
 		})
 	})
