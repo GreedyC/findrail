@@ -12,16 +12,29 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 
 function harness(sourcePayload = [], capabilities = {management:true}) {
   const elements = new Map(), handlers = new Map(), timers = new Map();
+  const frames = [];
   let nextTimer = 0, requests = 0, pendingEvidence;
   const pendingSearches = [], searchURLs = [], pendingReports=[],reportURLs=[],documentURLs=[];
+  const descendants = root => (root.children || []).flatMap(child => [child, ...descendants(child)]);
+  const matches = (node, selector) => selector.startsWith('.') ? node.className?.split(' ').includes(selector.slice(1)) : node.tagName === selector.toUpperCase();
+  function makeNode(tag, id = '') {
+    return {id, tag, tagName:tag.toUpperCase(), value:'', textContent:'', hidden:false, disabled:false, open:false, isConnected:!!id, children:[], dataset:{}, className:'',
+      addEventListener(type,fn){handlers.set(`${id || tag}:${type}`,fn);if(type==='click')this.onclick=fn},
+      contains(node){return this===node||descendants(this).includes(node)},
+      closest(selector){for(let node=this;node;node=node.parentElement)if(matches(node,selector))return node;return null},
+      querySelectorAll(selector){return descendants(this).filter(node=>matches(node,selector))},
+      querySelector(selector){return this.querySelectorAll(selector)[0]||null},
+      focus(){if(this.isConnected&&!this.disabled)document.activeElement=this},
+      append(...nodes){this.children.push(...nodes);for(const node of nodes){node.parentElement=this;for(const child of [node,...descendants(node)])child.isConnected=this.isConnected}},
+      replaceChildren(...nodes){if(this.contains(document.activeElement))document.activeElement=document.body;for(const node of descendants(this))node.isConnected=false;this.children=[];this.value='';this.append(...nodes)},
+      remove(){for(const node of [this,...descendants(this)])node.isConnected=false},
+      setAttribute(name,value){this[name]=value},
+      showModal(){this.returnFocus=document.activeElement;this.open=true;this.focus()},
+      close(){this.open=false;this.returnFocus?.focus();handlers.get(`${id}:close`)?.()},
+    };
+  }
   function element(id) {
-    if (!elements.has(id)) elements.set(id, {
-      value: '', textContent: '', hidden: false, disabled: false, open: false,isConnected:true,
-      addEventListener(type, fn) { handlers.set(`${id}:${type}`, fn); },
-      children: [], replaceChildren(...nodes) { this.value='';for(const child of this.children)child.isConnected=false;this.children=nodes;for(const child of nodes)child.isConnected=this.isConnected; }, append(...nodes) { this.children.push(...nodes);for(const child of nodes)child.isConnected=this.isConnected; }, contains() { return false; },
-      showModal() { this.open = true; },
-      close() { this.open = false; handlers.get(`${id}:close`)?.(); },
-    });
+    if (!elements.has(id)) elements.set(id, makeNode(['preview','evidence-collection','diagnostics-dialog','configure-source','remove-confirm'].includes(id)?'dialog':'div', id));
     return elements.get(id);
   }
   const schedule = (fn, delay) => { const id = ++nextTimer; timers.set(id, {fn, delay}); return id; };
@@ -33,13 +46,13 @@ function harness(sourcePayload = [], capabilities = {management:true}) {
   const document = {
     hidden: false, getElementById: element,
     addEventListener(type, fn) { handlers.set(`document:${type}`, fn); },
-    createElement: tag => ({tag, textContent:'', children:[], dataset:{}, className:'', disabled:false,isConnected:false,
-      addEventListener(type,fn){handlers.set(`${tag}:${type}`,fn);if(type==='click')this.onclick=fn}, append(...nodes){this.children.push(...nodes);for(const child of nodes)child.isConnected=this.isConnected},
-      replaceChildren(...nodes){for(const child of this.children)child.isConnected=false;this.children=nodes;for(const child of nodes)child.isConnected=this.isConnected},remove(){this.isConnected=false},querySelector(selector){return this.children.flatMap(n=>[n,...(n.children||[])]).find(n=>selector==='.'+n.className&&n.className)||null},setAttribute(){}}),
+    createElement: tag => makeNode(tag),
     createTextNode: text => ({textContent: text}),
+    querySelectorAll: selector => [...elements.values()].filter(node=>matches(node,selector)),
   };
+  document.body=element('body');document.activeElement=document.body;
   const context = vm.createContext({window, document, AbortController, URLSearchParams,
-    Event,
+    Event, CustomEvent:class extends Event{constructor(type,{detail}){super(type);this.detail=detail}}, requestAnimationFrame: fn => frames.push(fn),
     setTimeout: schedule, clearTimeout: id => timers.delete(id),
     Option: function(text, value) { this.text = text; this.value = value; },
     async fetch(url) {
@@ -59,7 +72,7 @@ function harness(sourcePayload = [], capabilities = {management:true}) {
     },
   });
   vm.runInContext(script, context);
-  return {context, timers, element, document, handlers,
+  return {context, timers, element, document, handlers,runFrames(){while(frames.length)frames.shift()()},
     notify: (type, detail) => handlers.get(`window:${type}`)?.({detail}),
     get requests() { return requests; },
     resolveEvidence: (data,status) => pendingEvidence(data,status),
@@ -224,6 +237,50 @@ test('filter reset issues a new server request from a coherent form snapshot', a
 });
 
 const lateEvidence={id:'doc-a',source_id:'source-a',source_name:'Synthetic',source_kind:'filesystem',title:'Late note',path:'late.md',uri:'file:///synthetic/late.md',media_type:'text/plain',content_hash:'same-hash',original_identity:'snapshot-a',modified_at:'2026-10-15T00:00:00Z',page:0,page_count:0,text:'needle tail',text_start_char:80000,text_total_chars:80011,truncated:true,match_kind:'literal_body'};
+
+async function focusedResultHarness() {
+  const sources=[{id:'source-a',name:'Synthetic',documents:2,last_indexed_at:'2026-10-15T00:00:00Z'}];
+  const h=harness(sources,{passage_preview:true});await flush();
+  h.element('query').value='needle';h.element('mode').value='literal';h.element('format').value='all';
+  h.handlers.get('search-form:submit')({preventDefault(){}});await flush();
+  const first={...lateEvidence,snippet:'needle first'},second={...lateEvidence,id:'doc-b',title:'Another note',snippet:'needle second'};
+  h.resolveSearch(0,{total:2,results:[first,second]});await flush();
+  const find=id=>h.element('results').querySelectorAll('.result-preview').find(button=>button.dataset.documentId===id);
+  find(first.id).focus();
+  const refresh=async()=>{sources[0].last_indexed_at='2026-10-15T00:01:00Z';h.notify('sources-changed');await flush()};
+  return {h,find,first,second,refresh};
+}
+
+test('automatic result refresh keeps focus during the request and follows document identity after reordering',async()=>{
+  const {h,find,first,second,refresh}=await focusedResultHarness(),old=find(first.id);
+  await refresh();assert.equal(h.document.activeElement,old,'a pending refresh must retain the live focused control');
+  h.resolveSearch(1,{total:2,results:[second,first]});await flush();
+  assert.notEqual(find(first.id),old);assert.equal(h.document.activeElement,find(first.id));
+});
+
+test('automatic refresh falls back to Search for a removed result without focusing its replacement',async()=>{
+  const {h,first,second,refresh}=await focusedResultHarness();await refresh();
+  h.resolveSearch(1,{total:1,results:[second]});await flush();
+  assert.equal(h.document.activeElement,h.element('query'));
+  assert.equal(h.element('results').querySelectorAll('.result-preview').some(button=>button.dataset.documentId===first.id),false);
+});
+
+test('a delayed automatic search does not take focus back from query editing',async()=>{
+  const {h,first,second,refresh}=await focusedResultHarness();await refresh();h.element('query').focus();
+  h.resolveSearch(1,{total:2,results:[second,first]});await flush();
+  assert.equal(h.document.activeElement,h.element('query'));
+});
+
+test('Preview close resolves its return control in the animation frame and does not steal another dialog focus',async()=>{
+  const {h,find,first,second}=await focusedResultHarness();find(first.id).onclick();await flush();
+  h.resolveEvidence(lateEvidence);await flush();h.element('preview').close();
+  vm.runInContext("search({query:'needle',mode:'literal',source:'',format:'all',path_prefix:'',title_contains:''},true)",h.context);await flush();
+  h.resolveSearch(1,{total:2,results:[second,first]});await flush();h.runFrames();
+  assert.equal(h.document.activeElement,find(first.id));
+  find(first.id).onclick();await flush();h.resolveEvidence(lateEvidence);await flush();h.element('preview').close();
+  h.element('diagnostics-dialog').showModal();h.runFrames();
+  assert.equal(h.document.activeElement,h.element('diagnostics-dialog'));
+});
 
 test('late preview and manual navigation keep the result identity and code-point bounds',async()=>{
  const h=harness([{id:'source-a',name:'Synthetic',documents:1}],{passage_preview:true});await flush();

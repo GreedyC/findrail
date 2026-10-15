@@ -55,9 +55,12 @@ def main():
                     server.kill()
                     server.communicate(timeout=3)
 
-        def launch():
+        def launch(mode="start"):
             nonlocal browser, server
-            server = subprocess.Popen([str(binary), "start", "--data-dir", str(data), "--no-open", "--sync-interval", "1s", "--addr", f"127.0.0.1:{port}"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            args = [str(binary), mode, "--data-dir", str(data), "--addr", f"127.0.0.1:{port}"]
+            if mode == "start":
+                args += ["--no-open", "--sync-interval", "1s"]
+            server = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
             def ready(_):
                 if server.poll() is not None:
                     raise AssertionError("passage server exited: " + server.stderr.read())
@@ -69,7 +72,11 @@ def main():
             WebDriverWait(None, 20).until(ready)
             browser = webdriver.Chrome(service=Service(executable_path=driver) if driver else Service(), options=options)
             browser.get(url + "/")
-            WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "collection-save").get_attribute("hidden"))
+            if mode == "start":
+                WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "collection-save").get_attribute("hidden"))
+            else:
+                WebDriverWait(browser, 20).until(lambda d: d.find_element(By.ID, "management").get_property("hidden"))
+                assert browser.find_element(By.ID, "collection-save").get_property("hidden"), "read-only serve exposed collection writes"
 
         def wait_for_quote(quote):
             WebDriverWait(browser, 20).until(lambda d: quote in d.find_element(By.ID, "preview-body").text)
@@ -102,6 +109,28 @@ def main():
                     return active
                 active.send_keys(Keys.SHIFT, Keys.TAB)
             raise AssertionError("Shift+Tab order did not reach " + label)
+
+        def focused_result(document_id):
+            active = browser.switch_to.active_element
+            return active if "result-preview" in (active.get_attribute("class") or "") and active.get_attribute("data-document-id") == document_id else False
+
+        def verify_refresh_focus(document_id, quote):
+            old = browser.switch_to.active_element
+            assert focused_result(document_id), "Preview did not return to its still-present document"
+            (notes / "keyboard-refresh.md").write_text("Unrelated synthetic refresh fixture.", encoding="utf-8")
+            def replaced(_):
+                try:
+                    old.is_enabled()
+                    return False
+                except StaleElementReferenceException:
+                    return True
+            WebDriverWait(browser, 20).until(replaced)
+            refreshed = WebDriverWait(browser, 10).until(lambda d: focused_result(document_id))
+            refreshed.send_keys(Keys.ENTER)
+            wait_for_quote(quote)
+            browser.switch_to.active_element.send_keys(Keys.ESCAPE)
+            WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "preview").get_property("open"))
+            WebDriverWait(browser, 10).until(lambda d: focused_result(document_id))
 
         def verify_dialog_escapes():
             diagnostics = browser.find_element(By.ID, "diagnostics-open")
@@ -152,9 +181,10 @@ def main():
                 browser.switch_to.active_element.send_keys(Keys.ENTER)
                 WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "submit").get_property("disabled"))
                 button = tab_until(lambda element: "result-preview" in (element.get_attribute("class") or ""), "result Preview")
+                document_id = button.get_attribute("data-document-id")
                 button.send_keys(Keys.ENTER)
                 wait_for_quote(query)
-                return
+                return document_id
             browser.find_element(By.ID, "submit").click()
             def click_matching(d):
                 try:
@@ -193,7 +223,7 @@ def main():
             title.send_keys("Late windows")
             browser.find_element(By.ID, "collection-close").click()
             for count, (query, quote) in enumerate((("needletextlate", text_quote), ("needledocxlate", word_quote)), 1):
-                open_result(query, keyboard=count == 1)
+                opened_id = open_result(query, keyboard=count == 1)
                 wait_for_quote(quote)
                 notice = browser.find_element(By.ID, "preview-notice").text
                 assert "indexed characters 80000" in notice, notice
@@ -217,14 +247,11 @@ def main():
                 if count == 1:
                     browser.switch_to.active_element.send_keys(Keys.ESCAPE)
                     WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "preview").get_property("open"))
-                    returned = WebDriverWait(browser, 5).until(lambda d: d.switch_to.active_element if (d.switch_to.active_element.get_attribute("id") == "query" or "result-preview" in (d.switch_to.active_element.get_attribute("class") or "")) else False)
-                    if "result-preview" in (returned.get_attribute("class") or ""):
-                        assert returned.get_attribute("data-document-id"), "focus returned to a result without identity"
-                        # From the restored result, use the documented shortcut.
-                        returned.send_keys("/")
-                        assert browser.switch_to.active_element.get_attribute("id") == "query"
-                    else:
-                        assert returned.get_attribute("id") == "query", "focus did not return to the result or Search fallback"
+                    WebDriverWait(browser, 5).until(lambda d: focused_result(opened_id))
+                    verify_refresh_focus(opened_id, quote)
+                    # From the same document after refresh, use the shortcut.
+                    browser.switch_to.active_element.send_keys("/")
+                    assert browser.switch_to.active_element.get_attribute("id") == "query"
                     # Native reverse tab order opens the evidence collection.
                     collection_button = shift_tab_until(lambda element: element.get_attribute("id") == "collection-open", "Evidence collection")
                     collection_button.send_keys(Keys.ENTER)
@@ -300,7 +327,21 @@ def main():
             browser.find_element(By.ID, "collection-check").click()
             WebDriverWait(browser, 20).until(lambda d: "changed/current version differs" in d.find_element(By.ID, "collection-list").text)
             WebDriverWait(browser, 20).until(inspect_restored)
-            print("Passage browser journey passed: late text/DOCX, manual windows, exact selection, note/order, process restart, Markdown and changed short document.")
+            stop()
+            launch("serve")
+            opened_id = open_result("Replacement", keyboard=True)
+            browser.switch_to.active_element.send_keys(Keys.ESCAPE)
+            WebDriverWait(browser, 20).until(lambda d: not d.find_element(By.ID, "preview").get_property("open"))
+            WebDriverWait(browser, 5).until(lambda d: focused_result(opened_id))
+            browser.switch_to.active_element.send_keys("/")
+            field = browser.switch_to.active_element
+            assert field.get_attribute("id") == "query"
+            field.clear()
+            field.send_keys("absentkeyboardtoken", Keys.ENTER)
+            WebDriverWait(browser, 20).until(lambda d: "0 matching documents" in d.find_element(By.ID, "status").text)
+            assert browser.switch_to.active_element.get_attribute("id") == "query"
+            assert not browser.find_elements(By.CSS_SELECTOR, ".result-preview")
+            print("Passage browser journey passed: late text/DOCX, keyboard focus across refresh, read-only keyboard search, exact selection, note/order, restart, Markdown and changed short document.")
         finally:
             stop()
 

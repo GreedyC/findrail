@@ -8,6 +8,8 @@ Enter submits the search form; press Enter on a result's Preview button to open
 its indexed snapshot. Closing Preview restores focus to that result when it is
 still present, or to Search otherwise. Native dialogs provide their own focus
 order and Escape handling. The same shortcut summary is available in the UI.
+Automatic result refresh keeps the focused document selected across reordering;
+if it disappears, focus returns to Search. Refresh does not interrupt query editing.
 
 ## Automatic refresh
 
