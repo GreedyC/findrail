@@ -154,8 +154,13 @@ func TestPassageAnchorsLateLiteralAndPinsCanonicalWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _,err=s.PinCollectionEntryAt(ctx,c.ID,c.Revision,id,0,"needlelatebody",false,ev.OriginalIdentity,0);err==nil{t.Fatal("accepted an excerpt outside the canonical prefix window")}
-	unchanged,err:=s.LoadCollection(ctx,c.ID);if err!=nil||unchanged.Revision!=c.Revision||len(unchanged.Entries)!=0{t.Fatalf("partial failed pin: %+v err=%v",unchanged,err)}
+	if _, err = s.PinCollectionEntryAt(ctx, c.ID, c.Revision, id, 0, "needlelatebody", false, ev.OriginalIdentity, 0); err == nil {
+		t.Fatal("accepted an excerpt outside the canonical prefix window")
+	}
+	unchanged, err := s.LoadCollection(ctx, c.ID)
+	if err != nil || unchanged.Revision != c.Revision || len(unchanged.Entries) != 0 {
+		t.Fatalf("partial failed pin: %+v err=%v", unchanged, err)
+	}
 	saved, err := s.PinCollectionEntryAt(ctx, c.ID, c.Revision, id, 0, "needlelatebody", false, ev.OriginalIdentity, passage.TextStartChar)
 	if err != nil {
 		t.Fatal(err)
