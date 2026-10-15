@@ -37,6 +37,9 @@ var citationModule []byte
 //go:embed web/evidence_collection.mjs
 var evidenceCollectionModule []byte
 
+//go:embed web/keyboard_navigation.mjs
+var keyboardNavigationModule []byte
+
 type Backend interface {
 	search.Engine
 	Sources(context.Context) ([]sqlite.SourceStatus, error)
@@ -283,6 +286,10 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 	mux.HandleFunc("GET /assets/evidence_collection.mjs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Write(evidenceCollectionModule)
+	})
+	mux.HandleFunc("GET /assets/keyboard_navigation.mjs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Write(keyboardNavigationModule)
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

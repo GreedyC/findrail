@@ -1,5 +1,16 @@
 # Local alpha behaviour
 
+## Keyboard workflow
+
+Use Tab and Shift+Tab to move through the browser interface. Press `/` or
+`Ctrl+K` (`Cmd+K` on macOS) outside editable fields and dialogs to focus Search.
+Enter submits the search form; press Enter on a result's Preview button to open
+its indexed snapshot. Closing Preview restores focus to that result when it is
+still present, or to Search otherwise. Native dialogs provide their own focus
+order and Escape handling. The same shortcut summary is available in the UI.
+Automatic result refresh keeps the focused document selected across reordering;
+if it disappears, focus returns to Search. Refresh does not interrupt query editing.
+
 ## Automatic refresh
 
 `start` and `serve` start refresh workers for registered filesystem sources. It scans at
