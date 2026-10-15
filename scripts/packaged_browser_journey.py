@@ -168,9 +168,17 @@ def main():
             browser.find_element(By.ID, "add-evidence").click()
             browser.find_element(By.ID, "close-preview").click()
             browser.find_element(By.ID, "collection-open").click()
-            rows = browser.find_elements(By.CLASS_NAME, "collection-row")
-            assert len(rows) == 2
-            rows[0].find_element(By.TAG_NAME, "textarea").send_keys("note from packaged journey")
+            wait.until(lambda d: len(d.find_elements(By.CLASS_NAME, "collection-row")) == 2)
+            def add_note(_):
+                try:
+                    textarea = browser.find_element(By.CSS_SELECTOR, ".collection-row textarea")
+                    if textarea.get_attribute("value") == "note from packaged journey":
+                        return True
+                    textarea.send_keys("note from packaged journey")
+                    return textarea.get_attribute("value") == "note from packaged journey"
+                except StaleElementReferenceException:
+                    return False
+            wait.until(add_note)
             browser.find_element(By.ID, "collection-download").click()
             deadline = time.monotonic() + 10
             exported = base / "findrail-evidence.md"
