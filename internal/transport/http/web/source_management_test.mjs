@@ -258,3 +258,20 @@ test('changing query invalidates a delayed passage response',async()=>{
  assert.equal(h.element('add-evidence').disabled,true);
  assert.equal(vm.runInContext('currentEvidence',h.context),null);
 });
+
+test('collection current-evidence bridge keeps PDF pages and saved text windows',async()=>{
+ const h=harness([{id:'source-a',name:'Synthetic',documents:1}],{passage_preview:true});await flush();
+ h.context.window.findrailPreview('doc-a',2,'source-a','application/pdf');await flush();
+ assert.equal(h.documentURLs[0],'/api/v1/documents/doc-a?page=2');
+ h.resolveEvidence({...lateEvidence,media_type:'application/pdf',page:2,page_count:2,text:'PDF page two'});await flush();
+ assert.equal(h.element('page-label').textContent,'Page 2 / 2');
+ h.element('preview').close();
+ h.context.window.findrailPreview('doc-a',0,'source-a','text/plain',80000);await flush();
+ h.resolveEvidence({...lateEvidence,text:'prefix',text_start_char:0});await flush();
+ const manual=new URL(h.documentURLs.at(-1),'http://localhost');
+ assert.equal(manual.searchParams.get('start_char'),'80000');
+ assert.equal(manual.searchParams.get('original_identity'),'snapshot-a');
+ assert.equal(manual.searchParams.has('q'),false);
+ h.resolveEvidence(lateEvidence);await flush();
+ assert.equal(h.element('text-range').textContent,'80000–80011 / 80011');
+});

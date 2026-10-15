@@ -153,8 +153,16 @@ def main():
             browser.find_element(By.ID, "collection-open").click()
             Select(browser.find_element(By.ID, "collection-picker")).select_by_value(collection_id)
             WebDriverWait(browser, 20).until(lambda d: d.find_element(By.ID, "collection-count").text == "2")
-            restored = browser.find_elements(By.CSS_SELECTOR, ".collection-row")
-            assert [row.find_element(By.TAG_NAME, "pre").text for row in restored] == [word_quote, text_quote]
+            def inspect_restored(d):
+                try:
+                    rows = d.find_elements(By.CSS_SELECTOR, ".collection-row")
+                    for row in rows:
+                        if not row.find_element(By.TAG_NAME, "pre").is_displayed():
+                            row.find_element(By.TAG_NAME, "summary").click()
+                    return [row.find_element(By.TAG_NAME, "pre").text for row in rows] == [word_quote, text_quote]
+                except StaleElementReferenceException:
+                    return False
+            WebDriverWait(browser, 20).until(inspect_restored)
             browser.find_element(By.ID, "collection-check").click()
             WebDriverWait(browser, 20).until(lambda d: d.find_element(By.ID, "collection-list").text.count("unchanged at last check") == 2)
             browser.execute_script("const original=URL.createObjectURL;URL.createObjectURL=function(blob){window.__passageDownload=blob.text();return original.call(this,blob)}")
