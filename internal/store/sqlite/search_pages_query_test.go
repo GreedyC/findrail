@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -180,7 +181,8 @@ func TestSearchPageTxFiltersBoundsSnippetAndCancellation(t *testing.T) {
 }
 
 func TestSearchPageTxUsesPassedSnapshot(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	dir := t.TempDir()
 	store, err := Open(ctx, dir)
 	if err != nil {
@@ -188,30 +190,55 @@ func TestSearchPageTxUsesPassedSnapshot(t *testing.T) {
 	}
 	defer store.Close()
 	source := connector.Source{ID: "snapshot-page-source", Kind: "filesystem", Name: "Synthetic", Root: "/synthetic"}
-	scan, err := store.BeginScan(ctx, source)
-	if err != nil {
-		t.Fatal(err)
+	seed := func(updated bool) {
+		t.Helper()
+		pages := []connector.Page{{Number: 1, Text: "snapshotneedle old evidence"}}
+		if updated {
+			source.Name = "Changed source"
+			pages = []connector.Page{{Number: 1, Text: "unrelated replacement"}, {Number: 2, Text: "snapshotneedle new evidence"}}
+		}
+		scan, e := store.BeginScan(ctx, source)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer scan.Rollback()
+		body := pages[0].Text
+		if updated {
+			body += "\n" + pages[1].Text
+		}
+		doc := connector.Document{ID: "snapshot-doc", SourceID: source.ID, Title: "Snapshot", Path: "snapshot.pdf", URI: "file:///synthetic/snapshot.pdf", Content: body, Hash: fmt.Sprintf("%x", sha256.Sum256([]byte(body))), ModifiedAt: time.Unix(1, 0), MediaType: "application/pdf", Pages: pages}
+		if _, e = scan.Upsert(ctx, doc); e != nil {
+			t.Fatal(e)
+		}
+		if updated {
+			doc = connector.Document{ID: "snapshot-extra", SourceID: source.ID, Title: "Extra", Path: "extra.md", URI: "file:///synthetic/extra.md", Content: "snapshotneedle extra", Hash: "extra-hash", MediaType: "text/plain"}
+			if _, e = scan.Upsert(ctx, doc); e != nil {
+				t.Fatal(e)
+			}
+		}
+		if _, e = scan.Commit(ctx); e != nil {
+			t.Fatal(e)
+		}
 	}
-	text := "snapshotneedle"
-	if _, err = scan.Upsert(ctx, connector.Document{ID: "snapshot-doc", SourceID: source.ID, Title: "Snapshot", Path: "snapshot.md", URI: "file:///synthetic/snapshot", Content: text, Hash: "snapshot-v1", ModifiedAt: time.Now(), MediaType: "text/plain"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = scan.Commit(ctx); err != nil {
-		t.Fatal(err)
+	seed(false)
+	request := search.Request{Query: "snapshotneedle", Limit: 20}
+	old, err := store.Search(ctx, request)
+	if err != nil || old.Total != 1 || len(old.Results) != 1 || old.Results[0].Page != 1 {
+		t.Fatalf("old snapshot: %+v, %v", old, err)
 	}
 	tx, err := store.readers.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer tx.Rollback()
 	var before int
 	if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM documents").Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.db.ExecContext(ctx, `UPDATE documents SET content_hash='snapshot-v2' WHERE id='snapshot-doc'`); err != nil {
-		tx.Rollback()
-		t.Fatal(err)
-	}
-	page, err := searchPageTx(ctx, tx, search.Request{Query: "snapshotneedle", Limit: 20}, 0)
+	// Commit changed rows, source registration and PDF pages after the caller's
+	// read snapshot is established. A helper that uses a pooled reader must fail.
+	seed(true)
+	page, err := searchPageTx(ctx, tx, request, 0)
 	if err != nil {
 		tx.Rollback()
 		t.Fatal(err)
@@ -224,8 +251,17 @@ func TestSearchPageTxUsesPassedSnapshot(t *testing.T) {
 	if err = tx.Rollback(); err != nil {
 		t.Fatal(err)
 	}
-	if before != after || page.Total != 1 || len(page.Results) != 1 || page.Results[0].OriginalIdentity == "" {
+	if before != 1 || after != 1 || page.Total != 1 || len(page.Results) != 1 || !reflect.DeepEqual(page.Results[0].Result, old.Results[0]) {
 		t.Fatalf("snapshot changed inside tx: before=%d after=%d page=%+v", before, after, page)
+	}
+	current, err := store.Search(ctx, request)
+	if err != nil || current.Total != 2 || len(current.Results) != 2 {
+		t.Fatalf("writer did not commit independently: %+v, %v", current, err)
+	}
+	for _, result := range current.Results {
+		if result.ID == "snapshot-doc" && (result.Page != 2 || result.OriginalIdentity == old.Results[0].OriginalIdentity || result.SourceName != "Changed source") {
+			t.Fatalf("new snapshot not visible: %+v", result)
+		}
 	}
 }
 
@@ -247,7 +283,7 @@ func TestSearchPageTxBoundsWindowAndAdvancedPDFAttribution(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	pdfBody := "pdfalpha other page phrase here"
+	pdfBody := "pdfalpha other\nphrase here pdfomega"
 	if _, err = scan.Upsert(ctx, connector.Document{ID: "window-pdf", SourceID: source.ID, Title: "PDF title", Path: "資料/report.pdf", URI: "file:///synthetic/report.pdf", Content: pdfBody, Hash: "pdf-hash", ModifiedAt: time.Unix(2000, 0), MediaType: "application/pdf", Pages: []connector.Page{{Number: 1, Text: "pdfalpha other"}, {Number: 2, Text: "phrase here pdfomega"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -280,8 +316,23 @@ func TestSearchPageTxBoundsWindowAndAdvancedPDFAttribution(t *testing.T) {
 	if err = tx.Rollback(); err != nil {
 		t.Fatal(err)
 	}
-	for _, query := range []string{`"phrase here"`, `pdfalpha OR pdfomega`, `pdfalpha -absent`, `pdfome*`} {
-		r := search.Request{Query: query, Mode: "advanced", Limit: 20, Format: "pdf"}
+	for _, tc := range []struct {
+		query, mode string
+		total, page int
+	}{
+		{`"phrase here"`, "advanced", 1, 2},
+		{`pdfalpha OR pdfomega`, "advanced", 1, 1},
+		{`pdfomega OR pdfalpha`, "advanced", 1, 2},
+		{`pdfalpha -absent`, "advanced", 1, 1},
+		{`pdfalpha -pdfomega`, "advanced", 0, 0},
+		{`pdfome*`, "advanced", 1, 2},
+		{`"other phrase"`, "advanced", 0, 0},
+		{`"PDF title"`, "advanced", 1, 0},
+		{`PDF title`, "", 1, 0},
+		{`pdfomega`, "", 1, 2},
+	} {
+		query := tc.query
+		r := search.Request{Query: query, Mode: tc.mode, Limit: 20, Format: "pdf"}
 		tx, e := store.readers.BeginTx(ctx, nil)
 		if e != nil {
 			t.Fatal(e)
@@ -293,6 +344,9 @@ func TestSearchPageTxBoundsWindowAndAdvancedPDFAttribution(t *testing.T) {
 		}
 		if e = tx.Rollback(); e != nil {
 			t.Fatal(e)
+		}
+		if got.Total != tc.total || len(got.Results) != tc.total || (tc.total > 0 && got.Results[0].Page != tc.page) {
+			t.Fatalf("%q unexpected PDF evidence: %+v, want total %d page %d", query, got, tc.total, tc.page)
 		}
 		old, e := store.Search(ctx, r)
 		if e != nil {
