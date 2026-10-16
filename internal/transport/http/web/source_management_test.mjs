@@ -4,14 +4,22 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
-const script = [...html.matchAll(/<script type="module">([\s\S]*?)<\/script>/g)][0][1]
+const lifecycle = readFileSync(new URL('./search_ui.mjs', import.meta.url), 'utf8');
+const lifecycleOpen = lifecycle.indexOf('{\n', lifecycle.indexOf('export function initializeSearchUI(')) + 2;
+const script = lifecycle.slice(lifecycleOpen, lifecycle.lastIndexOf('\n}'))
+  .replace(/^if \(!document \|\| initializedDocuments\.has\(document\)\) return;\ninitializedDocuments\.add\(document\);\n/m, '')
   .replace(/^import .*;$/m, '');
+const previewModule = readFileSync(new URL('./preview_ui.mjs', import.meta.url), 'utf8');
+const previewFunctionStart = previewModule.indexOf('export function createPreviewLifecycle(');
+const previewFunctionEnd = previewModule.indexOf('\n}\n\nexport async function initializePreviewUI', previewFunctionStart) + 2;
+const previewScript = previewModule.slice(previewFunctionStart, previewFunctionEnd).replace(/^export /, '');
 const managementScript = [...html.matchAll(/<script type="module">([\s\S]*?)<\/script>/g)][1][1]
   .replace(/^import .*;$/m, '');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 function harness(sourcePayload = [], capabilities = {management:true}) {
-  const elements = new Map(), handlers = new Map(), timers = new Map();
+  const elements = new Map(), handlers = new Map(), timers = new Map(), windowEvents = [];
+  let currentSources = sourcePayload;
   const frames = [];
   let nextTimer = 0, requests = 0, pendingEvidence;
   const pendingSearches = [], searchURLs = [], pendingReports=[],reportURLs=[],documentURLs=[];
@@ -40,7 +48,7 @@ function harness(sourcePayload = [], capabilities = {management:true}) {
   const schedule = (fn, delay) => { const id = ++nextTimer; timers.set(id, {fn, delay}); return id; };
   const window = {
     addEventListener(type, fn) { handlers.set(`window:${type}`, fn); },
-    dispatchEvent(event) { handlers.get(`window:${event.type}`)?.(event); },
+    dispatchEvent(event) { windowEvents.push(event); handlers.get(`window:${event.type}`)?.(event); },
     setTimeout: schedule, clearTimeout: id => timers.delete(id),
   };
   const document = {
@@ -51,7 +59,7 @@ function harness(sourcePayload = [], capabilities = {management:true}) {
     querySelectorAll: selector => [...elements.values()].filter(node=>matches(node,selector)),
   };
   document.body=element('body');document.activeElement=document.body;
-  const context = vm.createContext({window, document, AbortController, URLSearchParams,
+  const context = vm.createContext({window, document, AbortController, URLSearchParams, TextEncoder,
     Event, CustomEvent:class extends Event{constructor(type,{detail}){super(type);this.detail=detail}}, requestAnimationFrame: fn => frames.push(fn),
     setTimeout: schedule, clearTimeout: id => timers.delete(id),
     Option: function(text, value) { this.text = text; this.value = value; },
@@ -68,11 +76,12 @@ function harness(sourcePayload = [], capabilities = {management:true}) {
       if(url.endsWith('/capabilities'))return {ok:true,json:async()=>capabilities};
       if(url.endsWith('/session'))return {ok:true,json:async()=>({token:'synthetic-capability'})};
       return {ok: true, json: async () => url.includes('/sync')
-        ? {enabled: true, sources: []} : {sources: sourcePayload}};
+        ? {enabled: true, sources: []} : {sources: currentSources}};
     },
   });
+  vm.runInContext(previewScript, context);
   vm.runInContext(script, context);
-  return {context, timers, element, document, handlers,runFrames(){while(frames.length)frames.shift()()},
+  return {context, timers, element, document, handlers, windowEvents, setSources(value){currentSources=value},runFrames(){while(frames.length)frames.shift()()},
     notify: (type, detail) => handlers.get(`window:${type}`)?.({detail}),
     get requests() { return requests; },
     resolveEvidence: (data,status) => pendingEvidence(data,status),
@@ -99,6 +108,17 @@ test('overlapping inventory notifications are coalesced', async () => {
   assert.equal(h.timers.size, 1);
 });
 
+test('malformed source inventories are rejected before collection reconciliation', async () => {
+  const h = harness([{id:'source-a',kind:'filesystem',name:'Synthetic',root:'/synthetic',documents:1}]);
+  await flush();
+  const broadcasts = h.windowEvents.filter(event => event.type === 'findrail-inventory').length;
+  h.setSources([{id:{},kind:'filesystem',name:'Malformed',root:'/synthetic',documents:1}]);
+  h.notify('sources-changed');
+  await flush();
+  assert.equal(h.windowEvents.filter(event => event.type === 'findrail-inventory').length, broadcasts);
+  assert.match(h.element('health').textContent, /Malformed source inventory/);
+});
+
 test('source removal invalidates evidence that was fetched before removal', async () => {
   const h = harness(); await flush();
   const preview = vm.runInContext("preview('doc', 0, 'removed-source')", h.context);
@@ -111,12 +131,12 @@ test('source removal invalidates evidence that was fetched before removal', asyn
   await preview;
   assert.equal(h.element('preview').open, false);
   assert.equal(h.element('copy-markdown').disabled, true);
-  assert.equal(vm.runInContext('currentEvidence', h.context), null);
+  assert.equal(vm.runInContext('previewUI.currentEvidence', h.context), null);
 });
 
 test('archive source card identifies frozen provenance and offers no refresh/configure action', async () => {
   const hostile = '<img src=x onerror=alert(1)>';
-  const h = harness([{id:'archive-1',kind:'archive',name:hostile,documents:1,last_indexed_at:'2026-10-09T12:00:00Z',
+  const h = harness([{id:'archive-1',kind:'archive',name:hostile,root:'',documents:1,last_indexed_at:'2026-10-09T12:00:00Z',
     archive:{origin:{kind:'filesystem',location:hostile},fingerprint:'abc',
       original_indexed_at:'2026-10-09T11:00:00Z',imported_at:'2026-10-09T12:00:00Z'}}]);
   await vm.runInContext(`(async()=>{${managementScript};globalThis.__loadSources=loadSources})()`,h.context); await flush(); await flush();
@@ -173,7 +193,7 @@ test('pending archive preview is invalidated when the archive source is removed'
   h.notify('source-removed','archive-source');
   h.resolveEvidence({id:'archive-doc',source_id:'archive-source',title:'snapshot',source_name:'archive',
     path:'note.md',text:'stale archived text',source_kind:'archive',modified_at:'2026-10-09T00:00:00Z',uri:'file:///old/note.md'});
-  await preview;assert.equal(h.element('preview').open,false);assert.equal(vm.runInContext('currentEvidence',h.context),null);
+  await preview;assert.equal(h.element('preview').open,false);assert.equal(vm.runInContext('previewUI.currentEvidence',h.context),null);
 });
 
 test('successful source reconfiguration invalidates pending preview evidence', async () => {
@@ -187,7 +207,7 @@ test('successful source reconfiguration invalidates pending preview evidence', a
   await preview;
   assert.equal(h.element('preview').open, false);
   assert.equal(h.element('copy-markdown').disabled, true);
-  assert.equal(vm.runInContext('currentEvidence', h.context), null);
+  assert.equal(vm.runInContext('previewUI.currentEvidence', h.context), null);
 });
 
 test('job polling resumes if the tab is hidden during an active request', async () => {
@@ -239,7 +259,7 @@ test('filter reset issues a new server request from a coherent form snapshot', a
 const lateEvidence={id:'doc-a',source_id:'source-a',source_name:'Synthetic',source_kind:'filesystem',title:'Late note',path:'late.md',uri:'file:///synthetic/late.md',media_type:'text/plain',content_hash:'same-hash',original_identity:'snapshot-a',modified_at:'2026-10-15T00:00:00Z',page:0,page_count:0,text:'needle tail',text_start_char:80000,text_total_chars:80011,truncated:true,match_kind:'literal_body'};
 
 async function focusedResultHarness() {
-  const sources=[{id:'source-a',name:'Synthetic',documents:2,last_indexed_at:'2026-10-15T00:00:00Z'}];
+  const sources=[{id:'source-a',name:'Synthetic',root:'/synthetic',kind:'filesystem',documents:2,last_indexed_at:'2026-10-15T00:00:00Z'}];
   const h=harness(sources,{passage_preview:true});await flush();
   h.element('query').value='needle';h.element('mode').value='literal';h.element('format').value='all';
   h.handlers.get('search-form:submit')({preventDefault(){}});await flush();
@@ -313,7 +333,7 @@ test('changing query invalidates a delayed passage response',async()=>{
  h.resolveEvidence(lateEvidence);await flush();
  assert.equal(h.element('preview').open,false);
  assert.equal(h.element('add-evidence').disabled,true);
- assert.equal(vm.runInContext('currentEvidence',h.context),null);
+ assert.equal(vm.runInContext('previewUI.currentEvidence',h.context),null);
 });
 
 test('collection current-evidence bridge keeps PDF pages and saved text windows',async()=>{

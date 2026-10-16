@@ -52,6 +52,9 @@ client-side preference, not server authorization or multi-user isolation.
 | `internal/store/sqlite` | Schema, transactions, content hashes, FTS, sources | SQLite driver and domain contracts |
 | `internal/search` | Retrieval request / response, literal mode and restricted Advanced parser | Standard library |
 | `internal/transport/http` | Loopback HTTP, embedded UI and opt-in `start` mutation boundary | Search, source status and optional source app |
+| `internal/transport/http/web/search_ui.mjs` | Search orchestration, result rendering and inventory refresh | Injected DOM/fetch, search API, preview lifecycle callbacks |
+| `internal/transport/http/web/preview_ui.mjs` | Preview requests, navigation, focus return, citations and native original controls | Injected DOM/API callbacks, citation helpers, native capability bridge |
+| `internal/transport/http/web/collections_ui.mjs` | Temporary evidence selection, freshness checks, saved collection lifecycle and export | Injected DOM/fetch, evidence collection state module, collection/source APIs |
 | `internal/transport/mcp` | Scoped read-only stdio MCP tools and response budgets | Search interface, read-only SQLite evidence |
 | `internal/cli` | Composition, command parsing, presentation | Application modules |
 | `cmd/findrail` | Process entry, signals, version | CLI |
@@ -59,6 +62,14 @@ client-side preference, not server authorization or multi-user isolation.
 The first transport source-status interface uses the SQLite source-status type;
 move that DTO into a neutral package when a second storage adapter is justified.
 Do not create a second persistence abstraction solely to hide this small seam.
+
+The page explicitly initializes its search, preview, temporary collection,
+persistent collection, and native-preview lifecycles after their embedded ES
+modules load. Search composes preview through an explicit lifecycle factory and
+callbacks. Module imports are inert; lifecycle setup is called by the page. The
+existing citation, evidence-state, and keyboard modules remain independent
+helpers. The server embeds and routes each browser module by an explicit asset
+path; it does not expose a filesystem directory.
 
 ## Ingestion transaction
 

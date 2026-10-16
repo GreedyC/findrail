@@ -40,6 +40,15 @@ var evidenceCollectionModule []byte
 //go:embed web/keyboard_navigation.mjs
 var keyboardNavigationModule []byte
 
+//go:embed web/search_ui.mjs
+var searchUIModule []byte
+
+//go:embed web/preview_ui.mjs
+var previewUIModule []byte
+
+//go:embed web/collections_ui.mjs
+var collectionsUIModule []byte
+
 type Backend interface {
 	search.Engine
 	Sources(context.Context) ([]sqlite.SourceStatus, error)
@@ -290,6 +299,18 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 	mux.HandleFunc("GET /assets/keyboard_navigation.mjs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Write(keyboardNavigationModule)
+	})
+	mux.HandleFunc("GET /assets/search_ui.mjs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Write(searchUIModule)
+	})
+	mux.HandleFunc("GET /assets/preview_ui.mjs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Write(previewUIModule)
+	})
+	mux.HandleFunc("GET /assets/collections_ui.mjs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Write(collectionsUIModule)
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
