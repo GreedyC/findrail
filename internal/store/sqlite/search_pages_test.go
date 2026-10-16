@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -214,5 +215,51 @@ func TestSearchPageStopsAtWindowAndReportsFullTotal(t *testing.T) {
 	}
 	if count != search.PageWindowLimit {
 		t.Fatalf("returned %d rows, expected window %d", count, search.PageWindowLimit)
+	}
+}
+
+func TestSearchPageFitsEncodedJSONPrefix(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	scan, err := s.BeginScan(ctx, connector.Source{ID: "bytes", Kind: "filesystem", Name: "Synthetic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 6; i++ {
+		id := fmt.Sprintf("b-%d", i)
+		uri := "file:///synthetic/" + strings.Repeat("u", 120000) + id
+		if _, err = scan.Upsert(ctx, connector.Document{ID: id, SourceID: "bytes", Title: id, Path: id, URI: uri, Content: "budgetmarker", Hash: id, MediaType: "text/plain"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = scan.Upsert(ctx, connector.Document{ID: "giant", SourceID: "bytes", Title: "giant", Path: "giant", URI: "file:///synthetic/" + strings.Repeat("g", 600000), Content: "giantmarker", Hash: "giant", MediaType: "text/plain"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = scan.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.SearchPage(ctx, search.PageRequest{Request: search.Request{Query: "budgetmarker", Limit: 6}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Returned < 1 || first.Returned >= 6 || first.NextCursor == nil {
+		t.Fatalf("expected a nonempty fitting prefix: returned=%d cursor=%v", first.Returned, first.NextCursor != nil)
+	}
+	if first.Offset != 0 {
+		t.Fatalf("first offset=%d", first.Offset)
+	}
+	second, err := s.SearchPage(ctx, search.PageRequest{Request: search.Request{Query: "budgetmarker", Limit: 6}, Cursor: *first.NextCursor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Offset != first.Returned || second.Returned != 6-first.Returned {
+		t.Fatalf("remainder skipped: first=%+v second=%+v", first, second)
+	}
+	if _, err = s.SearchPage(ctx, search.PageRequest{Request: search.Request{Query: "giantmarker", Limit: 1}}); !errors.Is(err, search.ErrPageResultTooLarge) {
+		t.Fatalf("oversized singleton error=%v", err)
 	}
 }

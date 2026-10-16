@@ -188,6 +188,7 @@ func (s *Store) SearchPage(ctx context.Context, input search.PageRequest) (searc
 	page.Offset, page.Limit, page.WindowLimit = offset, req.Limit, search.PageWindowLimit
 	page.NextCursor, page.EndReason = nil, nil
 	for len(page.Results) > 0 {
+		page.NextCursor, page.EndReason = nil, nil
 		page.Returned = len(page.Results)
 		end := offset + page.Returned
 		if end >= page.Total {
