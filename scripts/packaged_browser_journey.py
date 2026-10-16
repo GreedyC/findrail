@@ -50,6 +50,9 @@ def main():
             "idempotencymarker familiar synthetic note. <script>window.fixturePwned=true</script>", encoding="utf-8")
         (root / "runbook.pdf").write_bytes(pdf_fixture(["firstpage unique alpha", "secondpage page2journey unique beta"]))
         (root / "meeting.docx").write_bytes(docx_fixture("docxjourney unique word text"))
+        for index in range(260):
+            (root / f"paging-{index:03}.md").write_text(
+                f"pagingjourney shared ranking unicode雪 synthetic document {index:03}\n", encoding="utf-8")
         port = free_port()
         address = f"127.0.0.1:{port}"
         url = f"http://{address}"
@@ -101,6 +104,25 @@ def main():
             wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, ".source-card")) == 1)
             source_card = browser.find_element(By.CSS_SELECTOR, ".source-card")
             assert str(root.resolve()) in source_card.text and "DOCX enabled" in source_card.text, source_card.text
+            # A watcher scan may immediately follow the management job's first
+            # committed scan. Wait for the known fixture inventory to settle so
+            # cursor-staleness tests below exercise pagination, not setup races.
+            stable_inventory = None
+            stable_since = time.monotonic()
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                with urllib.request.urlopen(url + "/api/v1/sources", timeout=3) as response:
+                    inventory = json.load(response)["sources"]
+                fingerprint = tuple((item["documents"], item.get("last_indexed_at")) for item in inventory)
+                if inventory and inventory[0]["documents"] == 263 and fingerprint == stable_inventory:
+                    if time.monotonic() - stable_since >= 2:
+                        break
+                else:
+                    stable_inventory = fingerprint
+                    stable_since = time.monotonic()
+                time.sleep(.2)
+            else:
+                raise AssertionError("fixture source inventory did not settle before browser search")
 
             def search(query, format_name="all"):
                 browser.find_element(By.ID, "query").clear()
@@ -128,6 +150,62 @@ def main():
                 # and click. Reacquire the matching card and use a real click.
                 WebDriverWait(browser, 20, ignored_exceptions=(StaleElementReferenceException,)).until(click_matching_result)
 
+            def run_paging_journey():
+                browser.find_element(By.ID, "query").clear()
+                Select(browser.find_element(By.ID, "format")).select_by_value("all")
+                browser.find_element(By.ID, "query").send_keys("pagingjourney")
+                browser.find_element(By.ID, "search-form").submit()
+                wait.until(lambda d: d.find_element(By.ID, "page-range").text.startswith("1–20"))
+                assert "260" in browser.find_element(By.ID, "page-range").text
+                ids = []
+                ranges = []
+                while True:
+                    ranges.append(browser.find_element(By.ID, "page-range").text)
+                    ids.extend(card.get_attribute("data-document-id") for card in browser.find_elements(By.CSS_SELECTOR, "#results .result"))
+                    next_button = browser.find_element(By.ID, "page-next")
+                    if not next_button.is_enabled():
+                        break
+                    previous_range = browser.find_element(By.ID, "page-range").text
+                    next_button.click()
+                    wait.until(lambda d: d.find_element(By.ID, "page-range").text != previous_range)
+                assert len(ids) == 260 and len(set(ids)) == 260, (len(ids), len(set(ids)), ranges,
+                    browser.find_element(By.ID, "status").text, browser.find_element(By.ID, "query-error").text)
+                assert browser.switch_to.active_element.get_attribute("id") == "page-previous", "terminal Next left keyboard focus on a disabled control"
+                browser.find_element(By.ID, "page-previous").click()
+                wait.until(lambda d: d.find_element(By.ID, "page-range").text.startswith("221–240"))
+                browser.find_element(By.ID, "page-first").click()
+                wait.until(lambda d: d.find_element(By.ID, "page-range").text.startswith("1–20"))
+                first_page_ids = [card.get_attribute("data-document-id") for card in browser.find_elements(By.CSS_SELECTOR, "#results .result")]
+                with urllib.request.urlopen(url + "/api/v1/search/pages?q=pagingjourney&limit=20", timeout=5) as response:
+                    backend_ids = [item["id"] for item in json.load(response)["results"]]
+                assert first_page_ids == backend_ids, "browser page IDs differ from the production paginated API"
+
+                Select(browser.find_element(By.ID, "page-size")).select_by_value("50")
+                wait.until(lambda d: d.find_element(By.ID, "page-range").text.startswith("1–50"))
+                browser.find_element(By.ID, "page-next").click()
+                wait.until(lambda d: d.find_element(By.ID, "page-range").text.startswith("51–100"))
+                Select(browser.find_element(By.ID, "page-size")).select_by_value("20")
+                wait.until(lambda d: d.find_element(By.ID, "page-range").text.startswith("1–20"))
+
+                # A metadata-only commit invalidates the SQLite cursor without
+                # altering the source inventory or any selected local evidence.
+                token = browser.execute_async_script("const done=arguments[0];window.findrailBootstrap.then(boot=>done(boot.token));")
+                headers = {"Origin": url, "X-Findrail-Token": token, "Content-Type": "application/json"}
+                request = urllib.request.Request(url + "/api/v1/collections", data=json.dumps({"title": "Synthetic cursor fence"}).encode(), headers=headers, method="POST")
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    temporary_collection = json.load(response)
+                request = urllib.request.Request(url + "/api/v1/collections/" + temporary_collection["id"] + "?revision=1", data=b"", headers=headers, method="DELETE")
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    assert response.status == 204
+                browser.find_element(By.ID, "page-next").click()
+                wait.until(lambda d: "Data changed; restart" in d.find_element(By.ID, "status").text)
+                assert browser.switch_to.active_element.get_attribute("id") == "page-first"
+                assert not browser.find_elements(By.CSS_SELECTOR, "#results .result"), "stale pages were mixed into a new snapshot"
+                assert browser.find_element(By.ID, "query").get_attribute("value") == "pagingjourney"
+                browser.find_element(By.ID, "page-first").click()
+                wait.until(lambda d: d.find_element(By.ID, "page-range").text.startswith("1–20"))
+
+            run_paging_journey()
             search("idempotencymarker")
             assert "1 matching" in browser.find_element(By.ID, "status").text
             open_preview("idempotencymarker")
@@ -188,6 +266,11 @@ def main():
             assert selected in text and "note from packaged journey" in text
             assert "runbook.pdf — page 2" in text and (root / "runbook.pdf").as_uri() + "#page=2" in text
             browser.find_element(By.ID, "collection-close").click()
+            run_paging_journey()
+            browser.find_element(By.ID, "collection-open").click()
+            wait.until(lambda d: len(d.find_elements(By.CLASS_NAME, "collection-row")) == 2)
+            assert browser.find_element(By.CSS_SELECTOR, ".collection-row textarea").get_attribute("value") == "note from packaged journey"
+            browser.find_element(By.ID, "collection-close").click()
             search("docxjourney", "docx")
             open_preview("docxjourney")
             wait.until(lambda d: "docxjourney" in d.find_element(By.ID, "preview-body").text)
@@ -206,7 +289,7 @@ def main():
             assert browser.find_element(By.ID, "collection-count").text == "0"
             search("idempotencymarker")
             assert "1 matching" in browser.find_element(By.ID, "status").text
-            print("Packaged browser journey passed: empty start, UI Add folder, committed source/DOCX policy, search, preview, controlled original/folder adapters, exact selected quote, duplicate, PDF page 2, Markdown bytes, reload and restart.")
+            print("Packaged browser journey passed: bounded cursor navigation beyond 237 results, First/Previous and backend ID agreement; empty start, UI Add folder, committed source/DOCX policy, search, preview, controlled original/folder adapters, exact selected quote, duplicate, PDF page 2, Markdown bytes, reload and restart.")
         finally:
             if browser:
                 browser.quit()

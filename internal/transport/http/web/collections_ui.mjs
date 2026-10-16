@@ -44,7 +44,7 @@ async function save(){
   const updated=await api('/api/v1/collections/'+encodeURIComponent(target),'PUT',{revision,title,entries});
   if(operation!==requestGeneration||active!==target)return;
   if(c.generation!==saveGeneration)return say('The earlier snapshot was saved; newer local edits were kept. Reload or export them before continuing.');
-  install(updated);await refreshPicker(active);say('Collection saved.');
+  install(updated);await refreshPicker(active);say('Collection saved.');window.dispatchEvent(new CustomEvent('findrail-collection-saved',{detail:{id:active,generation:c.generation}}));
  }catch(e){say(e.status===409?e.message+' Local edits were kept. Reload the collection or preview before saving.':e.message)}finally{setBusy(false);changed()}
 }
 async function load(id){
