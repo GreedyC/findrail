@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -56,6 +57,11 @@ var evidenceWindowsSchema string
 type Store struct {
 	db, readers   *sql.DB
 	schemaVersion int
+	pagerMu       sync.Mutex
+	pager         *pageRuntime
+	pagerClosed   bool
+	pagerWG       sync.WaitGroup
+	pageNow       func() time.Time
 }
 
 func (s *Store) SchemaInfo() SchemaInfo {
@@ -339,7 +345,18 @@ func (s *Store) Close() error {
 	if s == nil {
 		return nil
 	}
+	s.pagerMu.Lock()
+	s.pagerClosed = true
+	p := s.pager
+	s.pagerMu.Unlock()
+	if p != nil {
+		p.cancel()
+	}
+	s.pagerWG.Wait()
 	var errs []error
+	if p != nil && p.conn != nil {
+		errs = append(errs, p.conn.Close())
+	}
 	if s.readers != nil {
 		errs = append(errs, s.readers.Close())
 	}
