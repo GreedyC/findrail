@@ -125,15 +125,75 @@ paths:
               schema: {$ref: '#/components/schemas/SearchPageResponse'}
               examples:
                 complete: {value: {results: [], total: 0, offset: 0, returned: 0, limit: 20, window_limit: 1000, next_cursor: null, end_reason: complete}}
-                continuation: {value: {results: [], total: 24, offset: 20, returned: 4, limit: 20, window_limit: 1000, next_cursor: opaque-cursor, end_reason: null}}
-                windowLimit: {value: {results: [], total: 1200, offset: 980, returned: 20, limit: 20, window_limit: 1000, next_cursor: null, end_reason: window_limit}}
-        '400': {description: Invalid request/cursor (cursor_invalid, cursor_mismatch, or invalid_search_page_request)}
-        '404': {description: Optional page capability unavailable (search_page_unavailable)}
-        '409': {description: Cursor expired, stale, or from another process session (cursor_expired, cursor_stale, cursor_session_changed)}
-        '429': {description: Pager admission capacity is busy (search_page_busy)}
-        '500': {description: One required result row cannot fit the response bound (page_result_too_large); unknown internal errors are search_page_unavailable}
-        '503': {description: Pager is closed or unavailable (search_page_unavailable)}
-        '504': {description: Five-second pager budget exhausted (search_page_timeout)}
+                continuation:
+                  summary: First of 24 results, with an illustrative opaque cursor
+                  value:
+                    results:
+                    - &pagedExample
+                      id: synthetic-note
+                      title: Synthetic note
+                      uri: file:///synthetic/docs/note.md
+                      path: docs/note.md
+                      source_id: synthetic-source
+                      source_name: Synthetic documents
+                      source_kind: filesystem
+                      snippet: '[retry] budget'
+                      score: -0.000001
+                      media_type: text/plain
+                      original_identity: '0000000000000000000000000000000000000000000000000000000000000000'
+                      snippet_truncated: false
+                    total: 24
+                    offset: 0
+                    returned: 1
+                    limit: 1
+                    window_limit: 1000
+                    next_cursor: opaque-cursor
+                    end_reason: null
+                windowLimit:
+                  value:
+                    results: [*pagedExample]
+                    total: 1200
+                    offset: 999
+                    returned: 1
+                    limit: 1
+                    window_limit: 1000
+                    next_cursor: null
+                    end_reason: window_limit
+        '400':
+          description: Invalid request/cursor (cursor_invalid, cursor_mismatch, invalid_limit, invalid_search_page_request) or search validation (syntax, missing_positive_term, query_too_large, invalid_mode, invalid_filter); validation errors retain position.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SearchPageError'}
+        '404':
+          description: Optional page capability unavailable (search_page_unavailable)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SearchPageError'}
+        '409':
+          description: Cursor expired, stale, or from another process session (cursor_expired, cursor_stale, cursor_session_changed)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SearchPageError'}
+        '429':
+          description: Pager admission capacity is busy (search_page_busy)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SearchPageError'}
+        '500':
+          description: One required result row cannot fit the response bound (page_result_too_large); unknown internal errors or an oversized backend response are search_page_unavailable
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SearchPageError'}
+        '503':
+          description: Pager is closed or unavailable (search_page_unavailable)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SearchPageError'}
+        '504':
+          description: Five-second pager budget exhausted (search_page_timeout)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SearchPageError'}
   /api/v1/sources:
     get:
       operationId: listSources
@@ -219,7 +279,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [management, desktop, open_originals, collection_persistence, diagnostics, client_api_version, search_modes, search_filters, pdf_title_only_evidence, passage_preview, search_pagination]
+                required: [management, desktop, open_originals, collection_persistence, diagnostics, client_api_version, search_modes, search_filters, pdf_title_only_evidence, passage_preview]
                 properties:
                   management: {type: boolean}
                   desktop: {type: boolean, description: Explicit desktop quit is available only in the desktop composition}
@@ -235,7 +295,7 @@ paths:
                     items: {type: string, enum: [source, format, path_prefix, title_contains]}
                   pdf_title_only_evidence: {type: boolean, const: true}
                   passage_preview: {type: boolean, description: True when indexed text windows are supported}
-                  search_pagination: {type: boolean, description: True only when this backend supports GET /api/v1/search/pages}
+                  search_pagination: {type: boolean, description: True only when this backend supports GET /api/v1/search/pages; clients must treat an absent flag on older API v1 servers as false}
   /api/v1/documents/{id}/passage:
     get:
       operationId: getDocumentPassage
@@ -761,7 +821,13 @@ components:
       - type: object
         required: [snippet_truncated]
         properties:
-          snippet_truncated: {type: boolean}
+          snippet: {type: string, maxLength: 1024, description: Plain-text excerpt capped at 1,024 Unicode code points}
+          snippet_truncated: {type: boolean, description: True when the paged excerpt was shortened to the 1,024-code-point limit}
+    SearchPageError:
+      allOf:
+      - {$ref: '#/components/schemas/Error'}
+      - type: object
+        required: [error, code]
     Source:
       type: object
       required:

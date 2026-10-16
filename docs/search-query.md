@@ -67,7 +67,8 @@ continues to restrict each call to one allowlisted source.
 ## HTTP cursor pages (source builds)
 
 When `/api/v1/capabilities` reports `search_pagination: true`, clients can use
-the optional, read-only `GET /api/v1/search/pages` endpoint. Its defaults are
+the optional, read-only `GET /api/v1/search/pages` endpoint. An absent flag on
+an older API v1 server means the capability is unavailable. Its defaults are
 `mode=literal`, `format=all`, and `limit=20` (allowed range 1–100). All read
 responses are `Cache-Control: no-store`. Keep the entire original query and
 filter tuple, including the same limit, on every continuation request:
@@ -110,14 +111,25 @@ exactly 1,000 matches can end as `complete`. Each response, including its final
 newline, is at most 524,288 bytes. The pager may return fewer results than
 `limit` to fit that byte budget; its continuation begins at the next unreturned
 row. Nullable cursor and end reason are JSON `null` when absent. Empty results
-are `[]`. A `400` means the request/cursor must be corrected or restarted; `429`
-is bounded temporary pager admission pressure; `503`/`504` are temporary
-availability/deadline failures. An optional backend without page support
-reports `search_pagination: false` and returns `404 search_page_unavailable`.
+are `[]`. Results retain their original source, URI, identity and PDF page
+attribution. Each snippet is capped at 1,024 Unicode code points, with an
+explicit `snippet_truncated` boolean indicating whether that cap shortened it.
+
+Errors retain a human-readable `error` string and add a stable `code`:
+
+| HTTP | Codes and recovery |
+|---|---|
+| 400 | `cursor_invalid`, `cursor_mismatch`, `invalid_limit`, `invalid_search_page_request`: correct the parameters or restart the search. Query/filter validation retains `syntax`, `missing_positive_term`, `query_too_large`, `invalid_mode`, or `invalid_filter` and a Unicode `position`. |
+| 404 | `search_page_unavailable`: this optional backend lacks page support and reports `search_pagination: false`. |
+| 409 | `cursor_expired`, `cursor_stale`, `cursor_session_changed`: restart from the first page. |
+| 429 | `search_page_busy`: bounded temporary pager admission pressure; retry later. |
+| 500 | `page_result_too_large`: one required result cannot fit the byte budget. `search_page_unavailable` covers unknown internal errors or an oversized backend response. Neither returns partial page JSON. |
+| 503 | `search_page_unavailable`: the pager is closed or unavailable. |
+| 504 | `search_page_timeout`: the five-second request budget expired. A shorter caller deadline and client cancellation propagate to the pager. |
 
 `serve`/`demo` remain read-only; page search adds no management capability. This
-source-build endpoint does not add browser pagination controls (planned for
-TASK 04) and is not included in the alpha.4 download.
+source-build endpoint does not add browser pagination controls, which are
+planned separately, and is not included in the alpha.4 download.
 
 Advanced PDF matching treats each page as a separate field for phrases, so a
 phrase cannot cross a page boundary. Bare AND terms may occur on different

@@ -89,7 +89,7 @@ exactly 1,000 completes rather than reporting a truncated window. A cursor with 
 different well-formed public epoch is rejected as a changed session without
 trusting its claims; the previous process key is not persisted.
 The endpoint is source-build behavior, not part of the downloadable alpha.4.
-Browser pagination controls remain planned for TASK 04.
+Browser pagination controls are planned separately.
 
 The page explicitly initializes its search, preview, temporary collection,
 persistent collection, and native-preview lifecycles after their embedded ES

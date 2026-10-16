@@ -399,24 +399,36 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 		}
 		req := search.Request{Query: values.Get("q"), Mode: values.Get("mode"), SourceID: values.Get("source"), Format: values.Get("format"), PathPrefix: values.Get("path_prefix"), TitleContains: values.Get("title_contains"), Limit: limit}
 		if err := search.ValidateRequest(req); err != nil {
-			var validation *search.ValidationError
-			if errors.As(err, &validation) {
-				writeJSON(w, http.StatusBadRequest, map[string]any{"error": validation.Message, "code": validation.Code, "position": validation.Position})
-			} else {
-				writePageError(w, http.StatusBadRequest, "invalid_search_page_request", "invalid search page request")
-			}
+			writePageFailure(w, err)
 			return
 		}
-		response, err := pageEngine.SearchPage(r.Context(), search.PageRequest{Request: req, Cursor: cursor})
+		// The optional backend receives the same total budget as the SQLite pager.
+		// A shorter caller deadline and cancellation must propagate unchanged.
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if r.Context().Err() != nil {
+			return
+		}
+		response, err := pageEngine.SearchPage(ctx, search.PageRequest{Request: req, Cursor: cursor})
+		if r.Context().Err() != nil {
+			return
+		}
+		if ctx.Err() != nil {
+			writePageFailure(w, ctx.Err())
+			return
+		}
 		if err != nil {
-			if r.Context().Err() != nil {
-				return
-			}
-			status, code, message := pageHTTPError(err)
-			writePageError(w, status, code, message)
+			writePageFailure(w, err)
 			return
 		}
 		body, err := json.Marshal(response)
+		if r.Context().Err() != nil {
+			return
+		}
+		if ctx.Err() != nil {
+			writePageFailure(w, ctx.Err())
+			return
+		}
 		if err != nil || len(body)+1 > 524288 {
 			writePageError(w, http.StatusInternalServerError, "search_page_unavailable", "paged search is unavailable")
 			return
@@ -1048,6 +1060,16 @@ func writePageError(w http.ResponseWriter, status int, code, message string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": message, "code": code})
 }
 
+func writePageFailure(w http.ResponseWriter, err error) {
+	var validation *search.ValidationError
+	if errors.As(err, &validation) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": validation.Message, "code": validation.Code, "position": validation.Position})
+		return
+	}
+	status, code, message := pageHTTPError(err)
+	writePageError(w, status, code, message)
+}
+
 func pageHTTPError(err error) (int, string, string) {
 	switch {
 	case errors.Is(err, search.ErrCursorInvalid):
@@ -1073,10 +1095,6 @@ func pageHTTPError(err error) (int, string, string) {
 	case errors.Is(err, search.ErrQuery):
 		return http.StatusBadRequest, "invalid_search_page_request", "invalid search query"
 	default:
-		var validation *search.ValidationError
-		if errors.As(err, &validation) {
-			return http.StatusBadRequest, validation.Code, validation.Message
-		}
 		return http.StatusInternalServerError, "search_page_unavailable", "paged search is unavailable"
 	}
 }

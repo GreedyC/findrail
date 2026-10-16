@@ -808,43 +808,47 @@ func TestSearchPagesHTTPWalkAndOptionalCapability(t *testing.T) {
 		handler.ServeHTTP(w, r)
 		return w
 	}
-	seen := map[string]bool{}
-	cursor := ""
-	for {
-		target := "/api/v1/search/pages?q=sharedpage&mode=literal&source=" + url.QueryEscape(indexed.Source.ID) + "&format=text&path_prefix=docs&title_contains=doc&limit=20"
-		if cursor != "" {
-			target += "&cursor=" + url.QueryEscape(cursor)
-		}
-		w := request(target)
-		if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" || len(w.Body.Bytes()) > 524288 || !strings.HasSuffix(w.Body.String(), "\n") {
-			t.Fatalf("page response status=%d bytes=%d headers=%v body=%s", w.Code, w.Body.Len(), w.Header(), w.Body.String())
-		}
-		var page search.PageResponse
-		if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
-			t.Fatal(err)
-		}
-		if page.Total != 237 || page.Limit != 20 || page.WindowLimit != 1000 || page.Returned != len(page.Results) {
-			t.Fatalf("page envelope: %+v", page)
-		}
-		for _, result := range page.Results {
-			if seen[result.ID] {
-				t.Fatalf("duplicate result %s", result.ID)
+	for _, limit := range []int{1, 20, 100} {
+		t.Run(fmt.Sprintf("limit-%d", limit), func(t *testing.T) {
+			seen := map[string]bool{}
+			cursor := ""
+			for {
+				target := "/api/v1/search/pages?q=sharedpage&mode=literal&source=" + url.QueryEscape(indexed.Source.ID) + "&format=text&path_prefix=docs&title_contains=doc&limit=" + fmt.Sprint(limit)
+				if cursor != "" {
+					target += "&cursor=" + url.QueryEscape(cursor)
+				}
+				w := request(target)
+				if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" || len(w.Body.Bytes()) > 524288 || !strings.HasSuffix(w.Body.String(), "\n") {
+					t.Fatalf("page response status=%d bytes=%d headers=%v body=%s", w.Code, w.Body.Len(), w.Header(), w.Body.String())
+				}
+				var page search.PageResponse
+				if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+					t.Fatal(err)
+				}
+				if page.Total != 237 || page.Limit != limit || page.Offset != len(seen) || page.WindowLimit != 1000 || page.Returned != len(page.Results) {
+					t.Fatalf("page envelope: %+v", page)
+				}
+				for _, result := range page.Results {
+					if seen[result.ID] {
+						t.Fatalf("duplicate result %s", result.ID)
+					}
+					seen[result.ID] = true
+					if result.OriginalIdentity == "" || result.SnippetTruncated != false {
+						t.Fatalf("result metadata: %+v", result)
+					}
+				}
+				if page.NextCursor == nil {
+					if page.EndReason == nil || *page.EndReason != "complete" {
+						t.Fatalf("unexpected terminal page: %+v", page)
+					}
+					break
+				}
+				cursor = *page.NextCursor
 			}
-			seen[result.ID] = true
-			if result.OriginalIdentity == "" || result.SnippetTruncated != false {
-				t.Fatalf("result metadata: %+v", result)
+			if len(seen) != 237 {
+				t.Fatalf("walk returned %d results", len(seen))
 			}
-		}
-		if page.NextCursor == nil {
-			if page.EndReason == nil || *page.EndReason != "complete" {
-				t.Fatalf("unexpected terminal page: %+v", page)
-			}
-			break
-		}
-		cursor = *page.NextCursor
-	}
-	if len(seen) != 237 {
-		t.Fatalf("walk returned %d results", len(seen))
+		})
 	}
 	for _, tc := range []struct{ target, code string }{
 		{"/api/v1/search/pages?q=sharedpage&limit=1&limit=2", "invalid_search_page_request"},
