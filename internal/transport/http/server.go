@@ -123,6 +123,7 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 	if config.management != nil && config.authority == "" {
 		config.management = nil
 	}
+	pageEngine, hasPageEngine := backend.(search.PageEngine)
 	collections, hasCollections := backend.(collectionBackend)
 	_, hasPassage := backend.(interface {
 		Passage(context.Context, string, string, string, int) (search.Evidence, error)
@@ -356,6 +357,74 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, response)
 	})
+	mux.HandleFunc("GET /api/v1/search/pages", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if !hasPageEngine {
+			writePageError(w, http.StatusNotFound, "search_page_unavailable", "paged search is unavailable")
+			return
+		}
+		values, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			writePageError(w, http.StatusBadRequest, "invalid_search_page_request", "invalid search page parameters")
+			return
+		}
+		allowed := map[string]bool{"q": true, "mode": true, "source": true, "format": true, "path_prefix": true, "title_contains": true, "limit": true, "cursor": true, "offset": true, "page": true}
+		for key, vals := range values {
+			if !allowed[key] || len(vals) != 1 {
+				writePageError(w, http.StatusBadRequest, "invalid_search_page_request", "unknown or repeated search page parameter")
+				return
+			}
+		}
+		if _, ok := values["offset"]; ok {
+			writePageError(w, http.StatusBadRequest, "invalid_search_page_request", "continue with the signed cursor")
+			return
+		}
+		if _, ok := values["page"]; ok {
+			writePageError(w, http.StatusBadRequest, "invalid_search_page_request", "continue with the signed cursor")
+			return
+		}
+		limit := 20
+		if raw, ok := values["limit"]; ok {
+			limit, err = strconv.Atoi(raw[0])
+			if err != nil || limit < 1 || limit > 100 {
+				writePageError(w, http.StatusBadRequest, "invalid_limit", "limit must be between 1 and 100")
+				return
+			}
+		}
+		cursor := values.Get("cursor")
+		// Bound the raw opaque value before it reaches the pager's decoder.
+		if len(cursor) > 4096 {
+			writePageError(w, http.StatusBadRequest, "cursor_invalid", "search cursor is invalid")
+			return
+		}
+		req := search.Request{Query: values.Get("q"), Mode: values.Get("mode"), SourceID: values.Get("source"), Format: values.Get("format"), PathPrefix: values.Get("path_prefix"), TitleContains: values.Get("title_contains"), Limit: limit}
+		if err := search.ValidateRequest(req); err != nil {
+			var validation *search.ValidationError
+			if errors.As(err, &validation) {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": validation.Message, "code": validation.Code, "position": validation.Position})
+			} else {
+				writePageError(w, http.StatusBadRequest, "invalid_search_page_request", "invalid search page request")
+			}
+			return
+		}
+		response, err := pageEngine.SearchPage(r.Context(), search.PageRequest{Request: req, Cursor: cursor})
+		if err != nil {
+			if r.Context().Err() != nil {
+				return
+			}
+			status, code, message := pageHTTPError(err)
+			writePageError(w, status, code, message)
+			return
+		}
+		body, err := json.Marshal(response)
+		if err != nil || len(body)+1 > 524288 {
+			writePageError(w, http.StatusInternalServerError, "search_page_unavailable", "paged search is unavailable")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(append(body, '\n'))
+	})
 	mux.HandleFunc("GET /api/v1/sources", func(w http.ResponseWriter, r *http.Request) {
 		sources, err := backend.Sources(r.Context())
 		if err != nil {
@@ -503,6 +572,7 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 			"search_filters":          []string{"source", "format", "path_prefix", "title_contains"},
 			"pdf_title_only_evidence": true,
 			"passage_preview":         hasPassage,
+			"search_pagination":       hasPageEngine,
 			"diagnostics":             hasDiagnostics,
 		})
 	})
@@ -971,6 +1041,46 @@ func Serve(ctx context.Context, addr string, backend Backend, opts ...Option) er
 func writeError(w http.ResponseWriter, code int, message string) {
 	writeJSON(w, code, map[string]string{"error": message})
 }
+
+func writePageError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message, "code": code})
+}
+
+func pageHTTPError(err error) (int, string, string) {
+	switch {
+	case errors.Is(err, search.ErrCursorInvalid):
+		return http.StatusBadRequest, "cursor_invalid", "search cursor is invalid"
+	case errors.Is(err, search.ErrCursorMismatch):
+		return http.StatusBadRequest, "cursor_mismatch", "search cursor does not match this request"
+	case errors.Is(err, search.ErrCursorExpired):
+		return http.StatusConflict, "cursor_expired", "search cursor expired; restart the search"
+	case errors.Is(err, search.ErrCursorStale):
+		return http.StatusConflict, "cursor_stale", "indexed data changed; restart the search"
+	case errors.Is(err, search.ErrCursorSessionChanged):
+		return http.StatusConflict, "cursor_session_changed", "search cursor belongs to another server session"
+	case errors.Is(err, search.ErrPageBusy):
+		return http.StatusTooManyRequests, "search_page_busy", "paged search is busy"
+	case errors.Is(err, search.ErrPageClosed), errors.Is(err, search.ErrPageUnavailable):
+		return http.StatusServiceUnavailable, "search_page_unavailable", "paged search is unavailable"
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout, "search_page_timeout", "paged search timed out"
+	case errors.Is(err, search.ErrPageResultTooLarge):
+		return http.StatusInternalServerError, "page_result_too_large", "a search result exceeds the response limit"
+	case errors.Is(err, search.ErrLimit):
+		return http.StatusBadRequest, "invalid_limit", "limit must be between 1 and 100"
+	case errors.Is(err, search.ErrQuery):
+		return http.StatusBadRequest, "invalid_search_page_request", "invalid search query"
+	default:
+		var validation *search.ValidationError
+		if errors.As(err, &validation) {
+			return http.StatusBadRequest, validation.Code, validation.Message
+		}
+		return http.StatusInternalServerError, "search_page_unavailable", "paged search is unavailable"
+	}
+}
+
 func writeJSON(w http.ResponseWriter, code int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)

@@ -64,7 +64,9 @@ move that DTO into a neutral package when a second storage adapter is justified.
 Do not create a second persistence abstraction solely to hide this small seam.
 
 The optional internal `search.PageEngine` is implemented by SQLite `Store.SearchPage`;
-the legacy search engine and HTTP API are unchanged. Page queries use the bounded
+the legacy search engine and `GET /api/v1/search` API are unchanged. The optional
+read-only `GET /api/v1/search/pages` endpoint is now exposed when the composed
+backend supports it, and `search_pagination` reports that capability. Page queries use the bounded
 query helper inside a short transaction on one lazily reserved query-only reader.
 Signed, process-local HMAC cursors carry a query-tuple digest, offset, connection-local
 `data_version` fence, and fixed five-minute expiry. A commit on another connection
@@ -86,9 +88,8 @@ for previous-page navigation. Empty results complete explicitly; a total of
 exactly 1,000 completes rather than reporting a truncated window. A cursor with a
 different well-formed public epoch is rejected as a changed session without
 trusting its claims; the previous process key is not persisted.
-This is an internal read-only capability only: no page-search HTTP route or UI
-pagination is available
-until the transport stage.
+The endpoint is source-build behavior, not part of the downloadable alpha.4.
+Browser pagination controls remain planned for TASK 04.
 
 The page explicitly initializes its search, preview, temporary collection,
 persistent collection, and native-preview lifecycles after their embedded ES
@@ -182,8 +183,8 @@ recognized by this baseline policy.
 ## Transports and clients
 
 The current server binds only to a loopback address and retains Host checks. The
-read-only `serve` API and demo remain unchanged; only `start` opts into management
-routes. Mutations require an exact Origin for the actual bound authority, a
+read-only `serve` API and demo expose bounded cursor search pages when supported;
+only `start` opts into management routes. Mutations require an exact Origin for the actual bound authority, a
 random process-scoped token in a custom header, and non-cross-site Fetch Metadata.
 JSON is strict and size limited; session responses are no-store. The capability
 is not persisted and is not protection from another process running as the same

@@ -84,6 +84,56 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/Unavailable'
+  /api/v1/search/pages:
+    get:
+      operationId: searchPages
+      summary: Read bounded cursor-based pages of a stable indexed search
+      description: Optional when the composed backend implements search.PageEngine. Read-only in start, desktop, serve and demo; all responses are no-store. Cursor is opaque and binds the complete query/filter tuple and fixed five-minute chain expiry. Search is limited to the first 1,000 ranked matches; total remains the full filtered count. Each JSON response, including its newline, is at most 524,288 bytes.
+      parameters:
+      - name: q
+        in: query
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 256}
+      - name: mode
+        in: query
+        schema: {type: string, enum: ['', literal, advanced], default: literal}
+      - name: source
+        in: query
+        description: Exact source ID filter.
+        schema: {type: string}
+      - name: format
+        in: query
+        schema: {type: string, enum: ['', all, text, pdf, docx], default: all}
+      - name: path_prefix
+        in: query
+        schema: {type: string, maxLength: 512}
+      - name: title_contains
+        in: query
+        schema: {type: string, maxLength: 128}
+      - name: limit
+        in: query
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      - name: cursor
+        in: query
+        description: Opaque signed continuation. Repeat the full original search tuple unchanged; do not supply offset or page.
+        schema: {type: string, maxLength: 4096}
+      responses:
+        '200':
+          description: One byte-bounded page. end_reason is complete, window_limit, or null when another page is available.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SearchPageResponse'}
+              examples:
+                complete: {value: {results: [], total: 0, offset: 0, returned: 0, limit: 20, window_limit: 1000, next_cursor: null, end_reason: complete}}
+                continuation: {value: {results: [], total: 24, offset: 20, returned: 4, limit: 20, window_limit: 1000, next_cursor: opaque-cursor, end_reason: null}}
+                windowLimit: {value: {results: [], total: 1200, offset: 980, returned: 20, limit: 20, window_limit: 1000, next_cursor: null, end_reason: window_limit}}
+        '400': {description: Invalid request/cursor (cursor_invalid, cursor_mismatch, or invalid_search_page_request)}
+        '404': {description: Optional page capability unavailable (search_page_unavailable)}
+        '409': {description: Cursor expired, stale, or from another process session (cursor_expired, cursor_stale, cursor_session_changed)}
+        '429': {description: Pager admission capacity is busy (search_page_busy)}
+        '500': {description: One required result row cannot fit the response bound (page_result_too_large); unknown internal errors are search_page_unavailable}
+        '503': {description: Pager is closed or unavailable (search_page_unavailable)}
+        '504': {description: Five-second pager budget exhausted (search_page_timeout)}
   /api/v1/sources:
     get:
       operationId: listSources
@@ -169,7 +219,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [management, desktop, open_originals, collection_persistence, diagnostics, client_api_version, search_modes, search_filters, pdf_title_only_evidence, passage_preview]
+                required: [management, desktop, open_originals, collection_persistence, diagnostics, client_api_version, search_modes, search_filters, pdf_title_only_evidence, passage_preview, search_pagination]
                 properties:
                   management: {type: boolean}
                   desktop: {type: boolean, description: Explicit desktop quit is available only in the desktop composition}
@@ -185,6 +235,7 @@ paths:
                     items: {type: string, enum: [source, format, path_prefix, title_contains]}
                   pdf_title_only_evidence: {type: boolean, const: true}
                   passage_preview: {type: boolean, description: True when indexed text windows are supported}
+                  search_pagination: {type: boolean, description: True only when this backend supports GET /api/v1/search/pages}
   /api/v1/documents/{id}/passage:
     get:
       operationId: getDocumentPassage
@@ -620,8 +671,8 @@ components:
           type: string
         code:
           type: string
-          enum: [syntax, missing_positive_term, query_too_large, invalid_mode, invalid_filter]
-          description: Stable search validation category; present for search validation errors.
+          enum: [syntax, missing_positive_term, query_too_large, invalid_mode, invalid_filter, cursor_invalid, cursor_mismatch, cursor_expired, cursor_stale, cursor_session_changed, search_page_busy, search_page_unavailable, search_page_timeout, page_result_too_large, invalid_limit, invalid_search_page_request]
+          description: Stable search validation or paged-search error category.
         position:
           type: integer
           minimum: 0
@@ -692,6 +743,25 @@ components:
         page_count: &id009
           type: integer
           minimum: 1
+    SearchPageResponse:
+      type: object
+      required: [results, total, offset, returned, limit, window_limit, next_cursor, end_reason]
+      properties:
+        results: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/SearchPageResult'}}
+        total: {type: integer, minimum: 0, description: Full filtered match count, including matches beyond the 1,000-result page window}
+        offset: {type: integer, minimum: 0, maximum: 999}
+        returned: {type: integer, minimum: 0, maximum: 100}
+        limit: {type: integer, minimum: 1, maximum: 100}
+        window_limit: {type: integer, const: 1000}
+        next_cursor: {type: [string, 'null'], maxLength: 4096}
+        end_reason: {type: [string, 'null'], enum: [complete, window_limit, null]}
+    SearchPageResult:
+      allOf:
+      - {$ref: '#/components/schemas/SearchResult'}
+      - type: object
+        required: [snippet_truncated]
+        properties:
+          snippet_truncated: {type: boolean}
     Source:
       type: object
       required:

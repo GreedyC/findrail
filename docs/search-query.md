@@ -64,6 +64,61 @@ them remain Literal. The existing MCP `findrail_search` accepts optional fields
 with the same names (query remains named `query`); its required `source_id`
 continues to restrict each call to one allowlisted source.
 
+## HTTP cursor pages (source builds)
+
+When `/api/v1/capabilities` reports `search_pagination: true`, clients can use
+the optional, read-only `GET /api/v1/search/pages` endpoint. Its defaults are
+`mode=literal`, `format=all`, and `limit=20` (allowed range 1–100). All read
+responses are `Cache-Control: no-store`. Keep the entire original query and
+filter tuple, including the same limit, on every continuation request:
+
+```sh
+curl -G 'http://127.0.0.1:7766/api/v1/search/pages' \
+  --data-urlencode 'q=retry budget' --data-urlencode 'mode=literal' \
+  --data-urlencode 'source=SOURCE_ID' --data-urlencode 'format=text' \
+  --data-urlencode 'path_prefix=docs' --data-urlencode 'title_contains=runbook' \
+  --data-urlencode 'limit=20'
+```
+
+If `next_cursor` is a string, repeat those exact parameters and add its complete
+opaque value as `cursor` (URL-encode it). Do not calculate or send an offset.
+To retry a previous page, reuse the cursor saved for that page; cursors are
+opaque, signed and bound to the query, mode, source, filters and limit. Changing
+any part of that tuple requires restarting from the first page.
+
+```sh
+curl -G 'http://127.0.0.1:7766/api/v1/search/pages' \
+  --data-urlencode 'q=retry budget' --data-urlencode 'mode=literal' \
+  --data-urlencode 'source=SOURCE_ID' --data-urlencode 'format=text' \
+  --data-urlencode 'path_prefix=docs' --data-urlencode 'title_contains=runbook' \
+  --data-urlencode 'limit=20' --data-urlencode 'cursor=OPAQUE_CURSOR_FROM_PREVIOUS_RESPONSE'
+```
+
+Each cursor chain expires five minutes after its first page; clicking Next does
+not extend that lifetime. A process restart invalidates usable cursors. A
+structurally valid cursor carrying another public process epoch returns
+`409 cursor_session_changed`; it is not a claim that a token with a destroyed
+process MAC key can be authenticated. Any `409` (`cursor_expired`,
+`cursor_stale`, or `cursor_session_changed`) means restart the search from its
+first page. Data changes conservatively invalidate a chain, including commits
+from note/collection changes; this is not limited to changes matching the query.
+
+The response has `results`, `total`, `offset`, `returned`, `limit`,
+`window_limit`, `next_cursor`, and `end_reason`. `total` is the full filtered
+count even when the result window stops at 1,000 (`end_reason: "window_limit"`);
+exactly 1,000 matches can end as `complete`. Each response, including its final
+newline, is at most 524,288 bytes. The pager may return fewer results than
+`limit` to fit that byte budget; its continuation begins at the next unreturned
+row. Nullable cursor and end reason are JSON `null` when absent. Empty results
+are `[]`. A `400` means the request/cursor must be corrected or restarted; `429`
+is bounded temporary pager admission pressure; `503`/`504` are temporary
+availability/deadline failures. An optional backend without page support
+reports `search_pagination: false` and returns `404 search_page_unavailable`.
+
+`serve`/`demo` remain read-only; page search adds no management capability. This
+source-build endpoint does not add browser pagination controls (planned for
+TASK 04) and is not included in the alpha.4 download.
+
 Advanced PDF matching treats each page as a separate field for phrases, so a
 phrase cannot cross a page boundary. Bare AND terms may occur on different
 pages or in the title. Exclusions apply to the whole document. PDF citations
