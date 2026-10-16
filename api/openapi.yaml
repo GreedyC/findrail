@@ -757,7 +757,7 @@ components:
     EvidenceBundlePreview:
       type: object
       additionalProperties: false
-      required: [entries, claim]
+      required: [entries]
       properties:
         entries:
           type: array
