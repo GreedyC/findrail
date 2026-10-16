@@ -140,8 +140,10 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 		if config.token == "" {
 			var token [32]byte
 			if _, err := rand.Read(token[:]); err != nil {
-				config.management,config.originals,config.desktop=nil,nil,nil
-			} else { config.token=fmt.Sprintf("%x",token[:]) }
+				config.management, config.originals, config.desktop = nil, nil, nil
+			} else {
+				config.token = fmt.Sprintf("%x", token[:])
+			}
 		}
 	}
 	pageEngine, hasPageEngine := backend.(search.PageEngine)

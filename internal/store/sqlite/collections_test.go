@@ -95,7 +95,17 @@ func TestPersistentCollectionSnapshotRevisionAndDocumentRemoval(t *testing.T) {
 	if historical.Entries[0].Evidence.ContentHash != oldHash || historical.Entries[0].Evidence.Text != "alpha beta gamma" {
 		t.Fatalf("refresh rewrote historical snapshot: %+v", historical.Entries[0])
 	}
-	historicalBundle,err:=s.ExportEvidenceBundle(ctx,c.ID);if err!=nil{t.Fatal(err)};historicalPreview,err:=s.PreviewEvidenceBundle(ctx,historicalBundle,map[string]string{"s1":conn.Source().ID});if err!=nil{t.Fatal(err)};if len(historicalPreview.Entries)!=1||historicalPreview.Entries[0].Status!="changed_hash"{t.Fatalf("historical evidence silently became current: %+v",historicalPreview)}
+	historicalBundle, err := s.ExportEvidenceBundle(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historicalPreview, err := s.PreviewEvidenceBundle(ctx, historicalBundle, map[string]string{"s1": conn.Source().ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(historicalPreview.Entries) != 1 || historicalPreview.Entries[0].Status != "changed_hash" {
+		t.Fatalf("historical evidence silently became current: %+v", historicalPreview)
+	}
 	if e = os.Remove(doc); e != nil {
 		t.Fatal(e)
 	}
@@ -396,7 +406,13 @@ func TestEvidenceBundleDOCXOffsetAndPDFPageTwoRoundTrip(t *testing.T) {
 	if len(b.Entries) != 2 || b.Entries[0].StartChar == 0 || b.Entries[0].MediaType != "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || b.Entries[1].Page != 2 || b.Entries[1].StartChar != 7 {
 		t.Fatalf("offset/page attribution lost: %+v", b.Entries)
 	}
-	badPage:=b;badPage.Entries=append([]evidencebundle.Entry(nil),b.Entries...);badPage.Entries[1].Page=3;badPagePreview,err:=s.PreviewEvidenceBundle(ctx,badPage,map[string]string{"s1":sourceID});if err!=nil||badPagePreview.Entries[1].Status!="invalid_page"{t.Fatalf("invalid PDF page preview=%+v err=%v",badPagePreview,err)}
+	badPage := b
+	badPage.Entries = append([]evidencebundle.Entry(nil), b.Entries...)
+	badPage.Entries[1].Page = 3
+	badPagePreview, err := s.PreviewEvidenceBundle(ctx, badPage, map[string]string{"s1": sourceID})
+	if err != nil || badPagePreview.Entries[1].Status != "invalid_page" {
+		t.Fatalf("invalid PDF page preview=%+v err=%v", badPagePreview, err)
+	}
 	p, err := s.PreviewEvidenceBundle(ctx, b, map[string]string{"s1": sourceID})
 	if err != nil {
 		t.Fatal(err)
@@ -411,7 +427,13 @@ func TestEvidenceBundleDOCXOffsetAndPDFPageTwoRoundTrip(t *testing.T) {
 	if len(imported.Entries) != 2 || imported.Entries[0].Excerpt != "DOCX quote" || imported.Entries[1].Evidence.Page != 2 || imported.Entries[1].Excerpt != "цитата" {
 		t.Fatalf("mixed import=%+v", imported)
 	}
-	reexport,err:=s.ExportEvidenceBundle(ctx,imported.ID);if err!=nil{t.Fatal(err)};if len(reexport.Entries)!=2||reexport.Entries[0].StartChar!=b.Entries[0].StartChar||reexport.Entries[1].Page!=2||reexport.Entries[1].StartChar!=7{t.Fatalf("re-export lost locators: %+v",reexport.Entries)}
+	reexport, err := s.ExportEvidenceBundle(ctx, imported.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reexport.Entries) != 2 || reexport.Entries[0].StartChar != b.Entries[0].StartChar || reexport.Entries[1].Page != 2 || reexport.Entries[1].StartChar != 7 {
+		t.Fatalf("re-export lost locators: %+v", reexport.Entries)
+	}
 }
 
 func writeSyntheticDOCX(t *testing.T, path string) {

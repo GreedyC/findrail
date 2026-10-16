@@ -13,7 +13,7 @@ import (
 	"github.com/Lephiziel/findrail/internal/evidencebundle"
 )
 
-const bundleCollectedAtFormat="2006-01-02T15:04:05.000000000Z07:00"
+const bundleCollectedAtFormat = "2006-01-02T15:04:05.000000000Z07:00"
 
 type BundleEntryStatus struct {
 	Index  int    `json:"index"`

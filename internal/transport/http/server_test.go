@@ -372,8 +372,29 @@ func TestManagementRequiresSameOriginCapabilityAndStrictJSON(t *testing.T) {
 		Claim  string          `json:"claim"`
 		Title  string          `json:"title"`
 	}{bundleRaw, preview.Claim, "HTTP imported"})
-	tampered:=append([]byte(nil),importBody...);var tamperedRequest struct{Bundle json.RawMessage `json:"bundle"`;Claim string `json:"claim"`;Title string `json:"title"`};if err=json.Unmarshal(tampered,&tamperedRequest);err!=nil{t.Fatal(err)};tamperedRequest.Claim=preview.Claim+"x";tampered,_=json.Marshal(tamperedRequest);if status,body,_:=bundleCall(http.MethodPost,"/api/v1/collections/import","",origin,capability.Token,"same-origin",tampered);status!=409{t.Fatalf("tampered preview claim status=%d body=%s",status,body)}
-	crossBundle:=bytes.Replace(bundleRaw,[]byte("HTTP bundle"),[]byte("Other bundle"),1);crossBody,_:=json.Marshal(struct{Bundle json.RawMessage `json:"bundle"`;Claim string `json:"claim"`;Title string `json:"title"`}{crossBundle,preview.Claim,"Cross bundle"});if status,body,_:=bundleCall(http.MethodPost,"/api/v1/collections/import","",origin,capability.Token,"same-origin",crossBody);status!=409{t.Fatalf("cross-bundle claim status=%d body=%s",status,body)}
+	tampered := append([]byte(nil), importBody...)
+	var tamperedRequest struct {
+		Bundle json.RawMessage `json:"bundle"`
+		Claim  string          `json:"claim"`
+		Title  string          `json:"title"`
+	}
+	if err = json.Unmarshal(tampered, &tamperedRequest); err != nil {
+		t.Fatal(err)
+	}
+	tamperedRequest.Claim = preview.Claim + "x"
+	tampered, _ = json.Marshal(tamperedRequest)
+	if status, body, _ := bundleCall(http.MethodPost, "/api/v1/collections/import", "", origin, capability.Token, "same-origin", tampered); status != 409 {
+		t.Fatalf("tampered preview claim status=%d body=%s", status, body)
+	}
+	crossBundle := bytes.Replace(bundleRaw, []byte("HTTP bundle"), []byte("Other bundle"), 1)
+	crossBody, _ := json.Marshal(struct {
+		Bundle json.RawMessage `json:"bundle"`
+		Claim  string          `json:"claim"`
+		Title  string          `json:"title"`
+	}{crossBundle, preview.Claim, "Cross bundle"})
+	if status, body, _ := bundleCall(http.MethodPost, "/api/v1/collections/import", "", origin, capability.Token, "same-origin", crossBody); status != 409 {
+		t.Fatalf("cross-bundle claim status=%d body=%s", status, body)
+	}
 	status, importedRaw, _ := bundleCall(http.MethodPost, "/api/v1/collections/import", "", origin, capability.Token, "same-origin", importBody)
 	if status != 201 {
 		t.Fatalf("bundle import status=%d body=%s", status, importedRaw)
