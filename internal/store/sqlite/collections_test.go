@@ -5,20 +5,48 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Lephiziel/findrail/internal/connectors/filesystem"
 	"github.com/Lephiziel/findrail/internal/evidencebundle"
 	"github.com/Lephiziel/findrail/internal/ingest"
 	"github.com/Lephiziel/findrail/internal/search"
 	"github.com/Lephiziel/findrail/pkg/connector"
+	modernsqlite "modernc.org/sqlite"
 )
+
+var bundleCancelTrigger = struct {
+	register         sync.Once
+	mu               sync.Mutex
+	entered, release chan struct{}
+	err              error
+}{}
+
+func registerBundleCancelTrigger(t *testing.T) {
+	t.Helper()
+	bundleCancelTrigger.register.Do(func() {
+		bundleCancelTrigger.err = modernsqlite.RegisterScalarFunction("findrail_test_cancel_bundle_insert", 0, func(*modernsqlite.FunctionContext, []driver.Value) (driver.Value, error) {
+			bundleCancelTrigger.mu.Lock()
+			entered, release := bundleCancelTrigger.entered, bundleCancelTrigger.release
+			bundleCancelTrigger.mu.Unlock()
+			close(entered)
+			<-release
+			return int64(1), nil
+		})
+	})
+	if bundleCancelTrigger.err != nil {
+		t.Fatal(bundleCancelTrigger.err)
+	}
+}
 
 func TestPersistentCollectionSnapshotRevisionAndDocumentRemoval(t *testing.T) {
 	ctx := context.Background()
@@ -129,6 +157,7 @@ func TestPersistentCollectionSnapshotRevisionAndDocumentRemoval(t *testing.T) {
 }
 
 func TestEvidenceBundleExportPreviewAndAtomicImport(t *testing.T) {
+	registerBundleCancelTrigger(t)
 	ctx := context.Background()
 	data, root := t.TempDir(), t.TempDir()
 	path := filepath.Join(root, "note.md")
@@ -279,6 +308,40 @@ func TestEvidenceBundleExportPreviewAndAtomicImport(t *testing.T) {
 		t.Fatalf("failed import left collection: before=%d after=%d err=%v", before, after, err)
 	}
 	if _, err = s.db.ExecContext(ctx, "DROP TRIGGER fail_second_bundle_entry"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.ExecContext(ctx, `CREATE TRIGGER cancel_bundle_after_first_entry AFTER INSERT ON evidence_collection_entries WHEN NEW.ordinal=0 BEGIN SELECT findrail_test_cancel_bundle_insert(); END`); err != nil {
+		t.Fatal(err)
+	}
+	bundleCancelTrigger.mu.Lock()
+	bundleCancelTrigger.entered = make(chan struct{})
+	bundleCancelTrigger.release = make(chan struct{})
+	entered, release := bundleCancelTrigger.entered, bundleCancelTrigger.release
+	bundleCancelTrigger.mu.Unlock()
+	cancelBundle := b
+	cancelBundle.Entries = append(append([]evidencebundle.Entry(nil), b.Entries...), b.Entries[0])
+	before = after
+	importCtx, cancelImport := context.WithCancel(ctx)
+	cancelResult := make(chan error, 1)
+	go func() {
+		_, e := s.ImportEvidenceBundle(importCtx, cancelBundle, map[string]string{"s1": sourceID}, "Canceled", preview.Binding)
+		cancelResult <- e
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		cancelImport()
+		t.Fatal("import did not reach first entry insert")
+	}
+	cancelImport()
+	close(release)
+	if e := <-cancelResult; !errors.Is(e, context.Canceled) {
+		t.Fatalf("mid-insert cancel error=%v", e)
+	}
+	if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM evidence_collections").Scan(&after); err != nil || after != before {
+		t.Fatalf("canceled import left collection: before=%d after=%d err=%v", before, after, err)
+	}
+	if _, err = s.db.ExecContext(ctx, "DROP TRIGGER cancel_bundle_after_first_entry"); err != nil {
 		t.Fatal(err)
 	}
 	// Registration re-creation with the same stable source ID invalidates the
