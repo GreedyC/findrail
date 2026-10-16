@@ -96,6 +96,14 @@ endpoints. The capability flag is true only for a writable management compositio
 with a complete bundle backend. These source-cycle capabilities are not part of
 the published alpha.4 binary.
 
+Only one HTTP bundle operation runs in the process at a time; `429 bundle_busy`
+means retry later. The five-second budget also covers receiving the request body;
+`504 bundle_timeout` means it expired. Invalid inputs return 400, exceeded limits
+return 413, and an expired preview or changed destination returns 409 and requires
+a fresh preview. Unexpected failures return a generic 500 without indexed text,
+private paths or database diagnostics. All responses are no-store. An absent
+`evidence_bundle` capability on an older API v1 server means false.
+
 Bundles preserve historical selected evidence, not a live link. If an indexed
 document has changed, moved, been forgotten, or is otherwise no longer current,
 the historical citation cannot automatically be restored to the current

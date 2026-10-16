@@ -31,8 +31,8 @@ type BundlePreview struct {
 // PreviewEvidenceBundle checks only the indexed snapshot; it never opens provenance.
 func (s *Store) PreviewEvidenceBundle(ctx context.Context, b evidencebundle.Bundle, mappings map[string]string) (BundlePreview, error) {
 	out := BundlePreview{Entries: make([]BundleEntryStatus, 0, len(b.Entries))}
-	if len(mappings) != len(b.Sources) {
-		return out, errors.New("every source alias must be mapped")
+	if err := validateBundleMappings(b, mappings); err != nil {
+		return out, err
 	}
 	tx, err := s.readers.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -111,11 +111,11 @@ func (s *Store) PreviewEvidenceBundle(ctx context.Context, b evidencebundle.Bund
 		}
 		var docID string
 		if err = tx.QueryRowContext(ctx, "SELECT id FROM documents WHERE source_id=? AND path=?", mappings[entry.SourceAlias], entry.RelativePath).Scan(&docID); err != nil {
-			continue
+			return out, err
 		}
 		ev, e := bundleEvidenceInTx(ctx, tx, docID, entry)
 		if e != nil {
-			continue
+			return out, e
 		}
 		item := CollectionEntry{Key: "00000000000000000000000000000000", Evidence: ev, Excerpt: entry.Text, Note: entry.Note, WholePreview: true, CollectedAt: projectedAt}
 		raw, e := json.Marshal(item)
@@ -163,6 +163,9 @@ func (s *Store) ImportEvidenceBundle(ctx context.Context, b evidencebundle.Bundl
 	}
 	if !collectionTitle(title) {
 		return out, ErrCollectionLimit
+	}
+	if err := validateBundleMappings(b, mappings); err != nil {
+		return out, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -277,7 +280,25 @@ func (s *Store) ImportEvidenceBundle(ctx context.Context, b evidencebundle.Bundl
 	if err = tx.Commit(); err != nil {
 		return out, err
 	}
-	return s.LoadCollection(ctx, id)
+	// Return precisely the snapshot that committed. A subsequent pooled read
+	// could time out or observe a concurrent edit after the import succeeded.
+	return Collection{ID: id, Title: title, Revision: 1, CreatedAt: now, UpdatedAt: now, EntryCount: len(items), Entries: items}, nil
+}
+
+func validateBundleMappings(b evidencebundle.Bundle, mappings map[string]string) error {
+	if _, err := evidencebundle.Encode(b); err != nil {
+		return err
+	}
+	if len(mappings) != len(b.Sources) {
+		return evidencebundle.ErrInvalid
+	}
+	for _, source := range b.Sources {
+		id := mappings[source.Alias]
+		if id == "" || len(id) > 512 || !utf8.ValidString(id) {
+			return evidencebundle.ErrInvalid
+		}
+	}
+	return nil
 }
 
 func bundleEvidenceInTx(ctx context.Context, tx *sql.Tx, docID string, entry evidencebundle.Entry) (search.Evidence, error) {

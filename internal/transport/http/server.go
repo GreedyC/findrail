@@ -97,6 +97,9 @@ type evidenceBundleBackend interface {
 
 var errBundleClaim = errors.New("preview claim invalid or expired")
 
+// All HTTP handlers in this process share the bundle memory/admission budget.
+var bundleOperationGate = make(chan struct{}, 1)
+
 type evidenceBundleClaim struct {
 	Digest   string            `json:"d"`
 	Mappings map[string]string `json:"m"`
@@ -115,12 +118,19 @@ func signEvidenceBundleClaim(secret []byte, b evidencebundle.Bundle, mappings ma
 	}
 	mac := hmac.New(sha256.New, secret)
 	_, _ = mac.Write(payload)
-	return base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+	token := base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	if len(token) > 32<<10 {
+		return "", sqlite.ErrCollectionLimit
+	}
+	return token, nil
 }
 
 func verifyEvidenceBundleClaim(secret []byte, token string, b evidencebundle.Bundle, now time.Time) (evidenceBundleClaim, error) {
+	if len(token) > 32<<10 {
+		return evidenceBundleClaim{}, errBundleClaim
+	}
 	parts := strings.Split(token, ".")
-	if len(parts) != 2 || len(token) > 32<<10 {
+	if len(parts) != 2 {
 		return evidenceBundleClaim{}, errBundleClaim
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
@@ -141,7 +151,7 @@ func verifyEvidenceBundleClaim(secret []byte, token string, b evidencebundle.Bun
 		return evidenceBundleClaim{}, errBundleClaim
 	}
 	digest, err := evidencebundle.Digest(b)
-	if err != nil || claim.Digest != digest || now.Unix() > claim.Expiry {
+	if err != nil || claim.Digest != digest || now.Unix() >= claim.Expiry {
 		return evidenceBundleClaim{}, errBundleClaim
 	}
 	return claim, nil
@@ -347,22 +357,39 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 		if _, err := rand.Read(secret[:]); err != nil {
 			bundleEnabled = false
 		} else {
-			gate := make(chan struct{}, 1)
 			bundleOperation := func(w http.ResponseWriter, r *http.Request, fn func(context.Context) error) {
 				select {
-				case gate <- struct{}{}:
-					defer func() { <-gate }()
+				case bundleOperationGate <- struct{}{}:
+					defer func() { <-bundleOperationGate }()
 				default:
 					writeJSON(w, 429, map[string]string{"error": "evidence bundle operation busy", "code": "bundle_busy"})
 					return
 				}
 				ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 				defer cancel()
+				// Context cancellation alone does not interrupt a blocked network
+				// body Read. Shorten the connection's read deadline as well.
+				controller := http.NewResponseController(w)
+				deadline, _ := ctx.Deadline()
+				if err := controller.SetReadDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
+					writeBundleError(w, err)
+					return
+				}
+				defer func() {
+					// Keep an expired deadline in force while net/http finishes
+					// the response and disposes of an incomplete request body.
+					if ctx.Err() == nil && time.Now().Before(deadline) {
+						_ = controller.SetReadDeadline(time.Time{})
+					}
+				}()
+				if ctx.Err() == context.Canceled {
+					return
+				}
 				if err := fn(ctx); err != nil {
 					if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 						writeJSON(w, 504, map[string]string{"error": "evidence bundle operation timed out", "code": "bundle_timeout"})
-					} else {
-						writeCollectionError(w, err)
+					} else if ctx.Err() != context.Canceled {
+						writeBundleError(w, err)
 					}
 				}
 			}
@@ -382,8 +409,8 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 					w.Header().Set("Content-Type", "application/json; charset=utf-8")
 					w.Header().Set("Content-Disposition", "attachment; filename=\"findrail-evidence-bundle.json\"")
 					w.WriteHeader(200)
-					_, e = w.Write(raw)
-					return e
+					_, _ = w.Write(raw)
+					return nil
 				})
 			})
 			mux.HandleFunc("POST /api/v1/collections/import/preview", func(w http.ResponseWriter, r *http.Request) {
@@ -403,7 +430,7 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 					}
 					b, e := evidencebundle.Decode(bytes.NewReader(body.Bundle))
 					if e != nil {
-						writeError(w, 400, "invalid evidence bundle")
+						writeBundleError(w, e)
 						return nil
 					}
 					p, e := bundleBackend.PreviewEvidenceBundle(ctx, b, body.Mappings)
@@ -416,14 +443,17 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 							return e
 						}
 					}
-					raw, _ := json.Marshal(p)
-					if len(raw) > 256<<10 {
+					raw, e := json.Marshal(p)
+					if e != nil {
+						return e
+					}
+					if len(raw)+1 > 256<<10 {
 						return sqlite.ErrCollectionLimit
 					}
 					w.Header().Set("Content-Type", "application/json; charset=utf-8")
 					w.WriteHeader(200)
-					_, e = w.Write(append(raw, '\n'))
-					return e
+					_, _ = w.Write(append(raw, '\n'))
+					return nil
 				})
 			})
 			mux.HandleFunc("POST /api/v1/collections/import", func(w http.ResponseWriter, r *http.Request) {
@@ -444,7 +474,7 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 					}
 					b, e := evidencebundle.Decode(bytes.NewReader(body.Bundle))
 					if e != nil {
-						writeError(w, 400, "invalid evidence bundle")
+						writeBundleError(w, e)
 						return nil
 					}
 					claim, claimErr := verifyEvidenceBundleClaim(secret[:], body.Claim, b, time.Now())
@@ -1138,7 +1168,8 @@ func decodeBundleWrapper(w http.ResponseWriter, r *http.Request, target any) boo
 		return false
 	}
 	b, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
-	if errors.Is(r.Context().Err(), context.DeadlineExceeded) {
+	var timeout net.Error
+	if errors.Is(r.Context().Err(), context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout() {
 		writeJSON(w, 504, map[string]string{"error": "evidence bundle operation timed out", "code": "bundle_timeout"})
 		return false
 	}
@@ -1150,7 +1181,10 @@ func decodeBundleWrapper(w http.ResponseWriter, r *http.Request, target any) boo
 		writeError(w, 400, "invalid bundle request")
 		return false
 	}
-	if !utf8.Valid(b) || !jsonObjectsUnique(b) {
+	if r.Context().Err() == context.Canceled {
+		return false
+	}
+	if !utf8.Valid(b) || !jsonObjectsUnique(b) || !jsonUnicodeScalarsValid(b) {
 		writeError(w, 400, "invalid bundle request")
 		return false
 	}
@@ -1193,6 +1227,57 @@ func decodeBundleWrapper(w http.ResponseWriter, r *http.Request, target any) boo
 		return false
 	}
 	return true
+}
+
+// JSON syntax has already been validated. Preserve scalar values instead of
+// allowing encoding/json to replace an unpaired escaped surrogate with U+FFFD.
+func jsonUnicodeScalarsValid(raw []byte) bool {
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		i++
+		if i >= len(raw) || raw[i] != 'u' {
+			continue
+		}
+		if i+4 >= len(raw) {
+			return false
+		}
+		value, err := strconv.ParseUint(string(raw[i+1:i+5]), 16, 16)
+		if err != nil {
+			return false
+		}
+		i += 4
+		if value >= 0xdc00 && value <= 0xdfff {
+			return false
+		}
+		if value >= 0xd800 && value <= 0xdbff {
+			if i+6 >= len(raw) || raw[i+1] != '\\' || raw[i+2] != 'u' {
+				return false
+			}
+			low, err := strconv.ParseUint(string(raw[i+3:i+7]), 16, 16)
+			if err != nil || low < 0xdc00 || low > 0xdfff {
+				return false
+			}
+			i += 6
+		}
+	}
+	return true
+}
+
+func writeBundleError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, evidencebundle.ErrLimit), errors.Is(err, sqlite.ErrCollectionLimit):
+		writeError(w, 413, "evidence bundle or destination collection exceeds its limits")
+	case errors.Is(err, evidencebundle.ErrInvalid):
+		writeError(w, 400, "invalid evidence bundle or source mappings")
+	case errors.Is(err, sqlite.ErrCollectionNotFound), errors.Is(err, search.ErrNotFound):
+		writeError(w, 404, "saved collection or indexed document not found")
+	case errors.Is(err, errBundleClaim), errors.Is(err, sqlite.ErrCollectionSnapshotChanged), errors.Is(err, sqlite.ErrCollectionConflict):
+		writeError(w, 409, "preview expired or indexed data changed; preview the bundle again")
+	default:
+		writeError(w, 500, "evidence bundle operation unavailable")
+	}
 }
 
 func jsonObjectsUnique(raw []byte) bool {

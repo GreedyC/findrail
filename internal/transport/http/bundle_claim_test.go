@@ -24,6 +24,9 @@ func TestEvidenceBundleClaimBindsDigestAndExpires(t *testing.T) {
 	if _, err = verifyEvidenceBundleClaim(secret, token, b, now.Add(5*time.Minute+time.Second)); err == nil {
 		t.Fatal("expired claim accepted")
 	}
+	if _, err = verifyEvidenceBundleClaim(secret, token, b, now.Add(5*time.Minute)); err == nil {
+		t.Fatal("claim accepted at its exact expiry")
+	}
 	tampered := "A" + token[1:]
 	if token[0] == 'A' {
 		tampered = "B" + token[1:]
@@ -35,5 +38,16 @@ func TestEvidenceBundleClaimBindsDigestAndExpires(t *testing.T) {
 	other.Title = "another bundle"
 	if _, err = verifyEvidenceBundleClaim(secret, token, other, now); err == nil {
 		t.Fatal("cross-bundle claim accepted")
+	}
+}
+
+func TestEvidenceBundleClaimLimitsBeforeAcceptingOrIssuing(t *testing.T) {
+	b := evidencebundle.Bundle{Title: "Synthetic bounded metadata"}
+	secret := []byte(strings.Repeat("k", 32))
+	if _, err := signEvidenceBundleClaim(secret, b, map[string]string{"s1": strings.Repeat("x", 32<<10)}, "binding", time.Now().Add(time.Minute)); err == nil {
+		t.Fatal("issued a claim larger than the import limit")
+	}
+	if _, err := verifyEvidenceBundleClaim(secret, strings.Repeat(".", 4<<20), b, time.Now()); err == nil {
+		t.Fatal("oversized raw claim accepted")
 	}
 }
