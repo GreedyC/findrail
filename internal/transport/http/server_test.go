@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -769,6 +770,162 @@ func TestCapabilitiesAdvertiseReadOnlyClientContract(t *testing.T) {
 			if values[i] != want[i] {
 				t.Fatalf("%s=%v", key, values)
 			}
+		}
+	}
+}
+
+func TestSearchPagesHTTPWalkAndOptionalCapability(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	root := t.TempDir()
+	docs := filepath.Join(root, "docs")
+	if err := os.Mkdir(docs, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 237; i++ {
+		name := filepath.Join(docs, fmt.Sprintf("doc-%03d.md", i))
+		if err := os.WriteFile(name, []byte("sharedpage marker unicode-λ <&>"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conn, err := filesystem.New(root, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexed, err := ingest.Run(ctx, store, conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := transport.Handler(store)
+	request := func(target string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7766"+target, nil)
+		r.Host = "127.0.0.1:7766"
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	for _, limit := range []int{1, 20, 100} {
+		t.Run(fmt.Sprintf("limit-%d", limit), func(t *testing.T) {
+			seen := map[string]bool{}
+			cursor := ""
+			for {
+				target := "/api/v1/search/pages?q=sharedpage&mode=literal&source=" + url.QueryEscape(indexed.Source.ID) + "&format=text&path_prefix=docs&title_contains=doc&limit=" + fmt.Sprint(limit)
+				if cursor != "" {
+					target += "&cursor=" + url.QueryEscape(cursor)
+				}
+				w := request(target)
+				if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" || len(w.Body.Bytes()) > 524288 || !strings.HasSuffix(w.Body.String(), "\n") {
+					t.Fatalf("page response status=%d bytes=%d headers=%v body=%s", w.Code, w.Body.Len(), w.Header(), w.Body.String())
+				}
+				var page search.PageResponse
+				if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+					t.Fatal(err)
+				}
+				if page.Total != 237 || page.Limit != limit || page.Offset != len(seen) || page.WindowLimit != 1000 || page.Returned != len(page.Results) {
+					t.Fatalf("page envelope: %+v", page)
+				}
+				for _, result := range page.Results {
+					if seen[result.ID] {
+						t.Fatalf("duplicate result %s", result.ID)
+					}
+					seen[result.ID] = true
+					if result.OriginalIdentity == "" || result.SnippetTruncated != false {
+						t.Fatalf("result metadata: %+v", result)
+					}
+				}
+				if page.NextCursor == nil {
+					if page.EndReason == nil || *page.EndReason != "complete" {
+						t.Fatalf("unexpected terminal page: %+v", page)
+					}
+					break
+				}
+				cursor = *page.NextCursor
+			}
+			if len(seen) != 237 {
+				t.Fatalf("walk returned %d results", len(seen))
+			}
+		})
+	}
+	for _, tc := range []struct{ target, code string }{
+		{"/api/v1/search/pages?q=sharedpage&limit=1&limit=2", "invalid_search_page_request"},
+		{"/api/v1/search/pages?q=sharedpage&offset=1", "invalid_search_page_request"},
+		{"/api/v1/search/pages?q=sharedpage&cursor=" + strings.Repeat("x", 5000), "cursor_invalid"},
+	} {
+		w := request(tc.target)
+		var body map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &body)
+		if w.Code != http.StatusBadRequest || body["code"] != tc.code || w.Header().Get("Cache-Control") != "no-store" {
+			t.Errorf("%s: status=%d body=%v", tc.target, w.Code, body)
+		}
+	}
+	cap := request("/api/v1/capabilities")
+	var caps map[string]any
+	_ = json.Unmarshal(cap.Body.Bytes(), &caps)
+	if caps["search_pagination"] != true || caps["client_api_version"] != float64(1) {
+		t.Fatalf("capabilities: %v", caps)
+	}
+	withoutPages := transport.Handler(pageUnavailableBackend{Backend: store})
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7766/api/v1/search/pages?q=x", nil)
+	withoutPages.ServeHTTP(w, r)
+	if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), `"code":"search_page_unavailable"`) || strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("optional route response: %d %s", w.Code, w.Body.String())
+	}
+	capW := httptest.NewRecorder()
+	r = httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7766/api/v1/capabilities", nil)
+	withoutPages.ServeHTTP(capW, r)
+	if !strings.Contains(capW.Body.String(), `"search_pagination":false`) {
+		t.Fatalf("missing false capability: %s", capW.Body.String())
+	}
+}
+
+type pageUnavailableBackend struct{ transport.Backend }
+
+type pageErrorBackend struct {
+	transport.Backend
+	err error
+}
+
+func (b pageErrorBackend) SearchPage(context.Context, search.PageRequest) (search.PageResponse, error) {
+	return search.PageResponse{}, b.err
+}
+
+func TestSearchPageHTTPErrorMapping(t *testing.T) {
+	store, err := sqlite.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	cases := []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{search.ErrCursorInvalid, 400, "cursor_invalid"},
+		{search.ErrCursorMismatch, 400, "cursor_mismatch"},
+		{search.ErrCursorExpired, 409, "cursor_expired"},
+		{search.ErrCursorStale, 409, "cursor_stale"},
+		{search.ErrCursorSessionChanged, 409, "cursor_session_changed"},
+		{search.ErrPageBusy, 429, "search_page_busy"},
+		{search.ErrPageClosed, 503, "search_page_unavailable"},
+		{search.ErrPageUnavailable, 503, "search_page_unavailable"},
+		{context.DeadlineExceeded, 504, "search_page_timeout"},
+		{search.ErrPageResultTooLarge, 500, "page_result_too_large"},
+		{errors.New("private SQL diagnostic"), 500, "search_page_unavailable"},
+	}
+	for _, tc := range cases {
+		handler := transport.Handler(pageErrorBackend{Backend: store, err: tc.err})
+		r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7766/api/v1/search/pages?q=marker", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		var body map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &body)
+		if w.Code != tc.status || body["code"] != tc.code || body["error"] == "" || strings.Contains(w.Body.String(), "private SQL") || w.Header().Get("Cache-Control") != "no-store" {
+			t.Errorf("%v mapped to status=%d body=%s", tc.err, w.Code, w.Body.String())
 		}
 	}
 }
