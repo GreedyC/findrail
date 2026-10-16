@@ -63,12 +63,32 @@ The first transport source-status interface uses the SQLite source-status type;
 move that DTO into a neutral package when a second storage adapter is justified.
 Do not create a second persistence abstraction solely to hide this small seam.
 
-The internal bounded page-query seam accepts an explicit short-lived SQLite read
-transaction and performs count, ranked rows, provenance identity, and PDF
-attribution through that same transaction. It bounds private offsets to the first
-1,000 matches and returns at most the requested page. This is a storage component
-for a future consistency coordinator: no page-search HTTP endpoint, cursor, or
-pagination capability is currently supplied by this query seam.
+The optional internal `search.PageEngine` is implemented by SQLite `Store.SearchPage`;
+the legacy search engine and HTTP API are unchanged. Page queries use the bounded
+query helper inside a short transaction on one lazily reserved query-only reader.
+Signed, process-local HMAC cursors carry a query-tuple digest, offset, connection-local
+`data_version` fence, and fixed five-minute expiry. A commit on another connection
+conservatively invalidates continuation, including source and metadata changes;
+the implementation does not claim to distinguish corpus changes from unrelated
+commits. Each Store admits one running and at most eight waiting page operations,
+uses a five-second deadline, and caps the fully encoded JSON page at 512 KiB.
+Admission and connection acquisition share the caller's deadline; initialization
+does not hold the Store mutex while waiting for a connection. Close cancels active
+and queued work, releases the pinned reader before closing the pool, and is
+idempotent. A lost pinned connection makes this pager unavailable until Store
+reopen; a different connection cannot reuse its fence counter. Cancelling an
+individual request does not create a new cursor session.
+
+Page defaults are limit 20, literal mode, and all formats. Paths are validated
+before normalizing a valid trailing slash; query, source and title text remain
+exact. A continuation retains its original five-minute expiry and may be replayed
+for previous-page navigation. Empty results complete explicitly; a total of
+exactly 1,000 completes rather than reporting a truncated window. A cursor with a
+different well-formed public epoch is rejected as a changed session without
+trusting its claims; the previous process key is not persisted.
+This is an internal read-only capability only: no page-search HTTP route or UI
+pagination is available
+until the transport stage.
 
 The page explicitly initializes its search, preview, temporary collection,
 persistent collection, and native-preview lifecycles after their embedded ES

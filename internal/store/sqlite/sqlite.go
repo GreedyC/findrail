@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -56,6 +57,13 @@ var evidenceWindowsSchema string
 type Store struct {
 	db, readers   *sql.DB
 	schemaVersion int
+	pagerMu       sync.Mutex
+	pager         *pageRuntime
+	pagerClosed   bool
+	pagerWG       sync.WaitGroup
+	pageNow       func() time.Time
+	closeOnce     sync.Once
+	closeErr      error
 }
 
 func (s *Store) SchemaInfo() SchemaInfo {
@@ -339,14 +347,30 @@ func (s *Store) Close() error {
 	if s == nil {
 		return nil
 	}
-	var errs []error
-	if s.readers != nil {
-		errs = append(errs, s.readers.Close())
-	}
-	if s.db != nil {
-		errs = append(errs, s.db.Close())
-	}
-	return errors.Join(errs...)
+	s.closeOnce.Do(func() {
+		s.pagerMu.Lock()
+		s.pagerClosed = true
+		p := s.pager
+		s.pagerMu.Unlock()
+		if p != nil {
+			p.cancel()
+		}
+		s.pagerWG.Wait()
+		var errs []error
+		if p != nil && p.conn != nil {
+			if err := p.conn.Close(); err != nil && !errors.Is(err, sql.ErrConnDone) {
+				errs = append(errs, err)
+			}
+		}
+		if s.readers != nil {
+			errs = append(errs, s.readers.Close())
+		}
+		if s.db != nil {
+			errs = append(errs, s.db.Close())
+		}
+		s.closeErr = errors.Join(errs...)
+	})
+	return s.closeErr
 }
 
 type scan struct {
