@@ -301,6 +301,48 @@ func TestDoctorBusyIndexReturnsBoundedDiagnostic(t *testing.T) {
 	}
 }
 
+func TestDoctorIntegrityOptInAndReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	store, err := sqlite.Open(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "findrail.db")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, stderr bytes.Buffer
+	err = cli.Run(context.Background(), []string{"doctor", "--data-dir", dir, "--integrity", "--json"}, &out, &stderr, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		ReportVersion int                                          `json:"report_version"`
+		Checks        []struct{ ID, Status, Code, Message string } `json:"checks"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("JSON report: %v", err)
+	}
+	if report.ReportVersion != 1 {
+		t.Fatalf("report version: %d", report.ReportVersion)
+	}
+	seen := map[string]bool{}
+	for _, check := range report.Checks {
+		seen[check.ID] = check.Status == "ok"
+	}
+	if !seen["integrity_quick_check"] || !seen["integrity_foreign_key_check"] {
+		t.Fatalf("integrity phases missing or unhealthy: %+v", report.Checks)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("integrity inspection changed index: %v", err)
+	}
+}
+
 func TestDoctorReadOnlyPermissionsWhenEnforced(t *testing.T) {
 	if os.PathSeparator == '\\' || os.Geteuid() == 0 {
 		t.Skip("file permission enforcement unavailable in this environment")
