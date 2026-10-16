@@ -499,7 +499,7 @@ func TestEvidenceBundleDOCXOffsetAndPDFPageTwoRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(b.Entries) != 2 || b.Entries[0].StartChar == 0 || b.Entries[0].MediaType != "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || b.Entries[1].Page != 2 || b.Entries[1].StartChar != 7 {
+	if len(b.Entries) != 2 || b.Entries[0].StartChar != 7 || b.Entries[0].MediaType != "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || b.Entries[1].Page != 2 || b.Entries[1].StartChar != 7 {
 		t.Fatalf("offset/page attribution lost: %+v", b.Entries)
 	}
 	badPage := b
