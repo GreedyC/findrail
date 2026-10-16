@@ -54,6 +54,7 @@ func TestGeneratedMCPConfigSDKJourney(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	lateBody := strings.Repeat("合成😀 filler ", 7000) + " latepassageanchor " + strings.Repeat("ending ", 100)
 	for _, id := range []string{"源-β", "denied"} {
 		scan, err := store.BeginScan(ctx, connector.Source{ID: id, Kind: "filesystem", Name: "synthetic"})
 		if err != nil {
@@ -64,8 +65,11 @@ func TestGeneratedMCPConfigSDKJourney(t *testing.T) {
 			_ = scan.Rollback()
 			t.Fatal(err)
 		}
-		body := strings.Repeat("合成😀 filler ", 4500) + " latepassageanchor " + strings.Repeat("ending ", 100)
-		if _, err := scan.Upsert(ctx, connector.Document{ID: "note-" + id, SourceID: id, Title: "late.md", Path: "late.md", URI: "file:///synthetic/late.md", MediaType: "text/markdown", Content: body, Hash: "synthetic-late-v1"}); err != nil {
+		if _, err := scan.Upsert(ctx, connector.Document{ID: "note-" + id, SourceID: id, Title: "late.md", Path: "late.md", URI: "file:///synthetic/late.md", MediaType: "text/markdown", Content: lateBody, Hash: "synthetic-late-v1"}); err != nil {
+			_ = scan.Rollback()
+			t.Fatal(err)
+		}
+		if _, err := scan.Upsert(ctx, connector.Document{ID: "word-" + id, SourceID: id, Title: "late.docx", Path: "late.docx", URI: "file:///synthetic/late.docx", MediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", Content: strings.Replace(lateBody, "latepassageanchor", "latewordanchor", 1), Hash: "synthetic-word-v1"}); err != nil {
 			_ = scan.Rollback()
 			t.Fatal(err)
 		}
@@ -139,17 +143,51 @@ func TestGeneratedMCPConfigSDKJourney(t *testing.T) {
 				late := call("findrail_search", map[string]any{"source_id": "源-β", "query": "latepassageanchor"}, false)
 				lateHit := late["results"].([]any)[0].(map[string]any)
 				identity := lateHit["original_identity"].(string)
+				word := call("findrail_search", map[string]any{"source_id": "源-β", "query": "latewordanchor"}, false)
+				wordHit := word["results"].([]any)[0].(map[string]any)
+				wordPassage := call("findrail_get_evidence", map[string]any{"source_id": "源-β", "document_id": wordHit["id"], "query": "latewordanchor", "original_identity": wordHit["original_identity"]}, false)
+				if wordPassage["text_start_char"].(float64) < 65536 || !strings.Contains(wordPassage["text"].(string), "latewordanchor") {
+					t.Fatalf("late DOCX indexed passage: %+v", wordPassage)
+				}
 				passage := call("findrail_get_evidence", map[string]any{"source_id": "源-β", "document_id": "note-源-β", "query": "latepassageanchor", "original_identity": identity}, false)
-				if passage["match_kind"] != "literal_body" || !strings.Contains(passage["text"].(string), "latepassageanchor") || passage["text_start_char"].(float64) < 8000 {
+				if passage["match_kind"] != "literal_body" || !strings.Contains(passage["text"].(string), "latepassageanchor") || passage["text_start_char"].(float64) < 65536 {
 					t.Fatalf("late passage anchor: %+v", passage)
 				}
 				continued := call("findrail_get_evidence", map[string]any{"source_id": "源-β", "document_id": "note-源-β", "start_char": 10000, "original_identity": identity}, false)
 				if continued["text_start_char"] != float64(10000) {
 					t.Fatalf("manual continuation: %+v", continued)
 				}
+				if continued["has_more"] != true || continued["next_start_char"].(float64) <= 10000 {
+					t.Fatalf("continuation must advance: %+v", continued)
+				}
+				next := int(continued["next_start_char"].(float64))
+				window := call("findrail_get_evidence", map[string]any{"source_id": "源-β", "document_id": "note-源-β", "start_char": next, "original_identity": identity}, false)
+				text := window["text"].(string)
+				if window["text_start_char"] != float64(next) || text != string([]rune(lateBody)[next:next+len([]rune(text))]) {
+					t.Fatalf("continuation changed Unicode offsets: %+v", window)
+				}
+				eof := len([]rune(lateBody))
+				last := call("findrail_get_evidence", map[string]any{"source_id": "源-β", "document_id": "note-源-β", "start_char": eof, "original_identity": identity}, false)
+				if last["has_more"] != false || last["text"] != "" || last["next_start_char"] != nil {
+					t.Fatalf("EOF continuation: %+v", last)
+				}
+				for _, options := range []map[string]any{
+					{"start_char": eof + 1, "original_identity": identity},
+					{"start_char": 0, "original_identity": "stale"},
+					{"start_char": 0},
+					{"start_char": 0, "query": "latepassageanchor", "original_identity": identity},
+					{"start_char": 0, "page": 1, "original_identity": identity},
+				} {
+					options["source_id"], options["document_id"] = "源-β", "note-源-β"
+					call("findrail_get_evidence", options, true)
+				}
+				call("findrail_get_evidence", map[string]any{"source_id": "源-β", "document_id": "note-denied", "start_char": 0, "original_identity": identity}, true)
 				evidence := call("findrail_get_evidence", map[string]any{"source_id": "源-β", "document_id": "doc-源-β", "page": 2}, false)
 				if evidence["page"] != float64(2) || evidence["page_count"] != float64(2) || evidence["text"] != "scopedneedle page two" {
 					t.Fatalf("PDF page attribution: %+v", evidence)
+				}
+				if _, ok := evidence["has_more"]; ok {
+					t.Fatal("legacy PDF evidence must not claim passage continuation")
 				}
 				call("findrail_search", map[string]any{"source_id": "denied", "query": "scopedneedle"}, true)
 				call("findrail_get_evidence", map[string]any{"source_id": "denied", "document_id": "doc-denied"}, true)

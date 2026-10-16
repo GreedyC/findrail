@@ -272,10 +272,10 @@ type evidenceOutput struct {
 	TruncationReasons []string `json:"truncation_reasons"`
 	IndexedSnapshot   bool     `json:"indexed_snapshot"`
 	ContentUntrusted  bool     `json:"content_untrusted"`
-	TextStartChar     int      `json:"text_start_char"`
-	TextTotalChars    int      `json:"text_total_chars"`
+	TextStartChar     *int     `json:"text_start_char,omitempty"`
+	TextTotalChars    *int     `json:"text_total_chars,omitempty"`
 	MatchKind         string   `json:"match_kind,omitempty"`
-	HasMore           bool     `json:"has_more"`
+	HasMore           *bool    `json:"has_more,omitempty"`
 	NextStartChar     *int     `json:"next_start_char,omitempty"`
 }
 
@@ -397,6 +397,9 @@ func (s *Server) evidence(ctx context.Context, _ *mcp.CallToolRequest, input evi
 		return err
 	})
 	if err != nil {
+		if passage {
+			return s.errorResult(s.mapBackendError(err, "passage unavailable"))
+		}
 		return s.errorResult(s.mapEvidenceError(err))
 	}
 	if evidence.ID != input.DocumentID || evidence.SourceID != input.SourceID || evidence.Page < 0 || evidence.PageCount < 0 || (evidence.PageCount == 0 && evidence.Page != 0) || (evidence.PageCount > 0 && evidence.Page > evidence.PageCount) {
@@ -404,6 +407,9 @@ func (s *Server) evidence(ctx context.Context, _ *mcp.CallToolRequest, input evi
 	}
 	if passage && evidence.OriginalIdentity != input.OriginalIdentity {
 		return s.errorResult(toolError{"document_unavailable", "Indexed document identity changed; search again before requesting evidence."})
+	}
+	if passage && (evidence.PageCount != 0 || evidence.Page != 0 || evidence.TextStartChar < 0 || evidence.TextTotalChars < evidence.TextStartChar || len([]rune(evidence.Text)) > evidence.TextTotalChars-evidence.TextStartChar) {
+		return s.errorResult(toolError{"backend_unavailable", "Evidence backend returned invalid passage bounds."})
 	}
 	if (page > 0 && evidence.Page != page) || (page == 0 && evidence.PageCount > 0 && evidence.Page != 1) {
 		return s.errorResult(toolError{"backend_unavailable", "Evidence backend returned an invalid result."})
@@ -421,10 +427,12 @@ func (s *Server) evidence(ctx context.Context, _ *mcp.CallToolRequest, input evi
 		reasons = append(reasons, "mcp_text_limit")
 	}
 	chars := len([]rune(text))
-	result := evidenceOutput{ID: evidence.ID, OriginalIdentity: evidence.OriginalIdentity, Title: evidence.Title, URI: evidence.URI, Path: evidence.Path, SourceID: evidence.SourceID, SourceName: evidence.SourceName, MediaType: evidence.MediaType, ContentHash: evidence.ContentHash, ModifiedAt: evidence.ModifiedAt, Page: evidence.Page, PageCount: evidence.PageCount, Text: text, TextChars: chars, Truncated: len(reasons) > 0, TruncationReasons: reasons, IndexedSnapshot: true, ContentUntrusted: true, TextStartChar: evidence.TextStartChar, TextTotalChars: evidence.TextTotalChars, MatchKind: evidence.MatchKind, HasMore: evidence.TextStartChar+chars < evidence.TextTotalChars}
-	if result.HasMore {
-		next := result.TextStartChar + chars
-		result.NextStartChar = &next
+	result := evidenceOutput{ID: evidence.ID, OriginalIdentity: evidence.OriginalIdentity, Title: evidence.Title, URI: evidence.URI, Path: evidence.Path, SourceID: evidence.SourceID, SourceName: evidence.SourceName, MediaType: evidence.MediaType, ContentHash: evidence.ContentHash, ModifiedAt: evidence.ModifiedAt, Page: evidence.Page, PageCount: evidence.PageCount, Text: text, TextChars: chars, Truncated: len(reasons) > 0, TruncationReasons: reasons, IndexedSnapshot: true, ContentUntrusted: true}
+	if passage {
+		result.TextStartChar = intPtr(evidence.TextStartChar)
+		result.TextTotalChars = intPtr(evidence.TextTotalChars)
+		result.MatchKind = evidence.MatchKind
+		updateContinuation(&result)
 	}
 	return s.fitEvidence(result)
 }
@@ -537,7 +545,9 @@ func (s *Server) fitEvidence(result evidenceOutput) (*mcp.CallToolResult, any, e
 	if wire, err := s.renderResult(result, false); err == nil {
 		return wire, nil, nil
 	}
-	lo, hi := 0, len(original)
+	// A successful nonempty response must make progress. Returning an empty
+	// cropped window would repeat next_start_char indefinitely.
+	lo, hi := 1, len(original)
 	var best *mcp.CallToolResult
 	for lo <= hi {
 		mid := lo + (hi-lo)/2
@@ -546,12 +556,7 @@ func (s *Server) fitEvidence(result evidenceOutput) (*mcp.CallToolResult, any, e
 		candidate.TextChars = mid
 		candidate.Truncated = true
 		candidate.TruncationReasons = appendUnique(candidate.TruncationReasons, "mcp_response_budget")
-		candidate.HasMore = candidate.TextStartChar+mid < candidate.TextTotalChars
-		candidate.NextStartChar = nil
-		if candidate.HasMore {
-			next := candidate.TextStartChar + mid
-			candidate.NextStartChar = &next
-		}
+		updateContinuation(&candidate)
 		wire, err := s.renderResult(candidate, false)
 		if err == nil {
 			best = wire
@@ -564,6 +569,19 @@ func (s *Server) fitEvidence(result evidenceOutput) (*mcp.CallToolResult, any, e
 		return s.errorResult(toolError{"response_too_large", "The response is too large."})
 	}
 	return best, nil, nil
+}
+
+func updateContinuation(result *evidenceOutput) {
+	if result.TextStartChar == nil || result.TextTotalChars == nil {
+		return
+	}
+	hasMore := result.TextChars < *result.TextTotalChars-*result.TextStartChar
+	result.HasMore = &hasMore
+	result.NextStartChar = nil
+	if hasMore {
+		next := *result.TextStartChar + result.TextChars
+		result.NextStartChar = &next
+	}
 }
 
 func (s *Server) renderResult(value any, isError bool) (*mcp.CallToolResult, error) {

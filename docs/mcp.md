@@ -118,6 +118,9 @@ returns `text_start_char`, `text_total_chars`, and `match_kind`; `has_more` and
 `next_start_char` indicate bounded continuation. Offsets count Unicode code
 points from indexed text. `match_kind` distinguishes body anchors, title-only
 matches and unavailable anchors; title matches do not claim a body phrase.
+Continuation fields are present only for passage requests; legacy prefix/PDF
+reads do not claim a known total or continuation. A response byte budget that
+cannot return even one code point fails rather than repeating an empty window.
 
 Defaults and bounds are configurable at startup:
 
