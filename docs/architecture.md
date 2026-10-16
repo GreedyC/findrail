@@ -63,6 +63,13 @@ The first transport source-status interface uses the SQLite source-status type;
 move that DTO into a neutral package when a second storage adapter is justified.
 Do not create a second persistence abstraction solely to hide this small seam.
 
+The internal bounded page-query seam accepts an explicit short-lived SQLite read
+transaction and performs count, ranked rows, provenance identity, and PDF
+attribution through that same transaction. It bounds private offsets to the first
+1,000 matches and returns at most the requested page. This is a storage component
+for a future consistency coordinator: no page-search HTTP endpoint, cursor, or
+pagination capability is currently supplied by this query seam.
+
 The page explicitly initializes its search, preview, temporary collection,
 persistent collection, and native-preview lifecycles after their embedded ES
 modules load. Search composes preview through an explicit lifecycle factory and
