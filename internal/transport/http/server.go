@@ -3,9 +3,12 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,9 +21,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Lephiziel/findrail/internal/desktop"
 	"github.com/Lephiziel/findrail/internal/diagnostics"
+	"github.com/Lephiziel/findrail/internal/evidencebundle"
 	"github.com/Lephiziel/findrail/internal/originals"
 	"github.com/Lephiziel/findrail/internal/search"
 	"github.com/Lephiziel/findrail/internal/sourceapp"
@@ -83,6 +88,14 @@ type collectionBackend interface {
 	SaveCollection(context.Context, string, int64, string, []sqlite.CollectionEdit) (sqlite.Collection, error)
 	DeleteCollection(context.Context, string, int64) error
 }
+
+type evidenceBundleBackend interface {
+	ExportEvidenceBundle(context.Context, string) (evidencebundle.Bundle, error)
+	PreviewEvidenceBundle(context.Context, evidencebundle.Bundle, map[string]string) (sqlite.BundlePreview, error)
+	ImportEvidenceBundle(context.Context, evidencebundle.Bundle, map[string]string, string, string) (sqlite.Collection, error)
+}
+
+var errBundleClaim = errors.New("preview claim invalid or expired")
 
 type Option func(*options)
 
@@ -266,6 +279,149 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 			}
 			w.WriteHeader(204)
 		})
+	}
+	bundleBackend, hasBundle := backend.(evidenceBundleBackend)
+	bundleEnabled := config.management != nil && hasCollections && hasBundle
+	if bundleEnabled {
+		var secret [32]byte
+		if _, err := rand.Read(secret[:]); err != nil {
+			bundleEnabled = false
+		} else {
+			gate := make(chan struct{}, 1)
+			bundleOperation := func(w http.ResponseWriter, r *http.Request, fn func(context.Context) error) {
+				select {
+				case gate <- struct{}{}:
+					defer func() { <-gate }()
+				default:
+					writeJSON(w, 429, map[string]string{"error": "evidence bundle operation busy", "code": "bundle_busy"})
+					return
+				}
+				ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+				defer cancel()
+				if err := fn(ctx); err != nil {
+					if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+						writeJSON(w, 504, map[string]string{"error": "evidence bundle operation timed out", "code": "bundle_timeout"})
+					} else {
+						writeCollectionError(w, err)
+					}
+				}
+			}
+			mux.HandleFunc("GET /api/v1/collections/{id}/bundle", func(w http.ResponseWriter, r *http.Request) {
+				if !collectionReadAllowed(w, r, config) {
+					return
+				}
+				bundleOperation(w, r, func(ctx context.Context) error {
+					b, e := bundleBackend.ExportEvidenceBundle(ctx, r.PathValue("id"))
+					if e != nil {
+						return e
+					}
+					raw, e := evidencebundle.Encode(b)
+					if e != nil {
+						return e
+					}
+					w.Header().Set("Content-Type", "application/json; charset=utf-8")
+					w.Header().Set("Content-Disposition", "attachment; filename=\"findrail-evidence-bundle.json\"")
+					w.WriteHeader(200)
+					_, e = w.Write(raw)
+					return e
+				})
+			})
+			mux.HandleFunc("POST /api/v1/collections/import/preview", func(w http.ResponseWriter, r *http.Request) {
+				if !mutationAllowed(w, r, config) {
+					return
+				}
+				var body struct {
+					Bundle   json.RawMessage   `json:"bundle"`
+					Mappings map[string]string `json:"mappings"`
+				}
+				if !decodeBundleWrapper(w, r, &body) {
+					return
+				}
+				b, e := evidencebundle.Decode(bytes.NewReader(body.Bundle))
+				if e != nil {
+					writeError(w, 400, "invalid evidence bundle")
+					return
+				}
+				bundleOperation(w, r, func(ctx context.Context) error {
+					p, e := bundleBackend.PreviewEvidenceBundle(ctx, b, body.Mappings)
+					if e != nil {
+						return e
+					}
+					allMatch := true
+					for _, status := range p.Entries {
+						if status.Status != "match" {
+							allMatch = false
+							break
+						}
+					}
+					if allMatch {
+						digest, _ := evidencebundle.Digest(b)
+						payload, _ := json.Marshal(struct {
+							Digest   string            `json:"d"`
+							Mappings map[string]string `json:"m"`
+							Binding  string            `json:"b"`
+							Expiry   int64             `json:"e"`
+						}{digest, body.Mappings, p.Binding, time.Now().Add(5 * time.Minute).Unix()})
+						mac := hmac.New(sha256.New, secret[:])
+						mac.Write(payload)
+						p.Claim = base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+					}
+					raw, _ := json.Marshal(p)
+					if len(raw) > 256<<10 {
+						return sqlite.ErrCollectionLimit
+					}
+					w.Header().Set("Content-Type", "application/json; charset=utf-8")
+					w.WriteHeader(200)
+					_, e = w.Write(append(raw, '\n'))
+					return e
+				})
+			})
+			mux.HandleFunc("POST /api/v1/collections/import", func(w http.ResponseWriter, r *http.Request) {
+				if !mutationAllowed(w, r, config) {
+					return
+				}
+				var body struct {
+					Bundle json.RawMessage `json:"bundle"`
+					Claim  string          `json:"claim"`
+					Title  string          `json:"title"`
+				}
+				if !decodeBundleWrapper(w, r, &body) {
+					return
+				}
+				b, e := evidencebundle.Decode(bytes.NewReader(body.Bundle))
+				if e != nil {
+					writeError(w, 400, "invalid evidence bundle")
+					return
+				}
+				bundleOperation(w, r, func(ctx context.Context) error {
+					parts := strings.Split(body.Claim, ".")
+					if len(parts) != 2 || len(body.Claim) > 32<<10 {
+						return errBundleClaim
+					}
+					payload, pe := base64.RawURLEncoding.DecodeString(parts[0])
+					sig, se := base64.RawURLEncoding.DecodeString(parts[1])
+					mac := hmac.New(sha256.New, secret[:])
+					mac.Write(payload)
+					var claim struct {
+						Digest   string            `json:"d"`
+						Mappings map[string]string `json:"m"`
+						Binding  string            `json:"b"`
+						Expiry   int64             `json:"e"`
+					}
+					ce := json.Unmarshal(payload, &claim)
+					digest, _ := evidencebundle.Digest(b)
+					if pe != nil || se != nil || ce != nil || !hmac.Equal(sig, mac.Sum(nil)) || claim.Digest != digest || time.Now().Unix() > claim.Expiry {
+						return errBundleClaim
+					}
+					v, e := bundleBackend.ImportEvidenceBundle(ctx, b, claim.Mappings, body.Title, claim.Binding)
+					if e != nil {
+						return e
+					}
+					writeJSON(w, 201, v)
+					return nil
+				})
+			})
+		}
 	}
 	if config.originals != nil && (config.management == nil || config.authority == "" || config.openOriginal == nil) {
 		config.originals = nil
@@ -576,6 +732,7 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 	mux.HandleFunc("GET /api/v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{
 			"management":              config.management != nil,
+			"evidence_bundle":         bundleEnabled,
 			"collection_persistence":  config.management != nil && hasCollections,
 			"open_originals":          config.originals != nil,
 			"desktop":                 config.desktop != nil,
@@ -947,6 +1104,108 @@ func decodeCollectionMutation(w http.ResponseWriter, r *http.Request, target any
 	}
 	return true
 }
+
+func decodeBundleWrapper(w http.ResponseWriter, r *http.Request, target any) bool {
+	const limit = 5 << 20
+	if r.ContentLength > limit {
+		writeError(w, 413, "request too large")
+		return false
+	}
+	b, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+	if err != nil || len(b) > limit {
+		writeError(w, 413, "request too large")
+		return false
+	}
+	if !utf8.Valid(b) || !jsonObjectsUnique(b) {
+		writeError(w, 400, "invalid bundle request")
+		return false
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.DisallowUnknownFields()
+	if d.Decode(target) != nil {
+		writeError(w, 400, "invalid bundle request")
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(b, &fields) != nil {
+		writeError(w, 400, "invalid bundle request")
+		return false
+	}
+	for key := range fields {
+		if key != "bundle" && key != "mappings" && key != "claim" && key != "title" {
+			writeError(w, 400, "invalid bundle request")
+			return false
+		}
+	}
+	if fields["bundle"] == nil {
+		writeError(w, 400, "invalid bundle request")
+		return false
+	}
+	if fields["mappings"] == nil && fields["claim"] == nil {
+		writeError(w, 400, "invalid bundle request")
+		return false
+	}
+	if fields["claim"] == nil && fields["mappings"] == nil || fields["claim"] != nil && (fields["title"] == nil || fields["mappings"] != nil) {
+		writeError(w, 400, "invalid bundle request")
+		return false
+	}
+	var extra any
+	if d.Decode(&extra) != io.EOF {
+		writeError(w, 400, "invalid bundle request")
+		return false
+	}
+	return true
+}
+
+func jsonObjectsUnique(raw []byte) bool {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	var value func() bool
+	value = func() bool {
+		t, e := d.Token()
+		if e != nil {
+			return false
+		}
+		delim, ok := t.(json.Delim)
+		if !ok {
+			return true
+		}
+		switch delim {
+		case '{':
+			seen := map[string]bool{}
+			for d.More() {
+				k, e := d.Token()
+				if e != nil {
+					return false
+				}
+				key, ok := k.(string)
+				if !ok || seen[key] {
+					return false
+				}
+				seen[key] = true
+				if !value() {
+					return false
+				}
+			}
+			end, e := d.Token()
+			return e == nil && end == json.Delim('}')
+		case '[':
+			for d.More() {
+				if !value() {
+					return false
+				}
+			}
+			end, e := d.Token()
+			return e == nil && end == json.Delim(']')
+		default:
+			return false
+		}
+	}
+	if !value() {
+		return false
+	}
+	_, err := d.Token()
+	return err == io.EOF
+}
 func collectionReadAllowed(w http.ResponseWriter, r *http.Request, c options) bool {
 	t := r.Header.Get("X-Findrail-Token")
 	origins := r.Header.Values("Origin")
@@ -962,6 +1221,8 @@ func writeCollectionError(w http.ResponseWriter, e error) {
 		writeError(w, 404, e.Error())
 	case errors.Is(e, sqlite.ErrCollectionSnapshotChanged):
 		writeError(w, 409, e.Error())
+	case errors.Is(e, errBundleClaim):
+		writeError(w, 409, "preview claim expired or is invalid")
 	case errors.Is(e, sqlite.ErrCollectionConflict):
 		writeError(w, 409, "collection revision conflict")
 	case errors.Is(e, sqlite.ErrCollectionLimit):

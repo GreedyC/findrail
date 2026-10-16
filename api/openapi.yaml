@@ -279,13 +279,14 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [management, desktop, open_originals, collection_persistence, diagnostics, client_api_version, search_modes, search_filters, pdf_title_only_evidence, passage_preview]
+                required: [management, desktop, open_originals, collection_persistence, diagnostics, evidence_bundle, client_api_version, search_modes, search_filters, pdf_title_only_evidence, passage_preview]
                 properties:
                   management: {type: boolean}
                   desktop: {type: boolean, description: Explicit desktop quit is available only in the desktop composition}
                   open_originals: {type: boolean}
                   collection_persistence: {type: boolean, description: "True only for writable start composition"}
                   diagnostics: {type: boolean, description: "True when the opened backend exposes a bounded content-free support report"}
+                  evidence_bundle: {type: boolean, description: "True only when writable management and a complete bundle-capable collection backend are available"}
                   client_api_version: {type: integer, const: 1}
                   search_modes:
                     type: array
@@ -330,6 +331,49 @@ paths:
               schema: {$ref: '#/components/schemas/DiagnosticsReport'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '500': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/collections/{id}/bundle:
+    get:
+      operationId: exportEvidenceBundle
+      summary: Export one saved collection revision as a portable evidence bundle (start/desktop only)
+      parameters: [{$ref: '#/components/parameters/ManagementToken'}, {name: id, in: path, required: true, schema: {type: string}}]
+      responses:
+        '200': {description: JSON attachment; a single saved collection snapshot, max bundle size 4 MiB, content: {application/json: {schema: {$ref: '#/components/schemas/EvidenceBundle'}}}}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {description: Collection does not exist}
+  /api/v1/collections/import/preview:
+    post:
+      operationId: previewEvidenceBundleImport
+      summary: Match every bundle citation against explicitly mapped indexed sources (start/desktop only)
+      parameters: [{$ref: '#/components/parameters/ManagementToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, required: [bundle, mappings], properties: {bundle: {$ref: '#/components/schemas/EvidenceBundle'}, mappings: {type: object, minProperties: 0, maxProperties: 40, additionalProperties: {type: string}}}}
+      responses:
+        '200': {description: Per-entry status and five-minute process-local claim; response at most 256 KiB, content: {application/json: {schema: {$ref: '#/components/schemas/EvidenceBundlePreview'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '409': {description: Bundle mapping or indexed snapshot changed}
+        '413': {description: Request exceeds 5 MiB}
+        '429': {description: Bundle operation capacity is busy; retry later}
+        '504': {description: Five-second operation deadline exceeded}
+  /api/v1/collections/import:
+    post:
+      operationId: importEvidenceBundle
+      summary: Atomically create a new collection from a previously previewed bundle (start/desktop only)
+      parameters: [{$ref: '#/components/parameters/ManagementToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, required: [bundle, claim, title], properties: {bundle: {$ref: '#/components/schemas/EvidenceBundle'}, claim: {type: string, maxLength: 32768}, title: {type: string, minLength: 1, maxLength: 256}}}
+      responses:
+        '201': {description: Newly created collection at revision 1}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '409': {description: Claim expired/tampered, source mapping changed, or indexed data changed}
+        '413': {description: Request exceeds 5 MiB or destination collection quota}
+        '429': {description: Bundle operation capacity is busy; retry later}
+        '504': {description: Five-second operation deadline exceeded}
   /api/v1/collections:
     get:
       operationId: listEvidenceCollections
@@ -700,6 +744,32 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    EvidenceBundle:
+      type: object
+      additionalProperties: false
+      required: [format, version, title, sources, entries]
+      properties:
+        format: {type: string, const: findrail-evidence-bundle}
+        version: {type: integer, const: 1}
+        title: {type: string, minLength: 1, maxLength: 256}
+        sources: {type: array, maxItems: 40, items: {type: object, additionalProperties: false, required: [alias, kind, display_name], properties: {alias: {type: string, pattern: '^s([1-9]|[1-3][0-9]|40)$'}, kind: {type: string, enum: [filesystem, github, archive]}, display_name: {type: string, maxLength: 512}}}}
+        entries: {type: array, maxItems: 40, items: {type: object, additionalProperties: false, required: [source_alias, relative_path, media_type, content_hash, page, start_char, text, note], properties: {source_alias: {type: string}, relative_path: {type: string, maxLength: 2048}, media_type: {type: string, maxLength: 255}, content_hash: {type: string, pattern: '^[0-9a-f]{64}$'}, page: {type: integer, minimum: 0, maximum: 100000}, start_char: {type: integer, minimum: 0, maximum: 2147483647}, text: {type: string, minLength: 1, maxLength: 262144}, note: {type: string, maxLength: 2048}}}}
+    EvidenceBundlePreview:
+      type: object
+      additionalProperties: false
+      required: [entries, claim]
+      properties:
+        entries:
+          type: array
+          maxItems: 40
+          items:
+            type: object
+            additionalProperties: false
+            required: [index, status]
+            properties:
+              index: {type: integer, minimum: 0, maximum: 39}
+              status: {type: string, enum: [match, unknown_source, missing_document, changed_hash, invalid_page, quote_mismatch, quota_conflict]}
+        claim: {type: string, maxLength: 32768}
     DiagnosticsReport:
       type: object
       required: [report_version, version, go_version, goos, goarch, current_write_schema, checks, counts]

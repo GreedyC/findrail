@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Lephiziel/findrail/internal/connectors/filesystem"
+	"github.com/Lephiziel/findrail/internal/evidencebundle"
 	"github.com/Lephiziel/findrail/internal/ingest"
 	"github.com/Lephiziel/findrail/internal/search"
 )
@@ -109,6 +110,71 @@ func TestPersistentCollectionSnapshotRevisionAndDocumentRemoval(t *testing.T) {
 	}
 	if e = s.DeleteCollection(ctx, c.ID, after.Revision); e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestEvidenceBundleExportPreviewAndAtomicImport(t *testing.T) {
+	ctx := context.Background()
+	data, root := t.TempDir(), t.TempDir()
+	path := filepath.Join(root, "note.md")
+	if err := os.WriteFile(path, []byte("αβ repeated excerpt repeated excerpt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	conn, err := filesystem.New(root, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, s, conn); err != nil {
+		t.Fatal(err)
+	}
+	var docID, sourceID string
+	if err = s.readers.QueryRowContext(ctx, "SELECT id,source_id FROM documents LIMIT 1").Scan(&docID, &sourceID); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.CreateCollection(ctx, "Bundle source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.PinCollectionEntry(ctx, c.ID, c.Revision, docID, 0, "repeated excerpt", false, collectionIdentity(t, s, docID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.ExportEvidenceBundle(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := evidencebundle.Encode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err = evidencebundle.Decode(strings.NewReader(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := s.PreviewEvidenceBundle(ctx, b, map[string]string{"s1": sourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Entries) != 1 || preview.Entries[0].Status != "match" {
+		t.Fatalf("preview=%+v", preview)
+	}
+	imported, err := s.ImportEvidenceBundle(ctx, b, map[string]string{"s1": sourceID}, "Imported", preview.Binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imported.Entries) != 1 || imported.Entries[0].Note != "" || imported.Entries[0].Excerpt != "repeated excerpt" {
+		t.Fatalf("import=%+v", imported)
+	}
+	if _, err = s.ImportEvidenceBundle(ctx, b, map[string]string{"s1": sourceID}, "", preview.Binding); err == nil {
+		t.Fatal("invalid title unexpectedly imported")
+	}
+	if _, err = s.LoadCollection(ctx, imported.ID); err != nil {
+		t.Fatal(err)
 	}
 }
 
