@@ -227,6 +227,39 @@ func TestEvidenceBundleExportPreviewAndAtomicImport(t *testing.T) {
 	if err != nil || len(restarted.Entries) != 1 || restarted.Entries[0].Note != "keep exact note" || restarted.Entries[0].Excerpt != "repeated excerpt" {
 		t.Fatalf("restart changed imported evidence: %+v err=%v", restarted, err)
 	}
+	// A separate destination index has different source/document identities and
+	// accepts the transfer only through the explicit source mapping.
+	destRoot := t.TempDir()
+	if err = os.WriteFile(filepath.Join(destRoot, "note.md"), []byte("αβ repeated excerpt repeated excerpt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	dest, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dest.Close()
+	destConn, err := filesystem.New(destRoot, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, dest, destConn); err != nil {
+		t.Fatal(err)
+	}
+	var destSource string
+	if err = dest.readers.QueryRowContext(ctx, "SELECT source_id FROM documents LIMIT 1").Scan(&destSource); err != nil {
+		t.Fatal(err)
+	}
+	destPreview, err := dest.PreviewEvidenceBundle(ctx, b, map[string]string{"s1": destSource})
+	if err != nil || !destPreview.Ready {
+		t.Fatalf("destination preview=%+v err=%v", destPreview, err)
+	}
+	destCollection, err := dest.ImportEvidenceBundle(ctx, b, map[string]string{"s1": destSource}, "Moved collection", destPreview.Binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(destCollection.Entries) != 1 || destCollection.Entries[0].Evidence.SourceID != destSource || destCollection.Entries[0].Note != "keep exact note" {
+		t.Fatalf("cross-index import=%+v", destCollection)
+	}
 	// A failure after the collection row and first entry are inserted rolls the
 	// whole transaction back, including all earlier entry inserts.
 	twice := b
