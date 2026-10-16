@@ -104,7 +104,25 @@ The server exposes exactly three tools:
 - `findrail_search` searches one allowed source using Literal mode by default;
   optional mode and filters use the shared query contract in [search-query.md](search-query.md).
 - `findrail_get_evidence` returns one bounded indexed snapshot. For a PDF, pass
-  a positive `page` to obtain page text and a URI ending in `#page=N`.
+  a positive `page` to obtain page text and a URI ending in `#page=N`. For a
+  non-PDF passage, pass either `query` plus `original_identity` (from the search
+  result) for a literal body anchor, or `start_char` plus `original_identity`
+  for a manual Unicode code-point offset. These options cannot be combined with
+  each other or with `page`. A passage `query` is literal and is not Advanced
+  search grammar. Calls using only `source_id`, `document_id`, and optional
+  `page` retain the original prefix/PDF behavior.
+
+Evidence and search results include `original_identity`, so clients can guard a
+follow-up against a changed indexed snapshot. Passage evidence additionally
+returns `text_start_char`, `text_total_chars`, and `match_kind`; `has_more` and
+`next_start_char` indicate bounded continuation. Offsets count Unicode code
+points from indexed text. `match_kind` distinguishes body anchors, title-only
+matches and unavailable anchors; title matches do not claim a body phrase.
+Continuation fields are present only for passage requests; legacy prefix/PDF
+reads do not claim a known total or continuation. A response byte budget that
+cannot return even one code point fails rather than repeating an empty window.
+Prefix/PDF calls may also supply `original_identity` to reject a changed indexed
+snapshot; omitting it retains their previous behavior.
 
 Defaults and bounds are configurable at startup:
 

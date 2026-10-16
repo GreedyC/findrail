@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Lephiziel/findrail/internal/originals"
 	"github.com/Lephiziel/findrail/internal/search"
 	"github.com/Lephiziel/findrail/internal/store/sqlite"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -42,6 +43,12 @@ type Backend interface {
 	Search(context.Context, search.Request) (search.Response, error)
 	Sources(context.Context) ([]sqlite.SourceStatus, error)
 	EvidenceForSource(context.Context, string, string, int) (search.Evidence, error)
+}
+
+// PassageBackend is optional so older/custom evidence backends retain the
+// prefix and PDF tools while explicitly rejecting passage requests.
+type PassageBackend interface {
+	PassageForSource(context.Context, string, string, string, string, int) (search.Evidence, error)
 }
 
 type Server struct {
@@ -161,6 +168,9 @@ func (s *Server) addTools() error {
 	evidenceInputSchema.Properties["page"].Type = "integer"
 	evidenceInputSchema.Properties["page"].Types = nil
 	evidenceInputSchema.Properties["page"].Minimum = floatPtr(1)
+	evidenceInputSchema.Properties["query"] = &jsonschema.Schema{Type: "string", MinLength: intPtr(1), MaxLength: intPtr(256), Description: "Literal query used to anchor indexed body text; this is not Advanced search grammar."}
+	evidenceInputSchema.Properties["start_char"] = &jsonschema.Schema{Type: "integer", Minimum: floatPtr(0), Description: "Manual non-PDF Unicode code-point offset, starting at zero."}
+	evidenceInputSchema.Properties["original_identity"] = &jsonschema.Schema{Type: "string", MinLength: intPtr(1), MaxLength: intPtr(256), Description: "Expected indexed identity from search; required with query or start_char."}
 	evidenceOutputSchema, err := jsonschema.For[evidenceOutput](nil)
 	if err != nil {
 		return err
@@ -200,9 +210,12 @@ type searchInput struct {
 	TitleContains string `json:"title_contains,omitempty"`
 }
 type evidenceInput struct {
-	DocumentID string `json:"document_id"`
-	SourceID   string `json:"source_id"`
-	Page       *int   `json:"page,omitempty"`
+	DocumentID       string  `json:"document_id"`
+	SourceID         string  `json:"source_id"`
+	Page             *int    `json:"page,omitempty"`
+	Query            *string `json:"query,omitempty"`
+	StartChar        *int    `json:"start_char,omitempty"`
+	OriginalIdentity string  `json:"original_identity,omitempty"`
 }
 
 type sourceOutput struct {
@@ -227,6 +240,7 @@ type searchOutput struct {
 }
 type searchResult struct {
 	ID               string `json:"id"`
+	OriginalIdentity string `json:"original_identity"`
 	Title            string `json:"title"`
 	URI              string `json:"uri"`
 	Path             string `json:"path"`
@@ -241,6 +255,7 @@ type searchResult struct {
 }
 type evidenceOutput struct {
 	ID                string   `json:"id"`
+	OriginalIdentity  string   `json:"original_identity"`
 	Title             string   `json:"title"`
 	URI               string   `json:"uri"`
 	Path              string   `json:"path"`
@@ -257,6 +272,11 @@ type evidenceOutput struct {
 	TruncationReasons []string `json:"truncation_reasons"`
 	IndexedSnapshot   bool     `json:"indexed_snapshot"`
 	ContentUntrusted  bool     `json:"content_untrusted"`
+	TextStartChar     *int     `json:"text_start_char,omitempty"`
+	TextTotalChars    *int     `json:"text_total_chars,omitempty"`
+	MatchKind         string   `json:"match_kind,omitempty"`
+	HasMore           *bool    `json:"has_more,omitempty"`
+	NextStartChar     *int     `json:"next_start_char,omitempty"`
 }
 
 type toolError struct{ Code, Message string }
@@ -329,7 +349,7 @@ func (s *Server) search(ctx context.Context, _ *mcp.CallToolRequest, input searc
 			return s.errorResult(toolError{"backend_unavailable", "Search backend returned an invalid result."})
 		}
 		snippet, truncated := truncateRunes(item.Snippet, MaxSnippetChars)
-		result.Results = append(result.Results, searchResult{ID: item.ID, Title: item.Title, URI: item.URI, Path: item.Path, SourceID: item.SourceID, SourceName: item.SourceName, SourceKind: item.SourceKind, MediaType: item.MediaType, Page: item.Page, PageCount: item.PageCount, Snippet: snippet, SnippetTruncated: truncated})
+		result.Results = append(result.Results, searchResult{ID: item.ID, OriginalIdentity: item.OriginalIdentity, Title: item.Title, URI: item.URI, Path: item.Path, SourceID: item.SourceID, SourceName: item.SourceName, SourceKind: item.SourceKind, MediaType: item.MediaType, Page: item.Page, PageCount: item.PageCount, Snippet: snippet, SnippetTruncated: truncated})
 	}
 	result.ResultsTruncated = response.Total > len(result.Results)
 	result.Returned = len(result.Results)
@@ -347,33 +367,73 @@ func (s *Server) evidence(ctx context.Context, _ *mcp.CallToolRequest, input evi
 			return s.errorResult(toolError{"invalid_arguments", "Page must be a positive integer."})
 		}
 	}
+	passage := input.Query != nil || input.StartChar != nil
+	if (input.Query != nil && input.StartChar != nil) || (passage && page > 0) || (passage && input.OriginalIdentity == "") || (input.Query != nil && *input.Query == "") || (input.StartChar != nil && *input.StartChar < 0) {
+		return s.errorResult(toolError{"invalid_arguments", "Passage options require exactly one valid query or start_char, an original_identity, and no page."})
+	}
 	if err := s.ensureSource(ctx, input.SourceID); err != nil {
 		return s.errorResult(s.mapBackendError(err, "source unavailable"))
 	}
 	var evidence search.Evidence
 	err := s.withBackend(ctx, func(ctx context.Context) error {
 		var err error
-		evidence, err = s.backend.EvidenceForSource(ctx, input.SourceID, input.DocumentID, page)
+		if passage {
+			backend, ok := s.backend.(PassageBackend)
+			if !ok {
+				return toolError{"unsupported", "This evidence backend does not support passage windows."}
+			}
+			start := 0
+			query := ""
+			if input.StartChar != nil {
+				start = *input.StartChar
+			}
+			if input.Query != nil {
+				query = *input.Query
+			}
+			evidence, err = backend.PassageForSource(ctx, input.SourceID, input.DocumentID, query, input.OriginalIdentity, start)
+		} else {
+			evidence, err = s.backend.EvidenceForSource(ctx, input.SourceID, input.DocumentID, page)
+		}
 		return err
 	})
 	if err != nil {
+		if passage {
+			return s.errorResult(s.mapBackendError(err, "passage unavailable"))
+		}
 		return s.errorResult(s.mapEvidenceError(err))
 	}
 	if evidence.ID != input.DocumentID || evidence.SourceID != input.SourceID || evidence.Page < 0 || evidence.PageCount < 0 || (evidence.PageCount == 0 && evidence.Page != 0) || (evidence.PageCount > 0 && evidence.Page > evidence.PageCount) {
 		return s.errorResult(toolError{"backend_unavailable", "Evidence backend returned an invalid result."})
+	}
+	if input.OriginalIdentity != "" && evidence.OriginalIdentity != input.OriginalIdentity {
+		return s.errorResult(toolError{"document_unavailable", "Indexed document identity changed; search again before requesting evidence."})
+	}
+	if passage && (evidence.PageCount != 0 || evidence.Page != 0 || evidence.TextStartChar < 0 || evidence.TextTotalChars < evidence.TextStartChar || len([]rune(evidence.Text)) > evidence.TextTotalChars-evidence.TextStartChar) {
+		return s.errorResult(toolError{"backend_unavailable", "Evidence backend returned invalid passage bounds."})
 	}
 	if (page > 0 && evidence.Page != page) || (page == 0 && evidence.PageCount > 0 && evidence.Page != 1) {
 		return s.errorResult(toolError{"backend_unavailable", "Evidence backend returned an invalid result."})
 	}
 	reasons := []string{}
 	if evidence.Truncated {
-		reasons = append(reasons, "indexed_preview")
+		if passage {
+			reasons = append(reasons, "indexed_window")
+		} else {
+			reasons = append(reasons, "indexed_preview")
+		}
 	}
 	text, textLimited := truncateRunes(evidence.Text, s.config.MaxTextChars)
 	if textLimited {
 		reasons = append(reasons, "mcp_text_limit")
 	}
-	result := evidenceOutput{ID: evidence.ID, Title: evidence.Title, URI: evidence.URI, Path: evidence.Path, SourceID: evidence.SourceID, SourceName: evidence.SourceName, MediaType: evidence.MediaType, ContentHash: evidence.ContentHash, ModifiedAt: evidence.ModifiedAt, Page: evidence.Page, PageCount: evidence.PageCount, Text: text, TextChars: len([]rune(text)), Truncated: len(reasons) > 0, TruncationReasons: reasons, IndexedSnapshot: true, ContentUntrusted: true}
+	chars := len([]rune(text))
+	result := evidenceOutput{ID: evidence.ID, OriginalIdentity: evidence.OriginalIdentity, Title: evidence.Title, URI: evidence.URI, Path: evidence.Path, SourceID: evidence.SourceID, SourceName: evidence.SourceName, MediaType: evidence.MediaType, ContentHash: evidence.ContentHash, ModifiedAt: evidence.ModifiedAt, Page: evidence.Page, PageCount: evidence.PageCount, Text: text, TextChars: chars, Truncated: len(reasons) > 0, TruncationReasons: reasons, IndexedSnapshot: true, ContentUntrusted: true}
+	if passage {
+		result.TextStartChar = intPtr(evidence.TextStartChar)
+		result.TextTotalChars = intPtr(evidence.TextTotalChars)
+		result.MatchKind = evidence.MatchKind
+		updateContinuation(&result)
+	}
 	return s.fitEvidence(result)
 }
 
@@ -424,6 +484,15 @@ func (s *Server) mapBackendError(err error, fallback string) toolError {
 	}
 	if errors.Is(err, search.ErrQuery) || errors.Is(err, search.ErrLimit) {
 		return toolError{"invalid_arguments", "The request arguments are invalid."}
+	}
+	if errors.Is(err, search.ErrPage) {
+		return toolError{"invalid_arguments", "The requested passage options are invalid for this document."}
+	}
+	if errors.Is(err, search.ErrNotFound) {
+		return toolError{"document_unavailable", "Indexed document unavailable in the selected source."}
+	}
+	if errors.Is(err, originals.ErrSnapshotChanged) {
+		return toolError{"document_unavailable", "Indexed document identity changed; search again before requesting evidence."}
 	}
 	return toolError{"backend_unavailable", fallback + "."}
 }
@@ -476,7 +545,9 @@ func (s *Server) fitEvidence(result evidenceOutput) (*mcp.CallToolResult, any, e
 	if wire, err := s.renderResult(result, false); err == nil {
 		return wire, nil, nil
 	}
-	lo, hi := 0, len(original)
+	// A successful nonempty response must make progress. Returning an empty
+	// cropped window would repeat next_start_char indefinitely.
+	lo, hi := 1, len(original)
 	var best *mcp.CallToolResult
 	for lo <= hi {
 		mid := lo + (hi-lo)/2
@@ -485,6 +556,7 @@ func (s *Server) fitEvidence(result evidenceOutput) (*mcp.CallToolResult, any, e
 		candidate.TextChars = mid
 		candidate.Truncated = true
 		candidate.TruncationReasons = appendUnique(candidate.TruncationReasons, "mcp_response_budget")
+		updateContinuation(&candidate)
 		wire, err := s.renderResult(candidate, false)
 		if err == nil {
 			best = wire
@@ -497,6 +569,19 @@ func (s *Server) fitEvidence(result evidenceOutput) (*mcp.CallToolResult, any, e
 		return s.errorResult(toolError{"response_too_large", "The response is too large."})
 	}
 	return best, nil, nil
+}
+
+func updateContinuation(result *evidenceOutput) {
+	if result.TextStartChar == nil || result.TextTotalChars == nil {
+		return
+	}
+	hasMore := result.TextChars < *result.TextTotalChars-*result.TextStartChar
+	result.HasMore = &hasMore
+	result.NextStartChar = nil
+	if hasMore {
+		next := *result.TextStartChar + result.TextChars
+		result.NextStartChar = &next
+	}
 }
 
 func (s *Server) renderResult(value any, isError bool) (*mcp.CallToolResult, error) {
