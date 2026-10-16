@@ -10,6 +10,20 @@ store and the special schema-5 source-report profile are separate contracts.
 An absent data directory or index is a normal first-run state and is not created
 by doctor. `--show-paths` is an explicit CLI-only opt-in.
 
+For an optional bounded SQLite inspection, run
+`findrail doctor --data-dir INDEX --integrity --json`. This adds separate
+structural quick-check and foreign-key checks only for the current schema. The
+whole command shares a five-second deadline and opens the existing index
+read-only; it never creates an index or repairs/rebuilds anything. Findings are
+limited and database-controlled details are not included. Older schemas are
+skipped and retain the normal upgrade warning. A successful quick check covers
+only part of SQLite structural integrity; it does not establish UNIQUE/index
+entry consistency, full FTS/content consistency, search quality, or that all data
+is recoverable. See [SQLite quick_check](https://www.sqlite.org/pragma.html#pragma_quick_check)
+and [foreign_key_check](https://www.sqlite.org/pragma.html#pragma_foreign_key_check).
+Result-reading failures, cancellation, and stopping at the finding limit are
+reported as incomplete, never as a completed scan or a healthy index.
+
 The web UI offers an explicit **Diagnostics** dialog when the backend advertises
 the capability. The report is generated locally and is limited to 16 KiB. It
 contains application and Go/platform versions, actual/current schema, safe check
