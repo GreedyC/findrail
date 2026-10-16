@@ -97,6 +97,56 @@ type evidenceBundleBackend interface {
 
 var errBundleClaim = errors.New("preview claim invalid or expired")
 
+type evidenceBundleClaim struct {
+	Digest   string            `json:"d"`
+	Mappings map[string]string `json:"m"`
+	Binding  string            `json:"b"`
+	Expiry   int64             `json:"e"`
+}
+
+func signEvidenceBundleClaim(secret []byte, b evidencebundle.Bundle, mappings map[string]string, binding string, expiry time.Time) (string, error) {
+	digest, err := evidencebundle.Digest(b)
+	if err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(evidenceBundleClaim{Digest: digest, Mappings: mappings, Binding: binding, Expiry: expiry.Unix()})
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write(payload)
+	return base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+}
+
+func verifyEvidenceBundleClaim(secret []byte, token string, b evidencebundle.Bundle, now time.Time) (evidenceBundleClaim, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 || len(token) > 32<<10 {
+		return evidenceBundleClaim{}, errBundleClaim
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return evidenceBundleClaim{}, errBundleClaim
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return evidenceBundleClaim{}, errBundleClaim
+	}
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write(payload)
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		return evidenceBundleClaim{}, errBundleClaim
+	}
+	var claim evidenceBundleClaim
+	if json.Unmarshal(payload, &claim) != nil {
+		return evidenceBundleClaim{}, errBundleClaim
+	}
+	digest, err := evidencebundle.Digest(b)
+	if err != nil || claim.Digest != digest || now.Unix() > claim.Expiry {
+		return evidenceBundleClaim{}, errBundleClaim
+	}
+	return claim, nil
+}
+
 type Option func(*options)
 
 func WithDiagnostics(version string) Option { return func(o *options) { o.appVersion = version } }
@@ -361,16 +411,10 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 						return e
 					}
 					if p.Ready {
-						digest, _ := evidencebundle.Digest(b)
-						payload, _ := json.Marshal(struct {
-							Digest   string            `json:"d"`
-							Mappings map[string]string `json:"m"`
-							Binding  string            `json:"b"`
-							Expiry   int64             `json:"e"`
-						}{digest, body.Mappings, p.Binding, time.Now().Add(5 * time.Minute).Unix()})
-						mac := hmac.New(sha256.New, secret[:])
-						mac.Write(payload)
-						p.Claim = base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+						p.Claim, e = signEvidenceBundleClaim(secret[:], b, body.Mappings, p.Binding, time.Now().Add(5*time.Minute))
+						if e != nil {
+							return e
+						}
 					}
 					raw, _ := json.Marshal(p)
 					if len(raw) > 256<<10 {
@@ -403,24 +447,9 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 						writeError(w, 400, "invalid evidence bundle")
 						return nil
 					}
-					parts := strings.Split(body.Claim, ".")
-					if len(parts) != 2 || len(body.Claim) > 32<<10 {
-						return errBundleClaim
-					}
-					payload, pe := base64.RawURLEncoding.DecodeString(parts[0])
-					sig, se := base64.RawURLEncoding.DecodeString(parts[1])
-					mac := hmac.New(sha256.New, secret[:])
-					mac.Write(payload)
-					var claim struct {
-						Digest   string            `json:"d"`
-						Mappings map[string]string `json:"m"`
-						Binding  string            `json:"b"`
-						Expiry   int64             `json:"e"`
-					}
-					ce := json.Unmarshal(payload, &claim)
-					digest, _ := evidencebundle.Digest(b)
-					if pe != nil || se != nil || ce != nil || !hmac.Equal(sig, mac.Sum(nil)) || claim.Digest != digest || time.Now().Unix() > claim.Expiry {
-						return errBundleClaim
+					claim, claimErr := verifyEvidenceBundleClaim(secret[:], body.Claim, b, time.Now())
+					if claimErr != nil {
+						return claimErr
 					}
 					v, e := bundleBackend.ImportEvidenceBundle(ctx, b, claim.Mappings, body.Title, claim.Binding)
 					if e != nil {
