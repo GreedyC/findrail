@@ -316,6 +316,100 @@ test('every search filter starts a fresh cursor chain with its current value',as
   }
 });
 
+async function pagingContractHarness() {
+  const sources=[{id:'source-a',name:'Synthetic',root:'/synthetic',kind:'filesystem',documents:40,last_indexed_at:'2026-10-16T00:00:00Z'}];
+  const h=harness(sources,{search_pagination:true});await flush();
+  h.element('query').value='original';h.element('mode').value='literal';h.element('format').value='all';h.element('page-size').value='20';
+  h.handlers.get('search-form:submit')({preventDefault(){}});await flush();
+  const row={id:'doc-old',source_id:'source-a',source_name:'Synthetic',source_kind:'filesystem',title:'Original',snippet:'original',uri:'file:///synthetic/old.md',media_type:'text/plain'};
+  h.resolveSearch(0,{total:40,offset:0,returned:1,limit:20,window_limit:1000,results:[row],next_cursor:'cursor-1',end_reason:null});await flush();
+  return h;
+}
+
+test('page size follows the current form while a filter search is pending',async()=>{
+  const h=await pagingContractHarness();
+  h.element('source').value='source-new';h.handlers.get('source:change')();await flush();
+  h.element('query').value='edited';h.handlers.get('query:input')();
+  h.element('page-size').value='50';h.handlers.get('page-size:change')();await flush();
+  const params=new URLSearchParams(h.searchURLs.at(-1).split('?')[1]);
+  assert.equal(params.get('q'),'edited');assert.equal(params.get('source'),'source-new');assert.equal(params.get('limit'),'50');
+  assert.equal(params.has('cursor'),false);
+});
+
+test('inventory refresh cannot resurrect a search after the query was edited',async()=>{
+  const h=await pagingContractHarness();
+  h.element('query').value='edited';h.handlers.get('query:input')();
+  h.setSources([{id:'source-a',name:'Synthetic',root:'/synthetic',kind:'filesystem',documents:41,last_indexed_at:'2026-10-16T00:01:00Z'}]);
+  h.notify('sources-changed');await flush();
+  assert.equal(h.searchURLs.length,1,'refresh submitted a query that no longer matches the form');
+  assert.equal(h.element('search-pager').hidden,true);
+});
+
+test('failed navigation preserves the last displayed page and range for retry',async()=>{
+  const h=await pagingContractHarness();
+  h.handlers.get('page-next:click')();await flush();
+  h.resolveSearch(1,{error:'Search timed out',code:'search_page_timeout'},504);await flush();
+  assert.equal(h.element('results').querySelector('.result')?.dataset.documentId,'doc-old');
+  assert.equal(h.element('page-range').textContent,'1–1 of 40');
+  assert.match(h.element('status').textContent,/timed out/i);
+  h.handlers.get('page-next:click')();await flush();
+  assert.equal(new URLSearchParams(h.searchURLs.at(-1).split('?')[1]).get('cursor'),'cursor-1');
+});
+
+test('stale cursor returns pager focus to the enabled restart control',async()=>{
+  const h=await pagingContractHarness();
+  h.element('page-next').focus();h.handlers.get('page-next:click')();await flush();
+  h.resolveSearch(1,{error:'Indexed data changed',code:'cursor_stale'},409);await flush();
+  assert.equal(h.document.activeElement,h.element('page-first'));
+  assert.equal(h.element('page-first').disabled,false);
+});
+
+test('navigation does not steal focus from a query edited during the request',async()=>{
+  const h=await pagingContractHarness();
+  h.element('page-next').focus();h.handlers.get('page-next:click')();await flush();
+  h.element('query').focus();
+  h.resolveSearch(1,{total:40,offset:1,returned:0,limit:20,window_limit:1000,results:[],next_cursor:null,end_reason:'complete'});await flush();
+  assert.equal(h.document.activeElement,h.element('query'));
+});
+
+test('changing page size invalidates a pending preview from the outgoing result page',async()=>{
+  const h=await pagingContractHarness();
+  vm.runInContext("preview('doc-old',0,'source-a','text/plain',null,'old-identity',{query:'original',mode:'literal',source:'',format:'all',path_prefix:'',title_contains:''})",h.context);await flush();
+  h.element('page-size').value='50';h.handlers.get('page-size:change')();await flush();
+  h.resolveEvidence({...lateEvidence,id:'doc-old',original_identity:'old-identity'});await flush();
+  assert.equal(h.element('preview').open,false);
+  assert.equal(vm.runInContext('previewUI.currentEvidence',h.context),null);
+});
+
+test('automatic result refresh preserves an explicit saved-evidence preview request',async()=>{
+  const h=await pagingContractHarness();
+  h.context.window.findrailPreview('doc-old',0,'source-a','text/plain');await flush();
+  vm.runInContext("search({query:'original',mode:'literal',source:'',format:'all',path_prefix:'',title_contains:''},true)",h.context);await flush();
+  h.resolveEvidence({...lateEvidence,id:'doc-old'});await flush();
+  assert.equal(h.element('preview').open,true);
+  assert.equal(vm.runInContext('previewUI.currentEvidence?.id',h.context),'doc-old');
+});
+
+test('forgetting the selected source clears cursor navigation until a new search',async()=>{
+  const h=await pagingContractHarness();
+  h.element('source').value='source-a';h.handlers.get('source:change')();await flush();
+  h.resolveSearch(1,{total:40,offset:0,returned:0,results:[],next_cursor:'old-source-cursor',end_reason:null});await flush();
+  h.setSources([]);h.notify('sources-changed');await flush();
+  assert.equal(h.element('search-pager').hidden,true);
+  assert.equal(h.searchURLs.length,2);
+  assert.match(h.element('status').textContent,/no longer available/);
+});
+
+test('an initial page timeout exposes First and retries the current form without a cursor',async()=>{
+  const h=harness([],{search_pagination:true});await flush();h.element('query').value='retry me';
+  h.handlers.get('search-form:submit')({preventDefault(){}});await flush();
+  h.resolveSearch(0,{error:'Timed out',code:'search_page_timeout'},504);await flush();
+  assert.equal(h.element('page-first').disabled,false);
+  h.handlers.get('page-first:click')();await flush();
+  const params=new URLSearchParams(h.searchURLs.at(-1).split('?')[1]);
+  assert.equal(params.get('q'),'retry me');assert.equal(params.has('cursor'),false);
+});
+
 test('filter reset issues a new server request from a coherent form snapshot', async () => {
   const h=harness();await flush();h.element('query').value='retry';h.element('mode').value='advanced';
   h.element('format').value='pdf';h.element('path-prefix').value='docs';h.element('title-contains').value='runbook';

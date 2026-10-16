@@ -286,6 +286,7 @@ paths:
                   open_originals: {type: boolean}
                   collection_persistence: {type: boolean, description: "True only for writable start composition"}
                   diagnostics: {type: boolean, description: "True when the opened backend exposes a bounded content-free support report"}
+                  evidence_bundle: {type: boolean, description: "True only when writable management and a complete bundle-capable collection backend are available"}
                   client_api_version: {type: integer, const: 1}
                   search_modes:
                     type: array
@@ -330,6 +331,72 @@ paths:
               schema: {$ref: '#/components/schemas/DiagnosticsReport'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '500': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/collections/{id}/bundle:
+    get:
+      operationId: exportEvidenceBundle
+      summary: Export one saved collection revision as a portable evidence bundle (start/desktop only)
+      description: Requires the management token, including this GET. One bundle operation per process; five-second total budget. Responses are no-store.
+      parameters: [{$ref: '#/components/parameters/ManagementToken'}, {name: id, in: path, required: true, schema: {type: string}}]
+      responses:
+        '200':
+          description: JSON attachment from a single saved snapshot; at most 4 MiB.
+          headers:
+            Content-Disposition:
+              schema: {type: string, const: 'attachment; filename="findrail-evidence-bundle.json"'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EvidenceBundle'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {description: Collection does not exist}
+        '413': {description: Saved evidence cannot fit a portable bundle}
+        '429': {description: One bundle operation is already in flight; retry later}
+        '500': {$ref: '#/components/responses/Unavailable'}
+        '504': {description: Five-second operation deadline exceeded}
+  /api/v1/collections/import/preview:
+    post:
+      operationId: previewEvidenceBundleImport
+      summary: Match every bundle citation against explicitly mapped indexed sources (start/desktop only)
+      description: Strict UTF-8 JSON, including escaped Unicode; duplicate, missing and unknown keys are rejected. The complete wrapper is at most 5 MiB and its raw bundle at most 4 MiB. Every source alias must be explicitly mapped. Read only indexed data; never fetch provenance. A claim is returned only when all entries and destination quotas match.
+      parameters: [{$ref: '#/components/parameters/ManagementToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, required: [bundle, mappings], properties: {bundle: {$ref: '#/components/schemas/EvidenceBundle'}, mappings: {type: object, maxProperties: 40, additionalProperties: {type: string, minLength: 1, maxLength: 512}}}}
+      responses:
+        '200':
+          description: Per-entry status and optional five-minute process-local claim; response including its newline is at most 256 KiB.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EvidenceBundlePreview'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {description: Bundle mapping or indexed snapshot changed}
+        '413': {description: Request or bundle exceeds its byte or entry limits}
+        '429': {description: One bundle operation is already in flight; retry later}
+        '500': {$ref: '#/components/responses/Unavailable'}
+        '504': {description: 'Five-second operation deadline exceeded, including an incomplete body upload'}
+  /api/v1/collections/import:
+    post:
+      operationId: importEvidenceBundle
+      summary: Atomically create a new collection from a previously previewed bundle (start/desktop only)
+      description: Revalidate source registrations, indexed citations and quotas in the same writer transaction as all inserts. Import creates a new revision-1 collection and returns that exact committed snapshot. The strict UTF-8 wrapper is at most 5 MiB, the bundle at most 4 MiB, and the claim at most 32 KiB. Unknown, missing and duplicate fields are rejected. Claims expire after five minutes and cannot survive server restart or source Forget/re-add.
+      parameters: [{$ref: '#/components/parameters/ManagementToken'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, required: [bundle, claim, title], properties: {bundle: {$ref: '#/components/schemas/EvidenceBundle'}, claim: {type: string, minLength: 1, maxLength: 32768}, title: {type: string, minLength: 1, maxLength: 256}}}
+      responses:
+        '201': {description: Newly created collection with destination-derived ordered evidence snapshots and fresh timestamps}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409':
+          description: Claim expired or tampered, source registration changed, or indexed data changed; preview again.
+        '413': {description: Request exceeds its byte limits or destination collection quota}
+        '429': {description: One bundle operation is already in flight; retry later}
+        '500': {$ref: '#/components/responses/Unavailable'}
+        '504': {description: 'Five-second operation deadline exceeded, including an incomplete body upload'}
   /api/v1/collections:
     get:
       operationId: listEvidenceCollections
@@ -700,6 +767,32 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    EvidenceBundle:
+      type: object
+      additionalProperties: false
+      required: [format, version, title, sources, entries]
+      properties:
+        format: {type: string, const: findrail-evidence-bundle}
+        version: {type: integer, const: 1}
+        title: {type: string, minLength: 1, maxLength: 256}
+        sources: {type: array, maxItems: 40, items: {type: object, additionalProperties: false, required: [alias, kind, display_name], properties: {alias: {type: string, pattern: '^s([1-9]|[1-3][0-9]|40)$'}, kind: {type: string, enum: [filesystem, github, archive]}, display_name: {type: string, maxLength: 512}}}}
+        entries: {type: array, maxItems: 40, items: {type: object, additionalProperties: false, required: [source_alias, relative_path, media_type, content_hash, page, start_char, text, note], properties: {source_alias: {type: string}, relative_path: {type: string, minLength: 1, maxLength: 512, description: Relative slash path; at most 2048 UTF-8 bytes}, media_type: {type: string, maxLength: 255}, content_hash: {type: string, pattern: '^[0-9a-f]{64}$'}, page: {type: integer, minimum: 0, maximum: 100000}, start_char: {type: integer, minimum: 0, maximum: 2147483647}, text: {type: string, minLength: 1, maxLength: 65536, description: Exact selected text; at most 256 KiB UTF-8}, note: {type: string, maxLength: 2048, description: At most 2048 UTF-8 bytes}}}}
+    EvidenceBundlePreview:
+      type: object
+      additionalProperties: false
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          maxItems: 40
+          items:
+            type: object
+            additionalProperties: false
+            required: [index, status]
+            properties:
+              index: {type: integer, minimum: 0, maximum: 39}
+              status: {type: string, enum: [match, unknown_source, missing_document, changed_hash, invalid_page, quote_mismatch, quota_conflict]}
+        claim: {type: string, maxLength: 32768}
     DiagnosticsReport:
       type: object
       required: [report_version, version, go_version, goos, goarch, current_write_schema, checks, counts]

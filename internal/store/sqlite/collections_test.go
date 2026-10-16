@@ -1,19 +1,52 @@
 package sqlite
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Lephiziel/findrail/internal/connectors/filesystem"
+	"github.com/Lephiziel/findrail/internal/evidencebundle"
 	"github.com/Lephiziel/findrail/internal/ingest"
 	"github.com/Lephiziel/findrail/internal/search"
+	"github.com/Lephiziel/findrail/pkg/connector"
+	modernsqlite "modernc.org/sqlite"
 )
+
+var bundleCancelTrigger = struct {
+	register         sync.Once
+	mu               sync.Mutex
+	entered, release chan struct{}
+	err              error
+}{}
+
+func registerBundleCancelTrigger(t *testing.T) {
+	t.Helper()
+	bundleCancelTrigger.register.Do(func() {
+		bundleCancelTrigger.err = modernsqlite.RegisterScalarFunction("findrail_test_cancel_bundle_insert", 0, func(*modernsqlite.FunctionContext, []driver.Value) (driver.Value, error) {
+			bundleCancelTrigger.mu.Lock()
+			entered, release := bundleCancelTrigger.entered, bundleCancelTrigger.release
+			bundleCancelTrigger.mu.Unlock()
+			close(entered)
+			<-release
+			return int64(1), nil
+		})
+	})
+	if bundleCancelTrigger.err != nil {
+		t.Fatal(bundleCancelTrigger.err)
+	}
+}
 
 func TestPersistentCollectionSnapshotRevisionAndDocumentRemoval(t *testing.T) {
 	ctx := context.Background()
@@ -90,6 +123,17 @@ func TestPersistentCollectionSnapshotRevisionAndDocumentRemoval(t *testing.T) {
 	if historical.Entries[0].Evidence.ContentHash != oldHash || historical.Entries[0].Evidence.Text != "alpha beta gamma" {
 		t.Fatalf("refresh rewrote historical snapshot: %+v", historical.Entries[0])
 	}
+	historicalBundle, err := s.ExportEvidenceBundle(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historicalPreview, err := s.PreviewEvidenceBundle(ctx, historicalBundle, map[string]string{"s1": conn.Source().ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(historicalPreview.Entries) != 1 || historicalPreview.Entries[0].Status != "changed_hash" {
+		t.Fatalf("historical evidence silently became current: %+v", historicalPreview)
+	}
 	if e = os.Remove(doc); e != nil {
 		t.Fatal(e)
 	}
@@ -109,6 +153,463 @@ func TestPersistentCollectionSnapshotRevisionAndDocumentRemoval(t *testing.T) {
 	}
 	if e = s.DeleteCollection(ctx, c.ID, after.Revision); e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestEvidenceBundleExportPreviewAndAtomicImport(t *testing.T) {
+	registerBundleCancelTrigger(t)
+	ctx := context.Background()
+	data, root := t.TempDir(), t.TempDir()
+	path := filepath.Join(root, "note.md")
+	if err := os.WriteFile(path, []byte("αβ repeated excerpt repeated excerpt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	conn, err := filesystem.New(root, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, s, conn); err != nil {
+		t.Fatal(err)
+	}
+	var docID, sourceID string
+	if err = s.readers.QueryRowContext(ctx, "SELECT id,source_id FROM documents LIMIT 1").Scan(&docID, &sourceID); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.CreateCollection(ctx, "Bundle source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = s.PinCollectionEntry(ctx, c.ID, c.Revision, docID, 0, "repeated excerpt", false, collectionIdentity(t, s, docID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = s.SaveCollection(ctx, c.ID, c.Revision, c.Title, []CollectionEdit{{Key: c.Entries[0].Key, Note: "keep exact note"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.ExportEvidenceBundle(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Entries) != 1 || b.Entries[0].StartChar != 3 || b.Entries[0].Note != "keep exact note" {
+		t.Fatalf("Unicode offset/note not preserved: %+v", b.Entries)
+	}
+	raw, err := evidencebundle.Encode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err = evidencebundle.Decode(strings.NewReader(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := s.PreviewEvidenceBundle(ctx, b, map[string]string{"s1": sourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Entries) != 1 || preview.Entries[0].Status != "match" {
+		t.Fatalf("preview=%+v", preview)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*evidencebundle.Bundle)
+		status string
+	}{{"unknown source", func(x *evidencebundle.Bundle) {}, "unknown_source"}, {"missing document", func(x *evidencebundle.Bundle) { x.Entries[0].RelativePath = "elsewhere.md" }, "missing_document"}, {"changed hash", func(x *evidencebundle.Bundle) { x.Entries[0].ContentHash = strings.Repeat("0", 64) }, "changed_hash"}, {"quote mismatch", func(x *evidencebundle.Bundle) { x.Entries[0].Text = "different quote" }, "quote_mismatch"}} {
+		bad := b
+		bad.Entries = append([]evidencebundle.Entry(nil), b.Entries...)
+		tc.mutate(&bad)
+		mapping := map[string]string{"s1": sourceID}
+		if tc.name == "unknown source" {
+			mapping["s1"] = "missing-source"
+		}
+		got, e := s.PreviewEvidenceBundle(ctx, bad, mapping)
+		if e != nil || len(got.Entries) != 1 || got.Entries[0].Status != tc.status || got.Claim != "" {
+			t.Fatalf("%s preview=%+v err=%v", tc.name, got, e)
+		}
+	}
+	imported, err := s.ImportEvidenceBundle(ctx, b, map[string]string{"s1": sourceID}, "Imported", preview.Binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imported.Entries) != 1 || imported.Entries[0].Note != "keep exact note" || imported.Entries[0].Excerpt != "repeated excerpt" {
+		t.Fatalf("import=%+v", imported)
+	}
+	if _, err = s.ImportEvidenceBundle(ctx, b, map[string]string{"s1": sourceID}, "", preview.Binding); err == nil {
+		t.Fatal("invalid title unexpectedly imported")
+	}
+	if _, err = s.LoadCollection(ctx, imported.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	restarted, err := s.LoadCollection(ctx, imported.ID)
+	if err != nil || len(restarted.Entries) != 1 || restarted.Entries[0].Note != "keep exact note" || restarted.Entries[0].Excerpt != "repeated excerpt" {
+		t.Fatalf("restart changed imported evidence: %+v err=%v", restarted, err)
+	}
+	// A separate destination index has different source/document identities and
+	// accepts the transfer only through the explicit source mapping.
+	destRoot := t.TempDir()
+	if err = os.WriteFile(filepath.Join(destRoot, "note.md"), []byte("αβ repeated excerpt repeated excerpt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	dest, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dest.Close()
+	destConn, err := filesystem.New(destRoot, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, dest, destConn); err != nil {
+		t.Fatal(err)
+	}
+	var destSource string
+	if err = dest.readers.QueryRowContext(ctx, "SELECT source_id FROM documents LIMIT 1").Scan(&destSource); err != nil {
+		t.Fatal(err)
+	}
+	destPreview, err := dest.PreviewEvidenceBundle(ctx, b, map[string]string{"s1": destSource})
+	if err != nil || !destPreview.Ready {
+		t.Fatalf("destination preview=%+v err=%v", destPreview, err)
+	}
+	destCollection, err := dest.ImportEvidenceBundle(ctx, b, map[string]string{"s1": destSource}, "Moved collection", destPreview.Binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(destCollection.Entries) != 1 || destCollection.Entries[0].Evidence.SourceID != destSource || destCollection.Entries[0].Note != "keep exact note" {
+		t.Fatalf("cross-index import=%+v", destCollection)
+	}
+	// A failure after the collection row and first entry are inserted rolls the
+	// whole transaction back, including all earlier entry inserts.
+	twice := b
+	twice.Entries = append(append([]evidencebundle.Entry(nil), b.Entries...), b.Entries[0])
+	if _, err = s.db.ExecContext(ctx, `CREATE TRIGGER fail_second_bundle_entry BEFORE INSERT ON evidence_collection_entries WHEN NEW.ordinal=1 BEGIN SELECT RAISE(ABORT,'synthetic insert failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	var before int
+	if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM evidence_collections").Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ImportEvidenceBundle(ctx, twice, map[string]string{"s1": sourceID}, "Rollback", preview.Binding); err == nil {
+		t.Fatal("insert trigger did not fail import")
+	}
+	var after int
+	if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM evidence_collections").Scan(&after); err != nil || after != before {
+		t.Fatalf("failed import left collection: before=%d after=%d err=%v", before, after, err)
+	}
+	if _, err = s.db.ExecContext(ctx, "DROP TRIGGER fail_second_bundle_entry"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.ExecContext(ctx, `CREATE TRIGGER cancel_bundle_after_first_entry AFTER INSERT ON evidence_collection_entries WHEN NEW.ordinal=0 BEGIN SELECT findrail_test_cancel_bundle_insert(); END`); err != nil {
+		t.Fatal(err)
+	}
+	bundleCancelTrigger.mu.Lock()
+	bundleCancelTrigger.entered = make(chan struct{})
+	bundleCancelTrigger.release = make(chan struct{})
+	entered, release := bundleCancelTrigger.entered, bundleCancelTrigger.release
+	bundleCancelTrigger.mu.Unlock()
+	cancelBundle := b
+	cancelBundle.Entries = append(append([]evidencebundle.Entry(nil), b.Entries...), b.Entries[0])
+	before = after
+	importCtx, cancelImport := context.WithCancel(ctx)
+	cancelResult := make(chan error, 1)
+	go func() {
+		_, e := s.ImportEvidenceBundle(importCtx, cancelBundle, map[string]string{"s1": sourceID}, "Canceled", preview.Binding)
+		cancelResult <- e
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		cancelImport()
+		t.Fatal("import did not reach first entry insert")
+	}
+	cancelImport()
+	close(release)
+	if e := <-cancelResult; !errors.Is(e, context.Canceled) {
+		t.Fatalf("mid-insert cancel error=%v", e)
+	}
+	if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM evidence_collections").Scan(&after); err != nil || after != before {
+		t.Fatalf("canceled import left collection: before=%d after=%d err=%v", before, after, err)
+	}
+	if _, err = s.db.ExecContext(ctx, "DROP TRIGGER cancel_bundle_after_first_entry"); err != nil {
+		t.Fatal(err)
+	}
+	// Registration re-creation with the same stable source ID invalidates the
+	// preview binding even when path and content become identical again.
+	stalePreview, err := s.PreviewEvidenceBundle(ctx, b, map[string]string{"s1": sourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ForgetSource(ctx, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	conn, err = filesystem.New(root, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, s, conn); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ImportEvidenceBundle(ctx, b, map[string]string{"s1": sourceID}, "Stale registration", stalePreview.Binding); !errors.Is(err, ErrCollectionSnapshotChanged) {
+		t.Fatalf("re-added source accepted stale preview: %v", err)
+	}
+	scanPreview, err := s.PreviewEvidenceBundle(ctx, b, map[string]string{"s1": sourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, []byte("changed after preview"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	conn, err = filesystem.New(root, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, s, conn); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ImportEvidenceBundle(ctx, b, map[string]string{"s1": sourceID}, "Changed during scan", scanPreview.Binding); !errors.Is(err, ErrCollectionSnapshotChanged) {
+		t.Fatalf("changed indexed snapshot accepted: %v", err)
+	}
+	if err = os.WriteFile(path, []byte("αβ repeated excerpt repeated excerpt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	conn, err = filesystem.New(root, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, s, conn); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.PreviewEvidenceBundle(ctx, b, map[string]string{"s1": sourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 97; i++ {
+		if _, err = s.CreateCollection(ctx, fmt.Sprintf("quota fill %02d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	results := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			_, e := s.ImportEvidenceBundle(ctx, b, map[string]string{"s1": sourceID}, "Concurrent", current.Binding)
+			results <- e
+		}()
+	}
+	succeeded := 0
+	for i := 0; i < 2; i++ {
+		if e := <-results; e == nil {
+			succeeded++
+		} else if !errors.Is(e, ErrCollectionLimit) {
+			t.Fatalf("concurrent quota import error: %v", e)
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("quota race successes=%d, want exactly one", succeeded)
+	}
+}
+
+func TestEmptyEvidenceBundleImportsAsNewCollection(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	raw, err := evidencebundle.Encode(evidencebundle.Bundle{Title: "Empty portable bundle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := evidencebundle.Decode(strings.NewReader(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.PreviewEvidenceBundle(ctx, b, map[string]string{})
+	if err != nil || !p.Ready {
+		t.Fatalf("empty preview=%+v err=%v", p, err)
+	}
+	c, err := s.ImportEvidenceBundle(ctx, b, map[string]string{}, "Empty imported", p.Binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Entries) != 0 || c.Revision != 1 {
+		t.Fatalf("empty collection=%+v", c)
+	}
+}
+
+func TestEvidenceBundleDOCXOffsetAndPDFPageTwoRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	root := t.TempDir()
+	writeSyntheticDOCX(t, filepath.Join(root, "appendix.docx"))
+	if err = os.WriteFile(filepath.Join(root, "synthetic.pdf"), []byte("fake pdf body"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := filesystem.NewWithOptions(root, filesystem.Options{MaxTextBytes: 1 << 20, MaxDOCXBytes: 1 << 20, MaxPDFBytes: 1 << 20, ExtractPDF: func(context.Context, io.Reader, int64) ([]connector.Page, error) {
+		return []connector.Page{{Number: 1, Text: "first page"}, {Number: 2, Text: "prefix цитата suffix"}}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, s, conn); err != nil {
+		t.Fatal(err)
+	}
+	var docxID, pdfID, sourceID string
+	if err = s.readers.QueryRowContext(ctx, "SELECT id,source_id FROM documents WHERE path='appendix.docx'").Scan(&docxID, &sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.readers.QueryRowContext(ctx, "SELECT id FROM documents WHERE path='synthetic.pdf'").Scan(&pdfID); err != nil {
+		t.Fatal(err)
+	}
+	docx, err := s.Evidence(ctx, docxID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdf, err := s.Evidence(ctx, pdfID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.CreateCollection(ctx, "Mixed evidence")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = s.PinCollectionEntry(ctx, c.ID, c.Revision, docxID, 0, "DOCX quote", false, docx.OriginalIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = s.PinCollectionEntry(ctx, c.ID, c.Revision, pdfID, 2, "цитата", false, pdf.OriginalIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.ExportEvidenceBundle(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Entries) != 2 || b.Entries[0].StartChar != 7 || b.Entries[0].MediaType != "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || b.Entries[1].Page != 2 || b.Entries[1].StartChar != 7 {
+		t.Fatalf("offset/page attribution lost: %+v", b.Entries)
+	}
+	badPage := b
+	badPage.Entries = append([]evidencebundle.Entry(nil), b.Entries...)
+	badPage.Entries[1].Page = 3
+	badPagePreview, err := s.PreviewEvidenceBundle(ctx, badPage, map[string]string{"s1": sourceID})
+	if err != nil || badPagePreview.Entries[1].Status != "invalid_page" {
+		t.Fatalf("invalid PDF page preview=%+v err=%v", badPagePreview, err)
+	}
+	p, err := s.PreviewEvidenceBundle(ctx, b, map[string]string{"s1": sourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Ready {
+		t.Fatalf("mixed evidence preview=%+v", p)
+	}
+	imported, err := s.ImportEvidenceBundle(ctx, b, map[string]string{"s1": sourceID}, "Mixed imported", p.Binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imported.Entries) != 2 || imported.Entries[0].Excerpt != "DOCX quote" || imported.Entries[1].Evidence.Page != 2 || imported.Entries[1].Excerpt != "цитата" {
+		t.Fatalf("mixed import=%+v", imported)
+	}
+	reexport, err := s.ExportEvidenceBundle(ctx, imported.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reexport.Entries) != 2 || reexport.Entries[0].StartChar != b.Entries[0].StartChar || reexport.Entries[1].Page != 2 || reexport.Entries[1].StartChar != 7 {
+		t.Fatalf("re-export lost locators: %+v", reexport.Entries)
+	}
+}
+
+func writeSyntheticDOCX(t *testing.T, path string) {
+	t.Helper()
+	var b bytes.Buffer
+	zw := zip.NewWriter(&b)
+	parts := map[string]string{"[Content_Types].xml": `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`, "_rels/.rels": `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`, "word/document.xml": `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>prefix DOCX quote suffix</w:t></w:r></w:p></w:body></w:document>`}
+	for name, content := range parts {
+		f, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = f.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEvidenceBundlePreviewEnforcesSnapshotTextQuotaAtBoundary(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	root := t.TempDir()
+	quote := strings.Repeat("🫶", 65536)
+	if err = os.WriteFile(filepath.Join(root, "large.txt"), []byte(strings.Repeat("🫶", 262144)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := filesystem.New(root, 2<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, s, conn); err != nil {
+		t.Fatal(err)
+	}
+	var sourceID string
+	if err = s.readers.QueryRowContext(ctx, "SELECT source_id FROM documents LIMIT 1").Scan(&sourceID); err != nil {
+		t.Fatal(err)
+	}
+	base := evidencebundle.Bundle{Title: "quota", Sources: []evidencebundle.Source{{Alias: "s1", Kind: "filesystem", DisplayName: "Synthetic"}}, Entries: make([]evidencebundle.Entry, 4)}
+	for i := range base.Entries {
+		base.Entries[i] = evidencebundle.Entry{SourceAlias: "s1", RelativePath: "large.txt", MediaType: "text/plain", ContentHash: func() string {
+			var h string
+			_ = s.readers.QueryRowContext(ctx, "SELECT content_hash FROM documents LIMIT 1").Scan(&h)
+			return h
+		}(), StartChar: 0, Text: quote}
+	}
+	if _, err = evidencebundle.Encode(base); err != nil {
+		t.Fatalf("boundary bundle invalid: %v", err)
+	}
+	preview, err := s.PreviewEvidenceBundle(ctx, base, map[string]string{"s1": sourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range preview.Entries {
+		if row.Status != "match" {
+			t.Fatalf("2 MiB boundary rejected: %+v", preview)
+		}
+	}
+	if _, err = s.ImportEvidenceBundle(ctx, base, map[string]string{"s1": sourceID}, "Boundary", preview.Binding); err != nil {
+		t.Fatalf("2 MiB boundary import: %v", err)
+	}
+	over := base
+	over.Entries = append(append([]evidencebundle.Entry(nil), base.Entries...), base.Entries[0])
+	preview, err = s.PreviewEvidenceBundle(ctx, over, map[string]string{"s1": sourceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range preview.Entries {
+		if row.Status != "quota_conflict" {
+			t.Fatalf("over-quota entry status=%+v", row)
+		}
 	}
 }
 

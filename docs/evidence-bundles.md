@@ -2,8 +2,11 @@
 
 The source tree defines a strict, portable JSON v1 codec for moving selected
 citations and notes. This is distinct from portable source snapshot ZIP v1, which
-transfers indexed sources. The codec has no storage, HTTP, file access, network
-access, or import behavior. It is not part of the published alpha.4 binary.
+transfers indexed sources. The codec itself has no storage, HTTP, file access, or
+network behavior. Source-cycle management endpoints export saved collections,
+preview explicit source mappings, and atomically create new collections after
+matching current indexed data. These capabilities are not part of published
+alpha.4.
 
 ## JSON contract
 
@@ -71,6 +74,35 @@ NUL characters are rejected in names, paths, media types, quotes and notes.
 The canonical encoder preserves source/entry order and every string exactly;
 its SHA-256 digest detects transfer inconsistency only. It is not a signature,
 proof of authorship, or proof that an indexed source is trustworthy.
+
+## Management API
+
+When the writable `start`/desktop composition has a complete collections backend,
+`GET /api/v1/collections/{id}/bundle` exports the saved revision as
+`findrail-evidence-bundle.json`. `POST /api/v1/collections/import/preview` accepts
+`{"bundle": ..., "mappings": {"s1": "local-source-id"}}`; every alias must be
+explicitly mapped. The response reports a status for each entry and a short-lived
+claim. `POST /api/v1/collections/import` accepts the same bundle, the preview
+claim, and a new title. It never merges into an existing collection. Import
+rechecks current indexed path, media type, hash, page and quote in one transaction;
+any mismatch rejects the entire import. Preview does not read originals or make
+network requests.
+
+Bundle requests use the existing management session and origin/host protections.
+Wrappers are capped at 5 MiB, raw bundle JSON at 4 MiB, preview output at 256 KiB,
+and claims at 32 KiB. Claims expire after five minutes and are process-local;
+they do not authenticate bundle authors. `serve` and `demo` do not register these
+endpoints. The capability flag is true only for a writable management composition
+with a complete bundle backend. These source-cycle capabilities are not part of
+the published alpha.4 binary.
+
+Only one HTTP bundle operation runs in the process at a time; `429 bundle_busy`
+means retry later. The five-second budget also covers receiving the request body;
+`504 bundle_timeout` means it expired. Invalid inputs return 400, exceeded limits
+return 413, and an expired preview or changed destination returns 409 and requires
+a fresh preview. Unexpected failures return a generic 500 without indexed text,
+private paths or database diagnostics. All responses are no-store. An absent
+`evidence_bundle` capability on an older API v1 server means false.
 
 Bundles preserve historical selected evidence, not a live link. If an indexed
 document has changed, moved, been forgotten, or is otherwise no longer current,

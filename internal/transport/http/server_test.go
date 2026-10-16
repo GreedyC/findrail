@@ -149,6 +149,16 @@ func TestDiagnosticsEndpointReportsOnlyWhitelistedFactsAndCapability(t *testing.
 	if !strings.Contains(capW.Body.String(), `"diagnostics":true`) {
 		t.Fatalf("missing capability: %s", capW.Body.String())
 	}
+	if !strings.Contains(capW.Body.String(), `"evidence_bundle":false`) {
+		t.Fatalf("read-only bundle capability enabled: %s", capW.Body.String())
+	}
+	routeW := httptest.NewRecorder()
+	routeReq := httptest.NewRequest(http.MethodGet, "/api/v1/collections/missing/bundle", nil)
+	routeReq.Host = r.Host
+	h.ServeHTTP(routeW, routeReq)
+	if routeW.Code != http.StatusNotFound {
+		t.Fatalf("read-only bundle route registered: %d", routeW.Code)
+	}
 	without := httptest.NewRecorder()
 	transport.Handler(store).ServeHTTP(without, r)
 	if without.Code != http.StatusNotFound {
@@ -206,6 +216,29 @@ func TestManagementRequiresSameOriginCapabilityAndStrictJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	bundleRoot := t.TempDir()
+	if err = os.WriteFile(filepath.Join(bundleRoot, "bundle.md"), []byte("exact bundle citation"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	bundleConn, err := filesystem.New(bundleRoot, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ingest.Run(ctx, store, bundleConn); err != nil {
+		t.Fatal(err)
+	}
+	foundBundle, err := store.Search(ctx, search.Request{Query: "citation", Limit: 1})
+	if err != nil || len(foundBundle.Results) != 1 {
+		t.Fatalf("bundle fixture search: %+v %v", foundBundle, err)
+	}
+	savedBundle, err := store.CreateCollection(ctx, "HTTP bundle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	savedBundle, err = store.PinCollectionEntry(ctx, savedBundle.ID, savedBundle.Revision, foundBundle.Results[0].ID, 0, "bundle citation", false, foundBundle.Results[0].OriginalIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
 	app := sourceapp.New(ctx, store, dir, "/unused")
 	defer func() {
 		c, stop := context.WithTimeout(context.Background(), time.Second)
@@ -251,6 +284,124 @@ func TestManagementRequiresSameOriginCapabilityAndStrictJSON(t *testing.T) {
 	}
 	if session.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("session was cacheable: %q", session.Header.Get("Cache-Control"))
+	}
+	capsResp, err := client.Get(base + "/api/v1/capabilities")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var caps map[string]any
+	if err = json.NewDecoder(capsResp.Body).Decode(&caps); err != nil {
+		t.Fatal(err)
+	}
+	capsResp.Body.Close()
+	if caps["evidence_bundle"] != true {
+		t.Fatalf("management bundle capability=%v", caps["evidence_bundle"])
+	}
+	// Bundle export is a management-gated read, and imports use the same exact
+	// origin/host/session boundary as other mutations.
+	bundleCall := func(method, path, host, originValue, token, site string, body []byte) (int, []byte, http.Header) {
+		r, _ := http.NewRequest(method, base+path, bytes.NewReader(body))
+		if host != "" {
+			r.Host = host
+		}
+		if originValue != "" {
+			r.Header.Set("Origin", originValue)
+		}
+		if token != "" {
+			r.Header.Set("X-Findrail-Token", token)
+		}
+		if site != "" {
+			r.Header.Set("Sec-Fetch-Site", site)
+		}
+		if method == http.MethodPost {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		resp, e := client.Do(r)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, b, resp.Header
+	}
+	bundleReq := func(method, path, host, originValue, token, site string, body []byte) int {
+		status, _, _ := bundleCall(method, path, host, originValue, token, site, body)
+		return status
+	}
+	if got := bundleReq(http.MethodGet, "/api/v1/collections/missing/bundle", "", origin, "", "", nil); got != 403 {
+		t.Fatalf("tokenless bundle export status=%d", got)
+	}
+	if got := bundleReq(http.MethodGet, "/api/v1/collections/missing/bundle", "attacker.example:7766", origin, capability.Token, "same-origin", nil); got != 403 {
+		t.Fatalf("bad-host bundle export status=%d", got)
+	}
+	if got := bundleReq(http.MethodGet, "/api/v1/collections/missing/bundle", "", origin, capability.Token, "cross-site", nil); got != 403 {
+		t.Fatalf("cross-site bundle export status=%d", got)
+	}
+	if got := bundleReq(http.MethodPost, "/api/v1/collections/import/preview", "", origin, capability.Token, "same-origin", []byte(`{"bundle":{},"mappings":{},"mappings":{}}`)); got != 400 {
+		t.Fatalf("duplicate wrapper key status=%d", got)
+	}
+	for _, bad := range [][]byte{[]byte(`{"bundle":{},"mappings":{},"unexpected":true}`), []byte(`{"bundle":{"format":"findrail-evidence-bundle","format":"findrail-evidence-bundle"},"mappings":{}}`), {0xff, 0xfe}} {
+		if got := bundleReq(http.MethodPost, "/api/v1/collections/import/preview", "", origin, capability.Token, "same-origin", bad); got != 400 {
+			t.Errorf("invalid strict wrapper status=%d for %q", got, bad)
+		}
+	}
+	if got := bundleReq(http.MethodPost, "/api/v1/collections/import/preview", "", origin, capability.Token, "same-origin", bytes.Repeat([]byte("x"), 5<<20+1)); got != 413 {
+		t.Fatalf("oversized bundle wrapper status=%d", got)
+	}
+	status, bundleRaw, headers := bundleCall(http.MethodGet, "/api/v1/collections/"+savedBundle.ID+"/bundle", "", origin, capability.Token, "same-origin", nil)
+	if status != 200 || headers.Get("Content-Disposition") != "attachment; filename=\"findrail-evidence-bundle.json\"" {
+		t.Fatalf("bundle export status=%d header=%q body=%s", status, headers.Get("Content-Disposition"), bundleRaw)
+	}
+	previewBody, _ := json.Marshal(struct {
+		Bundle   json.RawMessage   `json:"bundle"`
+		Mappings map[string]string `json:"mappings"`
+	}{bundleRaw, map[string]string{"s1": foundBundle.Results[0].SourceID}})
+	status, previewRaw, _ := bundleCall(http.MethodPost, "/api/v1/collections/import/preview", "", origin, capability.Token, "same-origin", previewBody)
+	if status != 200 {
+		t.Fatalf("bundle preview status=%d body=%s", status, previewRaw)
+	}
+	var preview struct {
+		Claim   string                     `json:"claim"`
+		Entries []sqlite.BundleEntryStatus `json:"entries"`
+	}
+	if err = json.Unmarshal(previewRaw, &preview); err != nil || preview.Claim == "" || len(preview.Entries) != 1 || preview.Entries[0].Status != "match" {
+		t.Fatalf("preview=%+v err=%v raw=%s", preview, err, previewRaw)
+	}
+	importBody, _ := json.Marshal(struct {
+		Bundle json.RawMessage `json:"bundle"`
+		Claim  string          `json:"claim"`
+		Title  string          `json:"title"`
+	}{bundleRaw, preview.Claim, "HTTP imported"})
+	tampered := append([]byte(nil), importBody...)
+	var tamperedRequest struct {
+		Bundle json.RawMessage `json:"bundle"`
+		Claim  string          `json:"claim"`
+		Title  string          `json:"title"`
+	}
+	if err = json.Unmarshal(tampered, &tamperedRequest); err != nil {
+		t.Fatal(err)
+	}
+	tamperedRequest.Claim = preview.Claim + "x"
+	tampered, _ = json.Marshal(tamperedRequest)
+	if status, body, _ := bundleCall(http.MethodPost, "/api/v1/collections/import", "", origin, capability.Token, "same-origin", tampered); status != 409 {
+		t.Fatalf("tampered preview claim status=%d body=%s", status, body)
+	}
+	crossBundle := bytes.Replace(bundleRaw, []byte("HTTP bundle"), []byte("Other bundle"), 1)
+	crossBody, _ := json.Marshal(struct {
+		Bundle json.RawMessage `json:"bundle"`
+		Claim  string          `json:"claim"`
+		Title  string          `json:"title"`
+	}{crossBundle, preview.Claim, "Cross bundle"})
+	if status, body, _ := bundleCall(http.MethodPost, "/api/v1/collections/import", "", origin, capability.Token, "same-origin", crossBody); status != 409 {
+		t.Fatalf("cross-bundle claim status=%d body=%s", status, body)
+	}
+	status, importedRaw, _ := bundleCall(http.MethodPost, "/api/v1/collections/import", "", origin, capability.Token, "same-origin", importBody)
+	if status != 201 {
+		t.Fatalf("bundle import status=%d body=%s", status, importedRaw)
+	}
+	var imported sqlite.Collection
+	if err = json.Unmarshal(importedRaw, &imported); err != nil || len(imported.Entries) != 1 || imported.Entries[0].Excerpt != "bundle citation" {
+		t.Fatalf("imported=%+v err=%v", imported, err)
 	}
 	root := filepath.Join(t.TempDir(), "must-not-open")
 	if err := os.Mkdir(root, 0700); err != nil {

@@ -170,6 +170,7 @@ def main():
                     wait.until(lambda d: d.find_element(By.ID, "page-range").text != previous_range)
                 assert len(ids) == 260 and len(set(ids)) == 260, (len(ids), len(set(ids)), ranges,
                     browser.find_element(By.ID, "status").text, browser.find_element(By.ID, "query-error").text)
+                assert browser.switch_to.active_element.get_attribute("id") == "page-previous", "terminal Next left keyboard focus on a disabled control"
                 browser.find_element(By.ID, "page-previous").click()
                 wait.until(lambda d: d.find_element(By.ID, "page-range").text.startswith("221–240"))
                 browser.find_element(By.ID, "page-first").click()
@@ -178,6 +179,31 @@ def main():
                 with urllib.request.urlopen(url + "/api/v1/search/pages?q=pagingjourney&limit=20", timeout=5) as response:
                     backend_ids = [item["id"] for item in json.load(response)["results"]]
                 assert first_page_ids == backend_ids, "browser page IDs differ from the production paginated API"
+
+                Select(browser.find_element(By.ID, "page-size")).select_by_value("50")
+                wait.until(lambda d: d.find_element(By.ID, "page-range").text.startswith("1–50"))
+                browser.find_element(By.ID, "page-next").click()
+                wait.until(lambda d: d.find_element(By.ID, "page-range").text.startswith("51–100"))
+                Select(browser.find_element(By.ID, "page-size")).select_by_value("20")
+                wait.until(lambda d: d.find_element(By.ID, "page-range").text.startswith("1–20"))
+
+                # A metadata-only commit invalidates the SQLite cursor without
+                # altering the source inventory or any selected local evidence.
+                token = browser.execute_async_script("const done=arguments[0];window.findrailBootstrap.then(boot=>done(boot.token));")
+                headers = {"Origin": url, "X-Findrail-Token": token, "Content-Type": "application/json"}
+                request = urllib.request.Request(url + "/api/v1/collections", data=json.dumps({"title": "Synthetic cursor fence"}).encode(), headers=headers, method="POST")
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    temporary_collection = json.load(response)
+                request = urllib.request.Request(url + "/api/v1/collections/" + temporary_collection["id"] + "?revision=1", data=b"", headers=headers, method="DELETE")
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    assert response.status == 204
+                browser.find_element(By.ID, "page-next").click()
+                wait.until(lambda d: "Data changed; restart" in d.find_element(By.ID, "status").text)
+                assert browser.switch_to.active_element.get_attribute("id") == "page-first"
+                assert not browser.find_elements(By.CSS_SELECTOR, "#results .result"), "stale pages were mixed into a new snapshot"
+                assert browser.find_element(By.ID, "query").get_attribute("value") == "pagingjourney"
+                browser.find_element(By.ID, "page-first").click()
+                wait.until(lambda d: d.find_element(By.ID, "page-range").text.startswith("1–20"))
 
             run_paging_journey()
             search("idempotencymarker")
