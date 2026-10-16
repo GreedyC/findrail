@@ -12,16 +12,18 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Lephiziel/findrail/internal/evidencebundle"
 	"github.com/Lephiziel/findrail/internal/originals"
 	"github.com/Lephiziel/findrail/internal/search"
 )
 
 const (
-	maxCollections       = 100
-	maxCollectionEntries = 40
-	maxCollectionText    = 2 << 20
-	maxCollectionPayload = 64 << 20
-	maxCollectionNote    = 2048
+	maxCollections           = 100
+	maxCollectionEntries     = 40
+	maxCollectionText        = 2 << 20
+	maxCollectionPayload     = 64 << 20
+	maxCollectionOwnedMemory = 32 << 20
+	maxCollectionNote        = 2048
 )
 
 var ErrCollectionNotFound = errors.New("collection not found")
@@ -37,6 +39,48 @@ type CollectionEntry struct {
 	Note         string          `json:"note"`
 	CollectedAt  string          `json:"collected_at"`
 }
+
+// ExportEvidenceBundle returns the portable citations from one collection read snapshot.
+func (s *Store) ExportEvidenceBundle(ctx context.Context, id string) (evidencebundle.Bundle, error) {
+	c, err := s.LoadCollection(ctx, id)
+	if err != nil {
+		return evidencebundle.Bundle{}, err
+	}
+	b := evidencebundle.Bundle{Title: c.Title, Sources: []evidencebundle.Source{}, Entries: []evidencebundle.Entry{}}
+	aliases := map[string]string{}
+	for _, item := range c.Entries {
+		ev := item.Evidence
+		alias, ok := aliases[ev.SourceID]
+		if !ok {
+			if len(aliases) == evidencebundle.MaxSources {
+				return evidencebundle.Bundle{}, ErrCollectionLimit
+			}
+			alias = fmt.Sprintf("s%d", len(aliases)+1)
+			aliases[ev.SourceID] = alias
+			b.Sources = append(b.Sources, evidencebundle.Source{Alias: alias, Kind: ev.SourceKind, DisplayName: ev.SourceName})
+		}
+		if ev.Path == "" || ev.ContentHash == "" || !utf8.ValidString(ev.Path) {
+			return evidencebundle.Bundle{}, errors.New("collection evidence has no portable locator")
+		}
+		start := 0
+		if item.WholePreview {
+			item.Excerpt = ev.Text
+			start = ev.TextStartChar
+		} else {
+			at := strings.Index(ev.Text, item.Excerpt)
+			if at < 0 {
+				return evidencebundle.Bundle{}, errors.New("collection excerpt has no valid offset")
+			}
+			start = ev.TextStartChar + utf8.RuneCountInString(ev.Text[:at])
+		}
+		b.Entries = append(b.Entries, evidencebundle.Entry{SourceAlias: alias, RelativePath: ev.Path, MediaType: ev.MediaType, ContentHash: ev.ContentHash, Page: ev.Page, StartChar: start, Text: item.Excerpt, Note: item.Note})
+	}
+	if _, err = evidencebundle.Encode(b); err != nil {
+		return evidencebundle.Bundle{}, err
+	}
+	return b, nil
+}
+
 type CollectionEdit struct {
 	Key              string `json:"key"`
 	Note             string `json:"note"`
