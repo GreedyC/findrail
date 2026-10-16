@@ -203,7 +203,7 @@ func appendIntegrityCheck(check func(string, string, string, string, string), id
 		}
 		action = "Preserve a stopped full-directory backup, then investigate or restore; doctor does not repair the index."
 	} else if len(phase.Findings) > 0 {
-		message = phase.Findings[0]
+		message += " " + phase.Findings[0]
 	}
 	check("integrity_"+id, status, code, message, action)
 }

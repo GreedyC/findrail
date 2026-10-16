@@ -21,6 +21,8 @@ only part of SQLite structural integrity; it does not establish UNIQUE/index
 entry consistency, full FTS/content consistency, search quality, or that all data
 is recoverable. See [SQLite quick_check](https://www.sqlite.org/pragma.html#pragma_quick_check)
 and [foreign_key_check](https://www.sqlite.org/pragma.html#pragma_foreign_key_check).
+Result-reading failures, cancellation, and stopping at the finding limit are
+reported as incomplete, never as a completed scan or a healthy index.
 
 The web UI offers an explicit **Diagnostics** dialog when the backend advertises
 the capability. The report is generated locally and is limited to 16 KiB. It

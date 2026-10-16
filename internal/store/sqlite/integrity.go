@@ -3,7 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"strings"
+	"time"
 )
 
 // IntegrityPhase contains only fixed, safe messages. SQLite-controlled values
@@ -24,6 +24,8 @@ const integrityFindingLimit = 10
 // IntegrityCheck performs bounded, read-only SQLite checks on an already-open
 // read-only Store. It makes no claim about FTS/content consistency.
 func (s *Store) IntegrityCheck(ctx context.Context) IntegrityReport {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	result := IntegrityReport{}
 	if s == nil || s.readers == nil {
 		result.QuickCheck = IntegrityPhase{Findings: []string{"Read-only index access is unavailable."}}
@@ -47,10 +49,12 @@ func quickCheck(ctx context.Context, db *sql.DB) IntegrityPhase {
 	}
 	defer rows.Close()
 	seen := false
+	complete := true
 	for rows.Next() {
 		seen = true
 		var message string
 		if err := rows.Scan(&message); err != nil {
+			complete = false
 			phase.Healthy = false
 			phase.Findings = append(phase.Findings, "Structural check could not be completed.")
 			break
@@ -63,17 +67,23 @@ func quickCheck(ctx context.Context, db *sql.DB) IntegrityPhase {
 		}
 	}
 	if err := rows.Err(); err != nil {
+		complete = false
 		phase.Healthy = false
 		if len(phase.Findings) == 0 {
 			phase.Findings = append(phase.Findings, "Structural check could not be completed.")
 		}
 	}
 	if !seen && ctx.Err() == nil {
+		complete = false
 		phase.Healthy = false
 		phase.Findings = append(phase.Findings, "Structural check returned no result.")
 	}
-	phase.Complete = ctx.Err() == nil
-	if !phase.Complete {
+	if len(phase.Findings) == integrityFindingLimit {
+		complete = false
+		phase.Findings[0] = "Structural check stopped at the finding limit; additional issues may remain."
+	}
+	phase.Complete = complete && ctx.Err() == nil
+	if ctx.Err() != nil {
 		phase.Healthy = false
 		phase.Findings = []string{"Structural check was interrupted before completion."}
 	}
@@ -100,11 +110,13 @@ func foreignKeyCheck(ctx context.Context, db *sql.DB) IntegrityPhase {
 	}
 	defer rows.Close()
 	count := 0
+	complete := true
 	for rows.Next() {
 		var table, parent string
 		var rowid sql.NullInt64
 		var constraint sql.NullInt64
 		if err := rows.Scan(&table, &rowid, &parent, &constraint); err != nil {
+			complete = false
 			phase.Healthy = false
 			phase.Findings = append(phase.Findings, "Foreign-key check could not be completed.")
 			break
@@ -121,27 +133,25 @@ func foreignKeyCheck(ctx context.Context, db *sql.DB) IntegrityPhase {
 			}
 		}
 		if count == integrityFindingLimit {
+			complete = false
+			phase.Findings[0] = "Foreign-key check stopped at the finding limit; additional issues may remain."
 			break
 		}
 	}
 	if err := rows.Err(); err != nil {
+		complete = false
 		phase.Healthy = false
 		if len(phase.Findings) == 0 {
 			phase.Findings = append(phase.Findings, "Foreign-key check could not be completed.")
 		}
 	}
-	phase.Complete = ctx.Err() == nil
-	if !phase.Complete {
+	phase.Complete = complete && ctx.Err() == nil
+	if ctx.Err() != nil {
 		phase.Healthy = false
 		phase.Findings = []string{"Foreign-key check was interrupted before completion."}
 	}
 	if phase.Healthy && phase.Complete {
 		phase.Findings = []string{"Foreign-key check completed without reported issues."}
-	}
-	for i, finding := range phase.Findings {
-		if len(finding) > 2048 {
-			phase.Findings[i] = strings.ToValidUTF8(finding[:2048], "?")
-		}
 	}
 	return phase
 }
