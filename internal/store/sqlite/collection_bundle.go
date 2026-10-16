@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Lephiziel/findrail/internal/evidencebundle"
+	"github.com/Lephiziel/findrail/internal/search"
 )
 
 const bundleCollectedAtFormat = "2006-01-02T15:04:05.000000000Z07:00"
@@ -111,18 +113,10 @@ func (s *Store) PreviewEvidenceBundle(ctx context.Context, b evidencebundle.Bund
 		if err = tx.QueryRowContext(ctx, "SELECT id FROM documents WHERE source_id=? AND path=?", mappings[entry.SourceAlias], entry.RelativePath).Scan(&docID); err != nil {
 			continue
 		}
-		loadStart := entry.StartChar
-		if entry.Page > 0 {
-			loadStart = 0
-		}
-		ev, e := evidenceInWriteTxAt(ctx, tx, docID, entry.Page, loadStart)
+		ev, e := bundleEvidenceInTx(ctx, tx, docID, entry)
 		if e != nil {
 			continue
 		}
-		ev.Text = entry.Text
-		ev.TextStartChar = entry.StartChar
-		ev.TextTotalChars = entry.StartChar + len([]rune(entry.Text))
-		ev.Truncated = true
 		item := CollectionEntry{Key: "00000000000000000000000000000000", Evidence: ev, Excerpt: entry.Text, Note: entry.Note, WholePreview: true, CollectedAt: projectedAt}
 		raw, e := json.Marshal(item)
 		if e != nil {
@@ -217,31 +211,17 @@ func (s *Store) ImportEvidenceBundle(ctx context.Context, b evidencebundle.Bundl
 		if err != nil {
 			return out, err
 		}
-		loadStart := entry.StartChar
-		if entry.Page > 0 {
-			loadStart = 0
-		}
-		ev, e := evidenceInWriteTxAt(ctx, tx, docID, entry.Page, loadStart)
+		ev, e := bundleEvidenceInTx(ctx, tx, docID, entry)
 		if e != nil {
 			return out, ErrCollectionSnapshotChanged
 		}
-		var exact string
-		if entry.Page > 0 {
-			err = tx.QueryRowContext(ctx, "SELECT substr(content,?,?) FROM document_pages WHERE document_id=? AND page_number=?", entry.StartChar+1, len([]rune(entry.Text)), docID, entry.Page).Scan(&exact)
-		} else {
-			err = tx.QueryRowContext(ctx, "SELECT substr(content,?,?) FROM documents WHERE id=?", entry.StartChar+1, len([]rune(entry.Text)), docID).Scan(&exact)
-		}
-		if err != nil || exact != entry.Text || ev.Path != entry.RelativePath || ev.MediaType != entry.MediaType || ev.ContentHash != entry.ContentHash {
+		if ev.Path != entry.RelativePath || ev.MediaType != entry.MediaType || ev.ContentHash != entry.ContentHash {
 			return out, ErrCollectionSnapshotChanged
 		}
 		key, e := newCollectionID()
 		if e != nil {
 			return out, e
 		}
-		ev.Text = entry.Text
-		ev.TextStartChar = entry.StartChar
-		ev.TextTotalChars = entry.StartChar + len([]rune(entry.Text))
-		ev.Truncated = true
 		item := CollectionEntry{Key: key, Evidence: ev, Excerpt: entry.Text, Note: entry.Note, WholePreview: true, CollectedAt: now}
 		raw, e := json.Marshal(item)
 		if e != nil {
@@ -298,6 +278,30 @@ func (s *Store) ImportEvidenceBundle(ctx context.Context, b evidencebundle.Bundl
 		return out, err
 	}
 	return s.LoadCollection(ctx, id)
+}
+
+func bundleEvidenceInTx(ctx context.Context, tx *sql.Tx, docID string, entry evidencebundle.Entry) (search.Evidence, error) {
+	loadStart := entry.StartChar
+	if entry.Page > 0 {
+		loadStart = 0
+	}
+	ev, err := evidenceInWriteTxAt(ctx, tx, docID, entry.Page, loadStart)
+	if err != nil {
+		return ev, err
+	}
+	var exact string
+	if entry.Page > 0 {
+		err = tx.QueryRowContext(ctx, "SELECT length(content),substr(content,?,?) FROM document_pages WHERE document_id=? AND page_number=?", entry.StartChar+1, len([]rune(entry.Text)), docID, entry.Page).Scan(&ev.TextTotalChars, &exact)
+	} else {
+		err = tx.QueryRowContext(ctx, "SELECT length(content),substr(content,?,?) FROM documents WHERE id=?", entry.StartChar+1, len([]rune(entry.Text)), docID).Scan(&ev.TextTotalChars, &exact)
+	}
+	if err != nil || exact != entry.Text || entry.StartChar+utf8.RuneCountInString(entry.Text) > ev.TextTotalChars {
+		return ev, ErrCollectionSnapshotChanged
+	}
+	ev.Text = entry.Text
+	ev.TextStartChar = entry.StartChar
+	ev.Truncated = entry.StartChar > 0 || entry.StartChar+utf8.RuneCountInString(entry.Text) < ev.TextTotalChars
+	return ev, nil
 }
 
 func bundleSourceBinding(ctx context.Context, tx *sql.Tx, sources []evidencebundle.Source, mappings map[string]string) (string, error) {
