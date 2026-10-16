@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -31,10 +32,11 @@ type pageRuntime struct {
 	gate   chan struct{} // one executing call plus at most eight queued calls
 	serial chan struct{}
 	now    func() time.Time
+	failed bool // accessed only by the executing page operation
 }
 
-func newPageRuntime(parent context.Context, conn *sql.Conn) (*pageRuntime, error) {
-	p := &pageRuntime{conn: conn, gate: make(chan struct{}, 9), serial: make(chan struct{}, 1)}
+func newPageRuntime(parent context.Context) (*pageRuntime, error) {
+	p := &pageRuntime{gate: make(chan struct{}, 9), serial: make(chan struct{}, 1)}
 	p.now = time.Now
 	if _, err := rand.Read(p.key[:]); err != nil {
 		return nil, err
@@ -46,28 +48,27 @@ func newPageRuntime(parent context.Context, conn *sql.Conn) (*pageRuntime, error
 	return p, nil
 }
 
-func (s *Store) pageState(ctx context.Context) (*pageRuntime, error) {
+// Register calls under the same lock that prevents new work during Close.
+// Connection acquisition happens later, after bounded and cancellable admission.
+func (s *Store) pageState() (*pageRuntime, error) {
 	s.pagerMu.Lock()
 	defer s.pagerMu.Unlock()
 	if s.pagerClosed {
 		return nil, search.ErrPageClosed
 	}
 	if s.pager != nil {
+		s.pagerWG.Add(1)
 		return s.pager, nil
 	}
-	conn, err := s.readers.Conn(ctx)
+	p, err := newPageRuntime(context.Background())
 	if err != nil {
-		return nil, errors.Join(search.ErrPageUnavailable, err)
-	}
-	p, err := newPageRuntime(context.Background(), conn)
-	if err != nil {
-		_ = conn.Close()
 		return nil, errors.Join(search.ErrPageUnavailable, err)
 	}
 	s.pager = p
 	if s.pageNow != nil {
 		p.now = s.pageNow
 	}
+	s.pagerWG.Add(1)
 	return p, nil
 }
 
@@ -78,40 +79,9 @@ func (s *Store) SearchPage(ctx context.Context, input search.PageRequest) (searc
 	}
 	deadlineCtx, cancel := context.WithTimeout(ctx, pageDeadline)
 	defer cancel()
-	p, err := s.pageState(deadlineCtx)
-	if err != nil {
+	if err := deadlineCtx.Err(); err != nil {
 		return response, err
 	}
-	s.pagerMu.Lock()
-	if s.pagerClosed {
-		s.pagerMu.Unlock()
-		return response, search.ErrPageClosed
-	}
-	s.pagerWG.Add(1)
-	s.pagerMu.Unlock()
-	defer s.pagerWG.Done()
-	select {
-	case p.gate <- struct{}{}:
-	case <-deadlineCtx.Done():
-		return response, pageContextErr(deadlineCtx.Err())
-	case <-p.ctx.Done():
-		return response, search.ErrPageClosed
-	default:
-		return response, search.ErrPageBusy
-	}
-	defer func() { <-p.gate }()
-	select {
-	case p.serial <- struct{}{}:
-	case <-deadlineCtx.Done():
-		return response, pageContextErr(deadlineCtx.Err())
-	case <-p.ctx.Done():
-		return response, search.ErrPageClosed
-	}
-	defer func() { <-p.serial }()
-	ctx, opCancel := context.WithCancel(deadlineCtx)
-	stop := context.AfterFunc(p.ctx, opCancel)
-	defer func() { stop(); opCancel() }()
-
 	req := input.Request
 	if req.Limit == 0 {
 		req.Limit = 20
@@ -122,15 +92,47 @@ func (s *Store) SearchPage(ctx context.Context, input search.PageRequest) (searc
 	if req.Format == "" {
 		req.Format = "all"
 	}
-	if req.PathPrefix != "" {
-		req.PathPrefix = trimPathSlash(req.PathPrefix)
-	}
 	response.Limit = req.Limit
 	if err := search.ValidateRequest(req); err != nil {
 		return response, err
 	}
 	if req.Limit < 1 || req.Limit > 100 {
 		return response, search.ErrLimit
+	}
+	// Validate the original path first: '/' and 'docs//' must not become valid
+	// (or lose their filter) merely by removing a trailing slash.
+	req.PathPrefix = trimPathSlash(req.PathPrefix)
+	p, err := s.pageState()
+	if err != nil {
+		return response, err
+	}
+	defer s.pagerWG.Done()
+	select {
+	case p.gate <- struct{}{}:
+	case <-deadlineCtx.Done():
+		return response, deadlineCtx.Err()
+	case <-p.ctx.Done():
+		return response, search.ErrPageClosed
+	default:
+		return response, search.ErrPageBusy
+	}
+	defer func() { <-p.gate }()
+	select {
+	case p.serial <- struct{}{}:
+	case <-deadlineCtx.Done():
+		return response, deadlineCtx.Err()
+	case <-p.ctx.Done():
+		return response, search.ErrPageClosed
+	}
+	defer func() { <-p.serial }()
+	ctx, opCancel := context.WithCancel(deadlineCtx)
+	stop := context.AfterFunc(p.ctx, opCancel)
+	defer func() { stop(); opCancel() }()
+	if err := pageOperationErr(p, ctx); err != nil {
+		return response, err
+	}
+	if p.failed {
+		return response, search.ErrPageUnavailable
 	}
 	digest := pageDigest(req)
 	offset := 0
@@ -156,28 +158,35 @@ func (s *Store) SearchPage(ctx context.Context, input search.PageRequest) (searc
 		}
 		offset, fence, expires = int(tok.offset), tok.fence, tok.expiry
 	}
+	if p.conn == nil {
+		conn, err := s.readers.Conn(ctx)
+		if err != nil {
+			return response, s.pageDBErr(p, ctx, err)
+		}
+		p.conn = conn
+	}
 	var before int64
 	if err := p.conn.QueryRowContext(ctx, "PRAGMA data_version").Scan(&before); err != nil {
-		return response, s.losePager(p, err)
+		return response, s.pageDBErr(p, ctx, err)
 	}
 	if fence >= 0 && before != fence {
 		return response, search.ErrCursorStale
 	}
 	tx, err := p.conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return response, s.pageDBErr(p, err)
+		return response, s.pageDBErr(p, ctx, err)
 	}
 	page, queryErr := searchPageTx(ctx, tx, req, offset)
 	rollbackErr := tx.Rollback()
 	if queryErr != nil {
-		return response, s.pageDBErr(p, queryErr)
+		return response, s.pageDBErr(p, ctx, queryErr)
 	}
 	if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
-		return response, s.pageDBErr(p, rollbackErr)
+		return response, s.pageDBErr(p, ctx, rollbackErr)
 	}
 	var after int64
 	if err := p.conn.QueryRowContext(ctx, "PRAGMA data_version").Scan(&after); err != nil {
-		return response, s.losePager(p, err)
+		return response, s.pageDBErr(p, ctx, err)
 	}
 	if before != after {
 		return response, search.ErrCursorStale
@@ -186,11 +195,31 @@ func (s *Store) SearchPage(ctx context.Context, input search.PageRequest) (searc
 		return response, search.ErrCursorStale
 	}
 	page.Offset, page.Limit, page.WindowLimit = offset, req.Limit, search.PageWindowLimit
-	page.NextCursor, page.EndReason = nil, nil
-	for len(page.Results) > 0 {
+	return fitSearchPage(ctx, p, page, digest, after, expires)
+}
+
+// Encode rows once, then size candidate envelopes with an empty results array.
+// This avoids repeatedly serializing large prefixes while enforcing the budget
+// against the final JSON (including the transport's newline).
+func fitSearchPage(ctx context.Context, p *pageRuntime, page search.PageResponse, digest [32]byte, fence, expiry int64) (search.PageResponse, error) {
+	rows := page.Results
+	page.Results = []search.PageResult{}
+	var selected search.PageResponse
+	prefixBytes, best := 0, -1
+	for n := 0; n <= len(rows); n++ {
+		if err := pageOperationErr(p, ctx); err != nil {
+			return search.PageResponse{}, err
+		}
+		if n > 0 {
+			b, err := json.Marshal(rows[n-1])
+			if err != nil {
+				return search.PageResponse{}, err
+			}
+			prefixBytes += len(b)
+		}
 		page.NextCursor, page.EndReason = nil, nil
-		page.Returned = len(page.Results)
-		end := offset + page.Returned
+		page.Returned = n
+		end := page.Offset + n
 		if end >= page.Total {
 			reason := "complete"
 			page.EndReason = &reason
@@ -200,27 +229,39 @@ func (s *Store) SearchPage(ctx context.Context, input search.PageRequest) (searc
 			page.EndReason = &reason
 		}
 		if page.EndReason == nil {
-			token := p.encodeCursor(digest, end, after, expires)
+			token := p.encodeCursor(digest, end, fence, expiry)
 			page.NextCursor = &token
 		}
 		b, e := json.Marshal(page)
 		if e != nil {
-			return response, e
+			return search.PageResponse{}, e
 		}
-		if len(b)+1 <= pageJSONLimit {
-			return page, nil
+		commas := max(0, n-1)
+		if len(b)+prefixBytes+commas+1 <= pageJSONLimit && (n > 0 || page.Total <= page.Offset) {
+			selected, best = page, n
 		}
-		page.Results = page.Results[:len(page.Results)-1]
 	}
-	page.Returned = 0
-	if page.Total > offset {
-		return response, search.ErrPageResultTooLarge
+	if err := pageOperationErr(p, ctx); err != nil {
+		return search.PageResponse{}, err
 	}
-	b, _ := json.Marshal(page)
+	if best < 0 {
+		return search.PageResponse{}, search.ErrPageResultTooLarge
+	}
+	selected.Results = rows[:best]
+	if selected.Results == nil {
+		selected.Results = []search.PageResult{}
+	}
+	b, err := json.Marshal(selected)
+	if err != nil {
+		return search.PageResponse{}, err
+	}
+	if err := pageOperationErr(p, ctx); err != nil {
+		return search.PageResponse{}, err
+	}
 	if len(b)+1 > pageJSONLimit {
-		return response, search.ErrPageResultTooLarge
+		return search.PageResponse{}, search.ErrPageResultTooLarge
 	}
-	return page, nil
+	return selected, nil
 }
 
 type pageToken struct {
@@ -301,39 +342,28 @@ func trimPathSlash(s string) string {
 	}
 	return s
 }
-func pageContextErr(err error) error {
-	if errors.Is(err, context.DeadlineExceeded) {
-		return err
-	}
-	if errors.Is(err, context.Canceled) {
-		return err
-	}
-	return err
-}
-func (s *Store) pageDBErr(p *pageRuntime, err error) error {
+func pageOperationErr(p *pageRuntime, ctx context.Context) error {
 	if p.ctx.Err() != nil {
 		return search.ErrPageClosed
+	}
+	return ctx.Err()
+}
+func (s *Store) pageDBErr(p *pageRuntime, ctx context.Context, err error) error {
+	if interrupted := pageOperationErr(p, ctx); interrupted != nil {
+		return interrupted
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	if err == sql.ErrConnDone {
-		return s.losePager(p, err)
+	if errors.Is(err, sql.ErrConnDone) || errors.Is(err, driver.ErrBadConn) {
+		// A new connection has an unrelated data_version counter. Fail this
+		// runtime until Store reopen rather than accepting its old cursors.
+		p.failed = true
 	}
 	var validation *search.ValidationError
 	if errors.As(err, &validation) || errors.Is(err, search.ErrLimit) || errors.Is(err, search.ErrQuery) {
 		return err
 	}
-	return errors.Join(search.ErrPageUnavailable, err)
-}
-func (s *Store) losePager(p *pageRuntime, err error) error {
-	s.pagerMu.Lock()
-	if s.pager == p {
-		s.pager = nil
-		p.cancel()
-		_ = p.conn.Close()
-	}
-	s.pagerMu.Unlock()
 	return errors.Join(search.ErrPageUnavailable, err)
 }
 

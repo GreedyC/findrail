@@ -66,6 +66,29 @@ func TestSearchPageWalkAndCursorValidation(t *testing.T) {
 	if len(seen) != 237 {
 		t.Fatalf("walk returned %d documents", len(seen))
 	}
+	for _, limit := range []int{1, 20, 100} {
+		walk := search.PageRequest{Request: search.Request{Query: "pagewalkmarker", Limit: limit}}
+		position := 0
+		for {
+			page, e := s.SearchPage(ctx, walk)
+			if e != nil || page.Offset != position || page.Total != 237 || page.Returned == 0 {
+				t.Fatalf("limit %d at %d: %+v, %v", limit, position, page, e)
+			}
+			for _, row := range page.Results {
+				if row.ID != fmt.Sprintf("doc-%03d", position) {
+					t.Fatalf("limit %d gap/order at %d: %s", limit, position, row.ID)
+				}
+				position++
+			}
+			if page.NextCursor == nil {
+				if position != 237 || page.EndReason == nil || *page.EndReason != "complete" {
+					t.Fatalf("limit %d incomplete walk: %d, %+v", limit, position, page)
+				}
+				break
+			}
+			walk.Cursor = *page.NextCursor
+		}
+	}
 	prev, err := s.SearchPage(ctx, search.PageRequest{Request: search.Request{Query: "pagewalkmarker", Limit: 37, Mode: "literal", Format: "all"}, Cursor: firstCursor})
 	if err != nil {
 		t.Fatal(err)

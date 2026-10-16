@@ -65,15 +65,29 @@ Do not create a second persistence abstraction solely to hide this small seam.
 
 The optional internal `search.PageEngine` is implemented by SQLite `Store.SearchPage`;
 the legacy search engine and HTTP API are unchanged. Page queries use the bounded
-03A helper inside a short transaction on one lazily reserved query-only reader.
+query helper inside a short transaction on one lazily reserved query-only reader.
 Signed, process-local HMAC cursors carry a query-tuple digest, offset, connection-local
 `data_version` fence, and fixed five-minute expiry. A commit on another connection
 conservatively invalidates continuation, including source and metadata changes;
 the implementation does not claim to distinguish corpus changes from unrelated
 commits. Each Store admits one running and at most eight waiting page operations,
 uses a five-second deadline, and caps the fully encoded JSON page at 512 KiB.
-Close cancels page work and releases the pinned reader. This is an internal
-read-only capability only: no page-search HTTP route or UI pagination is available
+Admission and connection acquisition share the caller's deadline; initialization
+does not hold the Store mutex while waiting for a connection. Close cancels active
+and queued work, releases the pinned reader before closing the pool, and is
+idempotent. A lost pinned connection makes this pager unavailable until Store
+reopen; a different connection cannot reuse its fence counter. Cancelling an
+individual request does not create a new cursor session.
+
+Page defaults are limit 20, literal mode, and all formats. Paths are validated
+before normalizing a valid trailing slash; query, source and title text remain
+exact. A continuation retains its original five-minute expiry and may be replayed
+for previous-page navigation. Empty results complete explicitly; a total of
+exactly 1,000 completes rather than reporting a truncated window. A cursor with a
+different well-formed public epoch is rejected as a changed session without
+trusting its claims; the previous process key is not persisted.
+This is an internal read-only capability only: no page-search HTTP route or UI
+pagination is available
 until the transport stage.
 
 The page explicitly initializes its search, preview, temporary collection,
