@@ -136,6 +136,14 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 	if config.management != nil && config.authority == "" {
 		config.management = nil
 	}
+	if config.management != nil || config.originals != nil {
+		if config.token == "" {
+			var token [32]byte
+			if _, err := rand.Read(token[:]); err != nil {
+				config.management,config.originals,config.desktop=nil,nil,nil
+			} else { config.token=fmt.Sprintf("%x",token[:]) }
+		}
+	}
 	pageEngine, hasPageEngine := backend.(search.PageEngine)
 	collections, hasCollections := backend.(collectionBackend)
 	_, hasPassage := backend.(interface {
@@ -327,34 +335,30 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 				})
 			})
 			mux.HandleFunc("POST /api/v1/collections/import/preview", func(w http.ResponseWriter, r *http.Request) {
+				requestCtx, requestCancel := context.WithTimeout(r.Context(), 5*time.Second)
+				defer requestCancel()
+				r = r.WithContext(requestCtx)
 				if !mutationAllowed(w, r, config) {
 					return
 				}
-				var body struct {
-					Bundle   json.RawMessage   `json:"bundle"`
-					Mappings map[string]string `json:"mappings"`
-				}
-				if !decodeBundleWrapper(w, r, &body) {
-					return
-				}
-				b, e := evidencebundle.Decode(bytes.NewReader(body.Bundle))
-				if e != nil {
-					writeError(w, 400, "invalid evidence bundle")
-					return
-				}
 				bundleOperation(w, r, func(ctx context.Context) error {
+					var body struct {
+						Bundle   json.RawMessage   `json:"bundle"`
+						Mappings map[string]string `json:"mappings"`
+					}
+					if !decodeBundleWrapper(w, r, &body) {
+						return nil
+					}
+					b, e := evidencebundle.Decode(bytes.NewReader(body.Bundle))
+					if e != nil {
+						writeError(w, 400, "invalid evidence bundle")
+						return nil
+					}
 					p, e := bundleBackend.PreviewEvidenceBundle(ctx, b, body.Mappings)
 					if e != nil {
 						return e
 					}
-					allMatch := true
-					for _, status := range p.Entries {
-						if status.Status != "match" {
-							allMatch = false
-							break
-						}
-					}
-					if allMatch {
+					if p.Ready {
 						digest, _ := evidencebundle.Digest(b)
 						payload, _ := json.Marshal(struct {
 							Digest   string            `json:"d"`
@@ -377,23 +381,26 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 				})
 			})
 			mux.HandleFunc("POST /api/v1/collections/import", func(w http.ResponseWriter, r *http.Request) {
+				requestCtx, requestCancel := context.WithTimeout(r.Context(), 5*time.Second)
+				defer requestCancel()
+				r = r.WithContext(requestCtx)
 				if !mutationAllowed(w, r, config) {
 					return
 				}
-				var body struct {
-					Bundle json.RawMessage `json:"bundle"`
-					Claim  string          `json:"claim"`
-					Title  string          `json:"title"`
-				}
-				if !decodeBundleWrapper(w, r, &body) {
-					return
-				}
-				b, e := evidencebundle.Decode(bytes.NewReader(body.Bundle))
-				if e != nil {
-					writeError(w, 400, "invalid evidence bundle")
-					return
-				}
 				bundleOperation(w, r, func(ctx context.Context) error {
+					var body struct {
+						Bundle json.RawMessage `json:"bundle"`
+						Claim  string          `json:"claim"`
+						Title  string          `json:"title"`
+					}
+					if !decodeBundleWrapper(w, r, &body) {
+						return nil
+					}
+					b, e := evidencebundle.Decode(bytes.NewReader(body.Bundle))
+					if e != nil {
+						writeError(w, 400, "invalid evidence bundle")
+						return nil
+					}
 					parts := strings.Split(body.Claim, ".")
 					if len(parts) != 2 || len(body.Claim) > 32<<10 {
 						return errBundleClaim
@@ -428,18 +435,6 @@ func handlerWithOptions(backend Backend, config options) http.Handler {
 	}
 	if config.desktop != nil && (config.management == nil || config.authority == "" || config.quit == nil) {
 		config.desktop = nil
-	}
-	if config.management != nil || config.originals != nil {
-		if config.token == "" {
-			var token [32]byte
-			if _, err := rand.Read(token[:]); err != nil {
-				config.management = nil
-				config.originals = nil
-				config.desktop = nil
-			} else {
-				config.token = fmt.Sprintf("%x", token[:])
-			}
-		}
 	}
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1112,8 +1107,16 @@ func decodeBundleWrapper(w http.ResponseWriter, r *http.Request, target any) boo
 		return false
 	}
 	b, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
-	if err != nil || len(b) > limit {
+	if errors.Is(r.Context().Err(), context.DeadlineExceeded) {
+		writeJSON(w, 504, map[string]string{"error": "evidence bundle operation timed out", "code": "bundle_timeout"})
+		return false
+	}
+	if len(b) > limit {
 		writeError(w, 413, "request too large")
+		return false
+	}
+	if err != nil {
+		writeError(w, 400, "invalid bundle request")
 		return false
 	}
 	if !utf8.Valid(b) || !jsonObjectsUnique(b) {
@@ -1142,6 +1145,10 @@ func decodeBundleWrapper(w http.ResponseWriter, r *http.Request, target any) boo
 		return false
 	}
 	if fields["mappings"] == nil && fields["claim"] == nil {
+		writeError(w, 400, "invalid bundle request")
+		return false
+	}
+	if fields["mappings"] != nil && (len(fields["mappings"]) == 0 || fields["mappings"][0] != '{') {
 		writeError(w, 400, "invalid bundle request")
 		return false
 	}

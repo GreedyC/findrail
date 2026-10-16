@@ -18,11 +18,12 @@ import (
 )
 
 const (
-	maxCollections       = 100
-	maxCollectionEntries = 40
-	maxCollectionText    = 2 << 20
-	maxCollectionPayload = 64 << 20
-	maxCollectionNote    = 2048
+	maxCollections           = 100
+	maxCollectionEntries     = 40
+	maxCollectionText        = 2 << 20
+	maxCollectionPayload     = 64 << 20
+	maxCollectionOwnedMemory = 32 << 20
+	maxCollectionNote        = 2048
 )
 
 var ErrCollectionNotFound = errors.New("collection not found")
@@ -71,9 +72,6 @@ func (s *Store) ExportEvidenceBundle(ctx context.Context, id string) (evidencebu
 				return evidencebundle.Bundle{}, errors.New("collection excerpt has no valid offset")
 			}
 			start = ev.TextStartChar + utf8.RuneCountInString(ev.Text[:at])
-		}
-		if ev.Page > 0 {
-			start = utf8.RuneCountInString(ev.Text[:strings.Index(ev.Text, item.Excerpt)])
 		}
 		b.Entries = append(b.Entries, evidencebundle.Entry{SourceAlias: alias, RelativePath: ev.Path, MediaType: ev.MediaType, ContentHash: ev.ContentHash, Page: ev.Page, StartChar: start, Text: item.Excerpt, Note: item.Note})
 	}

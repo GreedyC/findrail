@@ -13,6 +13,8 @@ import (
 	"github.com/Lephiziel/findrail/internal/evidencebundle"
 )
 
+const bundleCollectedAtFormat="2006-01-02T15:04:05.000000000Z07:00"
+
 type BundleEntryStatus struct {
 	Index  int    `json:"index"`
 	Status string `json:"status"`
@@ -21,6 +23,7 @@ type BundlePreview struct {
 	Entries []BundleEntryStatus `json:"entries"`
 	Claim   string              `json:"claim,omitempty"`
 	Binding string              `json:"-"`
+	Ready   bool                `json:"-"`
 }
 
 // PreviewEvidenceBundle checks only the indexed snapshot; it never opens provenance.
@@ -44,6 +47,10 @@ func (s *Store) PreviewEvidenceBundle(ctx context.Context, b evidencebundle.Bund
 	}
 	var ownedPayload int
 	if err = tx.QueryRowContext(ctx, "SELECT COALESCE((SELECT sum(length(CAST(snapshot_json AS BLOB))) FROM evidence_collection_entries),0)+COALESCE((SELECT sum(length(CAST(title AS BLOB))) FROM evidence_collections),0)").Scan(&ownedPayload); err != nil {
+		return out, err
+	}
+	var ownedMemory int
+	if err = tx.QueryRowContext(ctx, "SELECT COALESCE(sum(length(CAST(snapshot_json AS BLOB))),0) FROM evidence_collection_entries").Scan(&ownedMemory); err != nil {
 		return out, err
 	}
 	for i, entry := range b.Entries {
@@ -94,11 +101,61 @@ func (s *Store) PreviewEvidenceBundle(ctx context.Context, b evidencebundle.Bund
 		}
 		out.Entries = append(out.Entries, BundleEntryStatus{Index: i, Status: status})
 	}
-	if collectionCount >= maxCollections || len(b.Entries) > maxCollectionEntries || ownedPayload > maxCollectionPayload {
+	projectedPayload, projectedMemory, projectedText := 0, 0, 0
+	projectedAt := time.Now().UTC().Format(bundleCollectedAtFormat)
+	for i, entry := range b.Entries {
+		if out.Entries[i].Status != "match" {
+			continue
+		}
+		var docID string
+		if err = tx.QueryRowContext(ctx, "SELECT id FROM documents WHERE source_id=? AND path=?", mappings[entry.SourceAlias], entry.RelativePath).Scan(&docID); err != nil {
+			continue
+		}
+		loadStart := entry.StartChar
+		if entry.Page > 0 {
+			loadStart = 0
+		}
+		ev, e := evidenceInWriteTxAt(ctx, tx, docID, entry.Page, loadStart)
+		if e != nil {
+			continue
+		}
+		ev.Text = entry.Text
+		ev.TextStartChar = entry.StartChar
+		ev.TextTotalChars = entry.StartChar + len([]rune(entry.Text))
+		ev.Truncated = true
+		item := CollectionEntry{Key: "00000000000000000000000000000000", Evidence: ev, Excerpt: entry.Text, Note: entry.Note, WholePreview: true, CollectedAt: projectedAt}
+		raw, e := json.Marshal(item)
+		if e != nil {
+			return out, e
+		}
+		metadata := item
+		metadata.Evidence.Text = ""
+		metadata.Excerpt = ""
+		metadata.Note = ""
+		mb, e := json.Marshal(metadata)
+		if e != nil {
+			return out, e
+		}
+		projectedPayload += len(raw)
+		projectedMemory += len(raw)
+		projectedText += len(ev.Text) + len(entry.Text)
+		if len(mb) > 16<<10 || len(entry.Note) > maxCollectionNote {
+			out.Entries[i].Status = "quota_conflict"
+		}
+	}
+	quotaConflict := collectionCount >= maxCollections || len(b.Entries) > maxCollectionEntries || ownedPayload+projectedPayload+256 > maxCollectionPayload || ownedMemory+projectedMemory > maxCollectionOwnedMemory || projectedText > maxCollectionText
+	if quotaConflict {
 		for i := range out.Entries {
 			if out.Entries[i].Status == "match" {
 				out.Entries[i].Status = "quota_conflict"
 			}
+		}
+	}
+	out.Ready = !quotaConflict
+	for _, status := range out.Entries {
+		if status.Status != "match" {
+			out.Ready = false
+			break
 		}
 	}
 	return out, nil
@@ -132,6 +189,10 @@ func (s *Store) ImportEvidenceBundle(ctx context.Context, b evidencebundle.Bundl
 	if count >= maxCollections {
 		return out, ErrCollectionLimit
 	}
+	var ownedMemory int
+	if err = tx.QueryRowContext(ctx, "SELECT COALESCE(sum(length(CAST(snapshot_json AS BLOB))),0) FROM evidence_collection_entries").Scan(&ownedMemory); err != nil {
+		return out, err
+	}
 	for _, src := range b.Sources {
 		if mappings[src.Alias] == "" {
 			return out, errors.New("every source alias must be mapped")
@@ -141,7 +202,7 @@ func (s *Store) ImportEvidenceBundle(ctx context.Context, b evidencebundle.Bundl
 	if err != nil {
 		return out, err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC().Format(bundleCollectedAtFormat)
 	items := make([]CollectionEntry, 0, len(b.Entries))
 	textBytes, total := 0, 0
 	for _, entry := range b.Entries {
@@ -156,7 +217,11 @@ func (s *Store) ImportEvidenceBundle(ctx context.Context, b evidencebundle.Bundl
 		if err != nil {
 			return out, err
 		}
-		ev, e := evidenceInWriteTxAt(ctx, tx, docID, entry.Page, entry.StartChar)
+		loadStart := entry.StartChar
+		if entry.Page > 0 {
+			loadStart = 0
+		}
+		ev, e := evidenceInWriteTxAt(ctx, tx, docID, entry.Page, loadStart)
 		if e != nil {
 			return out, ErrCollectionSnapshotChanged
 		}
@@ -185,9 +250,20 @@ func (s *Store) ImportEvidenceBundle(ctx context.Context, b evidencebundle.Bundl
 		if len(raw) > 4<<20 {
 			return out, ErrCollectionLimit
 		}
+		metadata := item
+		metadata.Evidence.Text = ""
+		metadata.Excerpt = ""
+		metadata.Note = ""
+		mb, e := json.Marshal(metadata)
+		if e != nil {
+			return out, e
+		}
+		if len(mb) > 16<<10 {
+			return out, ErrCollectionLimit
+		}
 		textBytes += len(ev.Text) + len(entry.Text)
 		total += len(raw)
-		if textBytes > maxCollectionText || len(entry.Note) > maxCollectionNote || total > maxCollectionPayload {
+		if textBytes > maxCollectionText || len(entry.Note) > maxCollectionNote || total > maxCollectionPayload || ownedMemory+total > maxCollectionOwnedMemory {
 			return out, ErrCollectionLimit
 		}
 		items = append(items, item)
@@ -211,7 +287,11 @@ func (s *Store) ImportEvidenceBundle(ctx context.Context, b evidencebundle.Bundl
 	if err = tx.QueryRowContext(ctx, "SELECT COALESCE((SELECT sum(length(CAST(snapshot_json AS BLOB))) FROM evidence_collection_entries),0)+COALESCE((SELECT sum(length(CAST(title AS BLOB))) FROM evidence_collections),0)").Scan(&aggregate); err != nil {
 		return out, err
 	}
-	if aggregate > maxCollectionPayload {
+	var memory int
+	if err = tx.QueryRowContext(ctx, "SELECT COALESCE(sum(length(CAST(snapshot_json AS BLOB))),0) FROM evidence_collection_entries").Scan(&memory); err != nil {
+		return out, err
+	}
+	if aggregate > maxCollectionPayload || memory > maxCollectionOwnedMemory {
 		return out, ErrCollectionLimit
 	}
 	if err = tx.Commit(); err != nil {
