@@ -45,6 +45,7 @@ return {
  preview,
  setReturnIdentity(identity){previewReturnIdentity=identity},
  beforeSearch(snapshot){if(previewContext&&['query','mode','source','format','path_prefix','title_contains'].some(key=>previewContext[key]!==snapshot[key])){previewRequest?.abort();previewRequest=null;previewContext=null;currentEvidence=null;notify('findrail-evidence-preview',null);if(dialog.open)dialog.close()}},
+ invalidatePendingPagePreview(){if(previewRequest&&!currentEvidence){previewGeneration++;previewRequest.abort();previewRequest=null;if(dialog.open)dialog.close()}},
  get currentEvidence(){return currentEvidence},
  get generation(){return previewGeneration},
  currentSource(){return previewSourceID},

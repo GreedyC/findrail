@@ -65,9 +65,9 @@ function harness(sourcePayload = [], capabilities = {management:true}) {
     Option: function(text, value) { this.text = text; this.value = value; },
     async fetch(url) {
       requests++;
-      if (url.startsWith('/api/v1/search?')) {
+      if (url.startsWith('/api/v1/search?') || url.startsWith('/api/v1/search/pages?')) {
         searchURLs.push(url);
-        return new Promise(resolve => pendingSearches.push(data => resolve({ok: true, json: async () => data})));
+        return new Promise(resolve => pendingSearches.push((data,status=200) => resolve({ok: status===200,status, json: async () => data})));
       }
       if(url.includes('/api/v1/sources/')&&url.includes('/report?')){reportURLs.push(url);return new Promise(resolve=>pendingReports.push(data=>resolve({ok:true,json:async()=>data})));}
       if (url.startsWith('/api/v1/documents/')) return new Promise(resolve => {
@@ -85,7 +85,7 @@ function harness(sourcePayload = [], capabilities = {management:true}) {
     notify: (type, detail) => handlers.get(`window:${type}`)?.({detail}),
     get requests() { return requests; },
     resolveEvidence: (data,status) => pendingEvidence(data,status),
-    resolveSearch: (index, data) => pendingSearches[index](data),resolveReport:(index,data)=>pendingReports[index](data), searchURLs,reportURLs,documentURLs};
+     resolveSearch: (index, data, status) => pendingSearches[index](data,status),resolveReport:(index,data)=>pendingReports[index](data), searchURLs,reportURLs,documentURLs};
 }
 
 test('inventory notifications retain one poll and pause in a hidden tab', async () => {
@@ -239,6 +239,81 @@ test('newer search response wins when an older fetch completes late', async () =
   h.resolveSearch(1,{total:2,results:[]});await flush();
   h.resolveSearch(0,{total:99,results:[]});await flush();
   assert.match(h.element('status').textContent,/2 matching documents/);
+});
+
+test('cursor paging uses response cursors and actual ranges; Previous and First reset safely', async () => {
+  const h=harness([],{search_pagination:true});await flush();h.element('query').value='retry';
+  h.handlers.get('search-form:submit')({preventDefault(){}});await flush();
+  assert.match(h.searchURLs[0],/^\/api\/v1\/search\/pages\?/);
+  assert.equal(new URLSearchParams(h.searchURLs[0].split('?')[1]).get('limit'),'20');
+  h.resolveSearch(0,{total:37,offset:0,returned:20,results:[],next_cursor:'opaque/next',end_reason:null});await flush();
+  assert.equal(h.element('page-range').textContent,'1–20 of 37');
+  h.handlers.get('page-next:click')();await flush();
+  const next=new URLSearchParams(h.searchURLs[1].split('?')[1]);
+  assert.equal(next.get('cursor'),'opaque/next');
+  h.resolveSearch(1,{total:37,offset:20,returned:17,results:[],next_cursor:null,end_reason:'complete'});await flush();
+  assert.equal(h.element('page-range').textContent,'21–37 of 37');
+  h.handlers.get('page-previous:click')();await flush();
+  assert.equal(new URLSearchParams(h.searchURLs[2].split('?')[1]).has('cursor'),false);
+  h.resolveSearch(2,{total:37,offset:0,returned:20,results:[],next_cursor:'opaque/next',end_reason:null});await flush();
+  h.element('page-size').value='50';h.handlers.get('page-size:change')();await flush();
+  assert.equal(new URLSearchParams(h.searchURLs[3].split('?')[1]).get('limit'),'50');
+  assert.equal(new URLSearchParams(h.searchURLs[3].split('?')[1]).has('cursor'),false);
+  h.resolveSearch(3,{total:37,offset:0,returned:37,results:[],next_cursor:null,end_reason:'complete'});await flush();
+  h.handlers.get('page-first:click')();await flush();
+  assert.equal(new URLSearchParams(h.searchURLs[4].split('?')[1]).has('cursor'),false);
+  assert.equal(h.element('page-range').textContent,'1–37 of 37','the range remains the last successful response while First is pending');
+});
+
+test('a stale page cursor exposes explicit restart without automatically mixing snapshots',async()=>{
+  const h=harness([],{search_pagination:true});await flush();h.element('query').value='retry';
+  h.handlers.get('search-form:submit')({preventDefault(){}});await flush();
+  h.resolveSearch(0,{total:40,offset:0,returned:20,results:[],next_cursor:'cursor-1',end_reason:null});await flush();
+  h.handlers.get('page-next:click')();await flush();
+  h.resolveSearch(1,{error:'stale cursor',code:'cursor_stale'},409);await flush();
+  assert.match(h.element('status').textContent,/Data changed; restart/);
+  assert.equal(h.searchURLs.length,2,'stale cursor does not trigger an automatic retry');
+  h.handlers.get('page-first:click')();await flush();
+  assert.equal(new URLSearchParams(h.searchURLs[2].split('?')[1]).has('cursor'),false);
+  h.resolveSearch(2,{total:40,offset:0,returned:20,results:[],next_cursor:'fresh-cursor',end_reason:null});await flush();
+  assert.equal(h.element('page-range').textContent,'1–20 of 40');
+});
+
+test('a delayed cursor response cannot replace results from a newer query generation',async()=>{
+  const h=harness([],{search_pagination:true});await flush();h.element('query').value='old query';
+  h.handlers.get('search-form:submit')({preventDefault(){}});await flush();
+  h.resolveSearch(0,{total:40,offset:0,returned:20,results:[],next_cursor:'old-cursor',end_reason:null});await flush();
+  h.handlers.get('page-next:click')();await flush();
+  h.element('query').value='new query';h.handlers.get('search-form:submit')({preventDefault(){}});await flush();
+  h.resolveSearch(2,{total:1,offset:0,returned:1,results:[],next_cursor:null,end_reason:'complete'});await flush();
+  h.resolveSearch(1,{total:40,offset:20,returned:20,results:[],next_cursor:'older',end_reason:null});await flush();
+  assert.equal(h.element('page-range').textContent,'1–1 of 1');
+  assert.match(h.element('status').textContent,/1 matching documents/);
+  assert.equal(new URLSearchParams(h.searchURLs[2].split('?')[1]).get('q'),'new query');
+});
+
+test('editing the query aborts a pending navigation before Search is submitted',async()=>{
+  const h=harness([],{search_pagination:true});await flush();h.element('query').value='first';
+  h.handlers.get('search-form:submit')({preventDefault(){}});await flush();
+  h.resolveSearch(0,{total:40,offset:0,returned:20,results:[],next_cursor:'cursor-1',end_reason:null});await flush();
+  h.handlers.get('page-next:click')();await flush();
+  h.element('query').value='second';h.handlers.get('query:input')();
+  h.resolveSearch(1,{total:40,offset:20,returned:20,results:[],next_cursor:'cursor-2',end_reason:null});await flush();
+  assert.equal(h.element('search-pager').hidden,true);
+  assert.match(h.element('status').textContent,/options changed/);
+});
+
+test('every search filter starts a fresh cursor chain with its current value',async()=>{
+  const h=harness([],{search_pagination:true});await flush();h.element('query').value='retry';
+  h.handlers.get('search-form:submit')({preventDefault(){}});await flush();
+  h.resolveSearch(0,{total:30,offset:0,returned:20,results:[],next_cursor:'cursor-1',end_reason:null});await flush();
+  for(const [id,value,param] of [['mode','advanced','mode'],['source','source-7','source'],['format','pdf','format'],['path-prefix','notes/','path_prefix'],['title-contains','Runbook','title_contains']]){
+    h.element(id).value=value;h.handlers.get(`${id}:change`)();await flush();
+    const params=new URLSearchParams(h.searchURLs.at(-1).split('?')[1]);
+    assert.equal(params.get(param),value,`${id} filter should reach the page API`);
+    assert.equal(params.has('cursor'),false,`${id} filter should restart from First`);
+    h.resolveSearch(h.searchURLs.length-1,{total:0,offset:0,returned:0,results:[],next_cursor:null,end_reason:'complete'});await flush();
+  }
 });
 
 test('filter reset issues a new server request from a coherent form snapshot', async () => {

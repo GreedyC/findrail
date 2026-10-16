@@ -127,9 +127,18 @@ Errors retain a human-readable `error` string and add a stable `code`:
 | 503 | `search_page_unavailable`: the pager is closed or unavailable. |
 | 504 | `search_page_timeout`: the five-second request budget expired. A shorter caller deadline and client cancellation propagate to the pager. |
 
-`serve`/`demo` remain read-only; page search adds no management capability. This
-source-build endpoint does not add browser pagination controls, which are
-planned separately, and is not included in the alpha.4 download.
+`serve`/`demo` remain read-only; page search adds no management capability. In
+the source-build browser UI, the optional pager appears only when capabilities
+reports `search_pagination: true`. It starts at 20 results per page; 50 and 100
+are also available. First, Previous, and Next navigate using opaque cursors,
+never a user-entered page number or calculated offset. The displayed range uses
+the server's actual offset and returned count, since the response byte budget can
+make a page shorter than requested. Search history is bounded to the active
+query/filter/limit and is held only in memory. A changed or expired cursor asks
+you to restart from First; it never combines pages from different index
+snapshots. The 1,000-result window is a bound, not a claim that all matches were
+shown. Servers without the explicit capability retain the existing search UI.
+These source-build browser controls are not included in the alpha.4 download.
 
 Advanced PDF matching treats each page as a separate field for phrases, so a
 phrase cannot cross a page boundary. Bare AND terms may occur on different
