@@ -189,6 +189,7 @@ func TestGeneratedMCPConfigSDKJourney(t *testing.T) {
 				if _, ok := evidence["has_more"]; ok {
 					t.Fatal("legacy PDF evidence must not claim passage continuation")
 				}
+				call("findrail_get_evidence", map[string]any{"source_id": "源-β", "document_id": "doc-源-β", "page": 2, "original_identity": "stale"}, true)
 				call("findrail_search", map[string]any{"source_id": "denied", "query": "scopedneedle"}, true)
 				call("findrail_get_evidence", map[string]any{"source_id": "denied", "document_id": "doc-denied"}, true)
 				call("findrail_get_evidence", map[string]any{"source_id": "源-β", "document_id": "doc-denied"}, true)

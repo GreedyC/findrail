@@ -50,6 +50,10 @@ func TestLegacyEvidenceOmitsUnknownPassageBounds(t *testing.T) {
 			t.Fatalf("legacy evidence claimed unknown %s: %+v", key, fields)
 		}
 	}
+	r, _, err = s.evidence(context.Background(), nil, evidenceInput{SourceID: "a", DocumentID: "doc-a", OriginalIdentity: "stale"})
+	if err != nil || !r.IsError {
+		t.Fatalf("explicit legacy identity guard was ignored: %v %+v", err, r)
+	}
 	query := "hello"
 	r, _, err = s.evidence(context.Background(), nil, evidenceInput{SourceID: "a", DocumentID: "doc-a", Query: &query, OriginalIdentity: "snapshot"})
 	if err != nil || !r.IsError {

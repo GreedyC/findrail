@@ -121,6 +121,8 @@ matches and unavailable anchors; title matches do not claim a body phrase.
 Continuation fields are present only for passage requests; legacy prefix/PDF
 reads do not claim a known total or continuation. A response byte budget that
 cannot return even one code point fails rather than repeating an empty window.
+Prefix/PDF calls may also supply `original_identity` to reject a changed indexed
+snapshot; omitting it retains their previous behavior.
 
 Defaults and bounds are configurable at startup:
 

@@ -405,7 +405,7 @@ func (s *Server) evidence(ctx context.Context, _ *mcp.CallToolRequest, input evi
 	if evidence.ID != input.DocumentID || evidence.SourceID != input.SourceID || evidence.Page < 0 || evidence.PageCount < 0 || (evidence.PageCount == 0 && evidence.Page != 0) || (evidence.PageCount > 0 && evidence.Page > evidence.PageCount) {
 		return s.errorResult(toolError{"backend_unavailable", "Evidence backend returned an invalid result."})
 	}
-	if passage && evidence.OriginalIdentity != input.OriginalIdentity {
+	if input.OriginalIdentity != "" && evidence.OriginalIdentity != input.OriginalIdentity {
 		return s.errorResult(toolError{"document_unavailable", "Indexed document identity changed; search again before requesting evidence."})
 	}
 	if passage && (evidence.PageCount != 0 || evidence.Page != 0 || evidence.TextStartChar < 0 || evidence.TextTotalChars < evidence.TextStartChar || len([]rune(evidence.Text)) > evidence.TextTotalChars-evidence.TextStartChar) {
