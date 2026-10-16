@@ -4,8 +4,15 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
-const script = [...html.matchAll(/<script type="module">([\s\S]*?)<\/script>/g)][0][1]
+const lifecycle = readFileSync(new URL('./search_ui.mjs', import.meta.url), 'utf8');
+const lifecycleOpen = lifecycle.indexOf('{\n', lifecycle.indexOf('export function initializeSearchUI(')) + 2;
+const script = lifecycle.slice(lifecycleOpen, lifecycle.lastIndexOf('\n}'))
+  .replace(/^if \(!document \|\| initializedDocuments\.has\(document\)\) return;\ninitializedDocuments\.add\(document\);\n/m, '')
   .replace(/^import .*;$/m, '');
+const previewModule = readFileSync(new URL('./preview_ui.mjs', import.meta.url), 'utf8');
+const previewFunctionStart = previewModule.indexOf('export function createPreviewLifecycle(');
+const previewFunctionEnd = previewModule.indexOf('\n}\n\nexport async function initializePreviewUI', previewFunctionStart) + 2;
+const previewScript = previewModule.slice(previewFunctionStart, previewFunctionEnd).replace(/^export /, '');
 const managementScript = [...html.matchAll(/<script type="module">([\s\S]*?)<\/script>/g)][1][1]
   .replace(/^import .*;$/m, '');
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -71,6 +78,7 @@ function harness(sourcePayload = [], capabilities = {management:true}) {
         ? {enabled: true, sources: []} : {sources: sourcePayload}};
     },
   });
+  vm.runInContext(previewScript, context);
   vm.runInContext(script, context);
   return {context, timers, element, document, handlers,runFrames(){while(frames.length)frames.shift()()},
     notify: (type, detail) => handlers.get(`window:${type}`)?.({detail}),
@@ -111,7 +119,7 @@ test('source removal invalidates evidence that was fetched before removal', asyn
   await preview;
   assert.equal(h.element('preview').open, false);
   assert.equal(h.element('copy-markdown').disabled, true);
-  assert.equal(vm.runInContext('currentEvidence', h.context), null);
+  assert.equal(vm.runInContext('previewUI.currentEvidence', h.context), null);
 });
 
 test('archive source card identifies frozen provenance and offers no refresh/configure action', async () => {
@@ -173,7 +181,7 @@ test('pending archive preview is invalidated when the archive source is removed'
   h.notify('source-removed','archive-source');
   h.resolveEvidence({id:'archive-doc',source_id:'archive-source',title:'snapshot',source_name:'archive',
     path:'note.md',text:'stale archived text',source_kind:'archive',modified_at:'2026-10-09T00:00:00Z',uri:'file:///old/note.md'});
-  await preview;assert.equal(h.element('preview').open,false);assert.equal(vm.runInContext('currentEvidence',h.context),null);
+  await preview;assert.equal(h.element('preview').open,false);assert.equal(vm.runInContext('previewUI.currentEvidence',h.context),null);
 });
 
 test('successful source reconfiguration invalidates pending preview evidence', async () => {
@@ -187,7 +195,7 @@ test('successful source reconfiguration invalidates pending preview evidence', a
   await preview;
   assert.equal(h.element('preview').open, false);
   assert.equal(h.element('copy-markdown').disabled, true);
-  assert.equal(vm.runInContext('currentEvidence', h.context), null);
+  assert.equal(vm.runInContext('previewUI.currentEvidence', h.context), null);
 });
 
 test('job polling resumes if the tab is hidden during an active request', async () => {
@@ -313,7 +321,7 @@ test('changing query invalidates a delayed passage response',async()=>{
  h.resolveEvidence(lateEvidence);await flush();
  assert.equal(h.element('preview').open,false);
  assert.equal(h.element('add-evidence').disabled,true);
- assert.equal(vm.runInContext('currentEvidence',h.context),null);
+ assert.equal(vm.runInContext('previewUI.currentEvidence',h.context),null);
 });
 
 test('collection current-evidence bridge keeps PDF pages and saved text windows',async()=>{

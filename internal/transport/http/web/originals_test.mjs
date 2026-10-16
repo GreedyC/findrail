@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 
-const html=readFileSync(new URL('./index.html',import.meta.url),'utf8');
-const scripts=[...html.matchAll(/<script type="module">([\s\S]*?)<\/script>/g)].map(x=>x[1]);
-const script=scripts.find(x=>x.includes('const native=window.findrailNativeCapability'));
+const module=readFileSync(new URL('./preview_ui.mjs',import.meta.url),'utf8');
+const start=module.indexOf('{\n',module.indexOf('export async function initializePreviewUI('))+2;
+const script=module.slice(start,module.lastIndexOf('\n}')).replace(/^if \(!document \|\| initializedDocuments\.has\(document\)\) return;\ninitializedDocuments\.add\(document\);\n/m,'');
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
 function harness(capability=true,delayedBootstrap=false){

@@ -67,6 +67,9 @@ func TestLocalSearchAPIAndBrowserBoundary(t *testing.T) {
 		{"/api/v1/sync", "127.0.0.1:7766", "", 200, "\"enabled\":false"},
 		{"/assets/citation.mjs", "127.0.0.1:7766", "", 200, "export function formatCitation"},
 		{"/assets/keyboard_navigation.mjs", "127.0.0.1:7766", "", 200, "export function installSearchShortcut"},
+		{"/assets/search_ui.mjs", "127.0.0.1:7766", "", 200, "initializeSearchUI"},
+		{"/assets/preview_ui.mjs", "127.0.0.1:7766", "", 200, "initializePreviewUI"},
+		{"/assets/collections_ui.mjs", "127.0.0.1:7766", "", 200, "initializeCollectionsUI"},
 		{"/assets/keyboard_navigation.mjs", "attacker.example:7766", "", 403, "local host"},
 		{"/assets/keyboard_navigation.mjs", "127.0.0.1:7766", "https://attacker.example", 403, "same origin"},
 		{"/assets/citation.mjs", "127.0.0.1:7766", "http://127.0.0.1:7766", 200, "export function formatCitation"},
@@ -74,6 +77,8 @@ func TestLocalSearchAPIAndBrowserBoundary(t *testing.T) {
 		{"/assets/citation.mjs", "127.0.0.1:7766", "https://attacker.example", 403, "same origin"},
 		{"/assets/unknown.mjs", "127.0.0.1:7766", "", 404, ""},
 		{"/assets/citation_test.mjs", "127.0.0.1:7766", "", 404, ""},
+		{"/assets/search_ui.mjs/extra", "127.0.0.1:7766", "", 404, ""},
+		{"/assets/%2e%2e/server.go", "127.0.0.1:7766", "", 404, ""},
 		{"/api/v1/documents/" + id, "attacker.example:7766", "", 403, "local host"},
 		{"/", "127.0.0.1:7766", "", 200, "Findrail"},
 		{"/api/v1/search?q=webhook", "attacker.example:7766", "", 403, "local host"},
@@ -94,13 +99,13 @@ func TestLocalSearchAPIAndBrowserBoundary(t *testing.T) {
 		if strings.HasPrefix(tc.path, "/api/") && strings.Contains(w.Body.String(), "<script>") {
 			t.Error("unescaped HTML in JSON")
 		}
-		if tc.path == "/assets/citation.mjs" && tc.code == http.StatusOK {
+		if strings.HasPrefix(tc.path, "/assets/") && tc.code == http.StatusOK {
 			if got := w.Header().Get("Content-Type"); got != "text/javascript; charset=utf-8" {
-				t.Errorf("citation module content type = %q", got)
+				t.Errorf("embedded module content type = %q", got)
 			}
 			for _, header := range []string{"X-Content-Type-Options", "Cache-Control", "Content-Security-Policy"} {
 				if w.Header().Get(header) == "" {
-					t.Errorf("citation module missing %s header", header)
+					t.Errorf("embedded module missing %s header", header)
 				}
 			}
 		}
