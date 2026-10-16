@@ -19,6 +19,12 @@ exactly `alias`, `kind`, and `display_name`. Aliases are unique `s1` through
 `filesystem`, `github`, or `archive`. Display name is only a user hint for
 explicit remapping; it does not authorize choosing a source or destination.
 
+Field names are case-sensitive, and required values cannot be `null`. On the
+wire `format` and `version` must match exactly; empty format and version zero
+are not defaults. Unpaired escaped UTF-16 surrogates are rejected rather than
+silently replaced. Source aliases must be unique even before any entries use
+them. Canonical empty sources/entries are JSON arrays, never `null`.
+
 Entries have exactly `source_alias`, `relative_path`, `media_type`,
 `content_hash`, `page`, `start_char`, `text`, and `note`. Array order is retained;
 repeated citations are not coalesced, including when their notes differ.
@@ -49,6 +55,7 @@ the bundle itself must never select a path or authorize a write.
 | Sources / entries | 40 / 40 |
 | Display name | 512 bytes |
 | Relative path | 2,048 bytes and 512 code points |
+| Media type | nonblank, 255 UTF-8 bytes |
 | Entry metadata (excluding text and note) | 16 KiB |
 | Selected text, each / total | nonempty, 256 KiB and 65,536 code points / 2 MiB |
 | Note | 2,048 bytes |
@@ -59,6 +66,7 @@ invalid. Empty source and entry arrays are allowed with a valid title. Readers
 reject invalid UTF-8, duplicate keys, unknown fields, trailing values/data and
 oversized input before constructing a bundle. Limits are bounded codec-owned
 buffers, not a process RSS guarantee. Nothing is silently truncated or evicted.
+NUL characters are rejected in names, paths, media types, quotes and notes.
 
 The canonical encoder preserves source/entry order and every string exactly;
 its SHA-256 digest detects transfer inconsistency only. It is not a signature,

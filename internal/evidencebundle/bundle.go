@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -74,8 +75,8 @@ func Decode(r io.Reader) (Bundle, error) {
 	if err := d.Decode(&out); err != nil {
 		return zero, ErrInvalid
 	}
-	if err := required(b, []string{"format", "version", "title", "sources", "entries"}); err != nil {
-		return zero, err
+	if out.Format != Format || out.Version != Version {
+		return zero, ErrInvalid
 	}
 	if err := validate(out); err != nil {
 		return zero, err
@@ -88,6 +89,12 @@ func Encode(b Bundle) ([]byte, error) {
 		return nil, err
 	}
 	b.Format, b.Version = Format, Version
+	if b.Sources == nil {
+		b.Sources = []Source{}
+	}
+	if b.Entries == nil {
+		b.Entries = []Entry{}
+	}
 	out, err := json.Marshal(b)
 	if err != nil {
 		return nil, ErrInvalid
@@ -120,7 +127,8 @@ func validate(b Bundle) error {
 	}
 	aliases := make(map[string]bool, len(b.Sources))
 	for _, s := range b.Sources {
-		if !aliasPattern.MatchString(s.Alias) || aliases[s.Alias] || len(s.DisplayName) > 512 || !utf8.ValidString(s.DisplayName) || strings.IndexByte(s.DisplayName, 0) >= 0 {
+		_, exists := aliases[s.Alias]
+		if !aliasPattern.MatchString(s.Alias) || exists || len(s.DisplayName) > 512 || !utf8.ValidString(s.DisplayName) || strings.IndexByte(s.DisplayName, 0) >= 0 {
 			return ErrInvalid
 		}
 		switch s.Kind {
@@ -182,8 +190,12 @@ func validPath(p string) bool {
 }
 
 func checkJSON(data []byte) error {
+	if err := checkUnicodeEscapes(data); err != nil {
+		return err
+	}
 	d := json.NewDecoder(bytes.NewReader(data))
-	if err := walk(d, 0); err != nil {
+	d.UseNumber()
+	if err := checkObject(d, bundleFields); err != nil {
 		return err
 	}
 	if _, err := d.Token(); err != io.EOF {
@@ -191,83 +203,139 @@ func checkJSON(data []byte) error {
 	}
 	return nil
 }
-func walk(d *json.Decoder, depth int) error {
-	if depth > 16 {
-		return ErrLimit
-	}
-	t, err := d.Token()
-	if err != nil {
+
+type fieldKind byte
+
+const (
+	stringField fieldKind = iota
+	integerField
+	sourcesField
+	entriesField
+)
+
+var bundleFields = map[string]fieldKind{"format": stringField, "version": integerField, "title": stringField, "sources": sourcesField, "entries": entriesField}
+var sourceFields = map[string]fieldKind{"alias": stringField, "kind": stringField, "display_name": stringField}
+var entryFields = map[string]fieldKind{"source_alias": stringField, "relative_path": stringField, "media_type": stringField, "content_hash": stringField, "page": integerField, "start_char": integerField, "text": stringField, "note": stringField}
+
+// The v1 shape is fixed: root -> array -> source/entry -> scalar. Checking
+// exact keys, non-null types and array counts before typed decoding also bounds
+// the temporary key sets and avoids Go's case-insensitive struct-field matching.
+func checkObject(d *json.Decoder, fields map[string]fieldKind) error {
+	if token, err := d.Token(); err != nil || token != json.Delim('{') {
 		return ErrInvalid
 	}
-	switch t {
-	case json.Delim('{'):
-		seen := map[string]bool{}
-		for d.More() {
-			k, e := d.Token()
-			if e != nil {
-				return ErrInvalid
-			}
-			key, ok := k.(string)
-			if !ok || seen[key] {
-				return ErrInvalid
-			}
-			seen[key] = true
-			if e = walk(d, depth+1); e != nil {
-				return e
-			}
+	seen := make(map[string]bool, len(fields))
+	for d.More() {
+		token, err := d.Token()
+		if err != nil {
+			return ErrInvalid
 		}
-		_, err = d.Token()
-	case json.Delim('['):
-		for d.More() {
-			if err = walk(d, depth+1); err != nil {
+		key, ok := token.(string)
+		kind, known := fields[key]
+		if !ok || !known || seen[key] {
+			return ErrInvalid
+		}
+		seen[key] = true
+		if kind == sourcesField || kind == entriesField {
+			child, limit := sourceFields, MaxSources
+			if kind == entriesField {
+				child, limit = entryFields, MaxEntries
+			}
+			if err := checkArray(d, child, limit); err != nil {
 				return err
 			}
+			continue
 		}
-		_, err = d.Token()
+		value, err := d.Token()
+		if err != nil {
+			return ErrInvalid
+		}
+		if kind == stringField {
+			text, ok := value.(string)
+			if !ok {
+				return ErrInvalid
+			}
+			if len(text) > 256<<10 {
+				return ErrLimit
+			}
+		} else {
+			number, ok := value.(json.Number)
+			if !ok || strings.ContainsAny(string(number), ".eE") {
+				return ErrInvalid
+			}
+			if _, err := strconv.ParseInt(string(number), 10, 64); err != nil {
+				return ErrInvalid
+			}
+		}
 	}
-	if err != nil {
+	if token, err := d.Token(); err != nil || token != json.Delim('}') || len(seen) != len(fields) {
 		return ErrInvalid
 	}
 	return nil
 }
-func required(data []byte, names []string) error {
-	var m map[string]json.RawMessage
-	if json.Unmarshal(data, &m) != nil {
+
+func checkArray(d *json.Decoder, fields map[string]fieldKind, limit int) error {
+	if token, err := d.Token(); err != nil || token != json.Delim('[') {
 		return ErrInvalid
 	}
-	for _, n := range names {
-		if _, ok := m[n]; !ok {
-			return ErrInvalid
+	for count := 0; d.More(); count++ {
+		if count >= limit {
+			return ErrLimit
+		}
+		if err := checkObject(d, fields); err != nil {
+			return err
 		}
 	}
-	var ss []json.RawMessage
-	if json.Unmarshal(m["sources"], &ss) != nil {
+	if token, err := d.Token(); err != nil || token != json.Delim(']') {
 		return ErrInvalid
 	}
-	for _, v := range ss {
-		var x map[string]json.RawMessage
-		if json.Unmarshal(v, &x) != nil {
-			return ErrInvalid
+	return nil
+}
+
+// encoding/json replaces unpaired escaped surrogates. Reject them before
+// decoding so a malformed quote cannot silently become different evidence.
+func checkUnicodeEscapes(data []byte) error {
+	hex4 := func(at int) (uint64, error) {
+		if at+4 > len(data) {
+			return 0, ErrInvalid
 		}
-		for _, k := range []string{"alias", "kind", "display_name"} {
-			if _, ok := x[k]; !ok {
+		return strconv.ParseUint(string(data[at:at+4]), 16, 16)
+	}
+	for i := 0; i < len(data); i++ {
+		if data[i] != '"' {
+			continue
+		}
+		for i++; i < len(data) && data[i] != '"'; i++ {
+			if data[i] != '\\' {
+				continue
+			}
+			i++
+			if i >= len(data) {
+				return ErrInvalid
+			}
+			if data[i] != 'u' {
+				continue
+			}
+			value, err := hex4(i + 1)
+			if err != nil {
+				return ErrInvalid
+			}
+			i += 4
+			if value >= 0xd800 && value <= 0xdbff {
+				if i+2 >= len(data) || data[i+1] != '\\' || data[i+2] != 'u' {
+					return ErrInvalid
+				}
+				low, err := hex4(i + 3)
+				if err != nil || low < 0xdc00 || low > 0xdfff {
+					return ErrInvalid
+				}
+				i += 6
+			} else if value >= 0xdc00 && value <= 0xdfff {
 				return ErrInvalid
 			}
 		}
-	}
-	var es []json.RawMessage
-	if json.Unmarshal(m["entries"], &es) != nil {
-		return ErrInvalid
-	}
-	for _, v := range es {
-		var x map[string]json.RawMessage
-		if json.Unmarshal(v, &x) != nil {
+		if i >= len(data) {
 			return ErrInvalid
-		}
-		for _, k := range []string{"source_alias", "relative_path", "media_type", "content_hash", "page", "start_char", "text", "note"} {
-			if _, ok := x[k]; !ok {
-				return ErrInvalid
-			}
 		}
 	}
 	return nil
