@@ -64,6 +64,11 @@ func TestGeneratedMCPConfigSDKJourney(t *testing.T) {
 			_ = scan.Rollback()
 			t.Fatal(err)
 		}
+		body := strings.Repeat("合成😀 filler ", 4500) + " latepassageanchor " + strings.Repeat("ending ", 100)
+		if _, err := scan.Upsert(ctx, connector.Document{ID: "note-" + id, SourceID: id, Title: "late.md", Path: "late.md", URI: "file:///synthetic/late.md", MediaType: "text/markdown", Content: body, Hash: "synthetic-late-v1"}); err != nil {
+			_ = scan.Rollback()
+			t.Fatal(err)
+		}
 		if _, err := scan.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -130,6 +135,17 @@ func TestGeneratedMCPConfigSDKJourney(t *testing.T) {
 				found := call("findrail_search", map[string]any{"source_id": "源-β", "query": "scopedneedle"}, false)
 				if found["total"] != float64(1) || found["results"].([]any)[0].(map[string]any)["id"] != "doc-源-β" {
 					t.Fatalf("search scope: %+v", found)
+				}
+				late := call("findrail_search", map[string]any{"source_id": "源-β", "query": "latepassageanchor"}, false)
+				lateHit := late["results"].([]any)[0].(map[string]any)
+				identity := lateHit["original_identity"].(string)
+				passage := call("findrail_get_evidence", map[string]any{"source_id": "源-β", "document_id": "note-源-β", "query": "latepassageanchor", "original_identity": identity}, false)
+				if passage["match_kind"] != "literal_body" || !strings.Contains(passage["text"].(string), "latepassageanchor") || passage["text_start_char"].(float64) < 8000 {
+					t.Fatalf("late passage anchor: %+v", passage)
+				}
+				continued := call("findrail_get_evidence", map[string]any{"source_id": "源-β", "document_id": "note-源-β", "start_char": 10000, "original_identity": identity}, false)
+				if continued["text_start_char"] != float64(10000) {
+					t.Fatalf("manual continuation: %+v", continued)
 				}
 				evidence := call("findrail_get_evidence", map[string]any{"source_id": "源-β", "document_id": "doc-源-β", "page": 2}, false)
 				if evidence["page"] != float64(2) || evidence["page_count"] != float64(2) || evidence["text"] != "scopedneedle page two" {
